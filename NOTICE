@@ -1,0 +1,10 @@
+HyperGlow contains code adapted from HyperLyric:
+https://github.com/limczhh/HyperLyric
+
+HyperLyric copyright belongs to its contributors and is licensed under GPL-3.0.
+Standalone package modifications copyright 2026 HyperGlow contributors.
+
+Bundled Noto Sans Regular, Medium, and Bold fonts:
+Copyright 2015-2021 Google LLC. All Rights Reserved.
+Licensed under the SIL Open Font License, Version 1.1.
+See app/src/main/assets/fonts/OFL.txt.
