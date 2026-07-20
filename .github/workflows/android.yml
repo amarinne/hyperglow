@@ -1,4 +1,4 @@
-name: Build HyperGlow APK
+name: Verify HyperGlow
 
 on:
   workflow_dispatch:
@@ -25,48 +25,17 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Decode release keystore
-        env:
-          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
-        run: |
-          test -n "$SIGNING_KEYSTORE_BASE64"
-          printf '%s' "$SIGNING_KEYSTORE_BASE64" | base64 --decode > "$GITHUB_WORKSPACE/hyperglow-release.jks"
-
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
-      - name: Test and build signed release
+      - name: Test and build debug APK
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SIGNING_KEYSTORE_FILE: ${{ github.workspace }}/hyperglow-release.jks
-          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
-          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
-          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
-        run: ./gradlew :app:testDebugUnitTest :app:assembleRelease --console=plain
+        run: ./gradlew :app:testDebugUnitTest :app:assembleDebug --console=plain
 
-      - name: Verify and name release APK
-        id: release
-        shell: bash
-        run: |
-          version_name="$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)"/\1/p' app/build.gradle.kts | head -n 1)"
-          test -n "$version_name"
-
-          apk="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' ! -name '*unsigned*' -print -quit)"
-          test -n "$apk"
-
-          apksigner="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
-          test -x "$apksigner"
-          "$apksigner" verify --verbose --print-certs "$apk"
-
-          mkdir -p artifacts
-          release_apk="artifacts/HyperGlow-v${version_name}.apk"
-          cp "$apk" "$release_apk"
-          sha256sum "$release_apk"
-          echo "release_apk=$release_apk" >> "$GITHUB_OUTPUT"
-
-      - name: Upload release APK
+      - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: hyperglow-release-apk
-          path: ${{ steps.release.outputs.release_apk }}
+          name: hyperglow-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error

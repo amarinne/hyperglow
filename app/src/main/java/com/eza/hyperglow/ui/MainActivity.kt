@@ -562,7 +562,7 @@ private fun HomeScreen(
     if (showBurnInPatternDialog) {
         WindowDialog(
             title = "AOD clock placement",
-            summary = "Used while the lyric card is active, including retained paused media",
+            summary = "Used while the lyric card is visible",
             show = true,
             onDismissRequest = { showBurnInPatternDialog = false }
         ) {

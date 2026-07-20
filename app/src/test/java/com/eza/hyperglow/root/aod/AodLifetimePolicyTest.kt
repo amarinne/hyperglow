@@ -8,7 +8,7 @@ import org.junit.Test
 
 class AodLifetimePolicyTest {
     @Test
-    fun pausedAodSnapshotStaysVisibleAndKeepsOwnershipWhileMediaPlayerExists() {
+    fun pausedAodSnapshotStaysVisibleButKeepAliveExpiresAfterThirtySeconds() {
         val live = LyricSnapshot(
             visible = true,
             keepAlive = true,
@@ -28,6 +28,12 @@ class AodLifetimePolicyTest {
         assertEquals(6_000L, retained.positionMs)
         assertEquals(0f, retained.speed)
         assertEquals(retained, retainedAodSnapshotAfterUpdate(hidden, null, retained, true, 8_000L))
+        assertTrue(retainedAodSnapshotAfterUpdate(hidden, null, retained, true, 32_999L)!!.keepAlive)
+        val expired = retainedAodSnapshotAfterUpdate(hidden, null, retained, true, 33_000L)!!
+        assertTrue(expired.visible)
+        assertFalse(expired.keepAlive)
+        assertTrue(expired.positionFollowingEnabled)
+        assertEquals(0f, expired.speed)
         assertEquals(null, retainedAodSnapshotAfterUpdate(hidden, live, retained, false, 8_000L))
     }
 

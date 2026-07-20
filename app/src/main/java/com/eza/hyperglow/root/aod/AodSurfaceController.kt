@@ -120,13 +120,28 @@ internal fun retainedAodSnapshotAfterUpdate(
 ): LyricSnapshot? = when {
     incoming.visible -> null
     !mediaPlayerPresent -> null
-    retained != null -> retained
+    retained != null -> expirePausedAodKeepAlive(retained, nowElapsedMs)
     lastVisible != null -> lastVisible.freezeAt(
         nowElapsedMs,
         keepAliveWhileFrozen = lastVisible.keepAlive
     )
     else -> null
 }
+
+internal fun expirePausedAodKeepAlive(
+    retained: LyricSnapshot,
+    nowElapsedMs: Long
+): LyricSnapshot {
+    if (!retained.keepAlive) return retained
+    val pausedForMs = (nowElapsedMs - retained.sampledAtElapsedMs).coerceAtLeast(0L)
+    return if (pausedForMs >= PAUSED_AOD_KEEP_ALIVE_MS) {
+        retained.copy(keepAlive = false)
+    } else {
+        retained
+    }
+}
+
+internal const val PAUSED_AOD_KEEP_ALIVE_MS = 30_000L
 
 internal fun smoothAodRevealProgress(progress: Float): Float {
     val value = progress.coerceIn(0f, 1f)
@@ -171,6 +186,15 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     private var initialRevealActive = false
     private var initialRevealStartedAt = 0L
     private var initialRevealDurationMs = 0L
+    private val pausedKeepAliveExpiry = Runnable {
+        val retained = retainedMediaSnapshot ?: return@Runnable
+        val expired = expirePausedAodKeepAlive(retained, SystemClock.elapsedRealtime())
+        if (expired.keepAlive == retained.keepAlive) return@Runnable
+        retainedMediaSnapshot = expired
+        latestSnapshot = latestSnapshot?.copy(keepAlive = expired.keepAlive)
+        HookLogger.i(TAG, "Paused AOD keepalive grace expired")
+        updateLifetimeGuard()
+    }
     private val layoutChangeListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
         requestGeometryUpdate()
     }
@@ -380,6 +404,7 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
                 return@update
             }
             if (retainedMediaSnapshot == null) return@update
+            cancelPausedKeepAliveExpiry()
             retainedMediaSnapshot = null
             lastVisibleSnapshot = null
             latestSnapshot = null
@@ -406,6 +431,7 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
             stockMediaPlayerPresent,
             SystemClock.elapsedRealtime()
         )
+        schedulePausedKeepAliveExpiry(retainedMediaSnapshot)
         val resolvedSnapshot = if (incomingSnapshot.visible) {
             incomingSnapshot
         } else {
@@ -485,13 +511,19 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     }
 
     override fun onLyricKeepAlive(signal: LyricKeepAliveSignal) {
+        val retained = retainedMediaSnapshot?.let {
+            expirePausedAodKeepAlive(it, SystemClock.elapsedRealtime())
+        }
+        if (retained != retainedMediaSnapshot) retainedMediaSnapshot = retained
+        schedulePausedKeepAliveExpiry(retained)
+        val effectiveKeepAlive = retained?.keepAlive ?: signal.keepAlive
         latestSnapshot = latestSnapshot?.copy(
             updatedAtElapsedMs = signal.updatedAtElapsedMs,
-            keepAlive = retainedMediaSnapshot?.keepAlive ?: signal.keepAlive,
+            keepAlive = effectiveKeepAlive,
             wakeSignal = signal.wakeSignal
         )
         updateLifetimeGuard()
-        if (!signal.keepAlive) return
+        if (!effectiveKeepAlive) return
         val directSurface = surface ?: return
         val root = rootRef.get() ?: return
         val wakeRequired = signal.wakeSignal != lastWakeSignal
@@ -500,6 +532,7 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     }
 
     override fun onLyricProjectionDisconnected() {
+        cancelPausedKeepAliveExpiry()
         latestSnapshot = null
         lastVisibleSnapshot = null
         retainedMediaSnapshot = null
@@ -510,6 +543,7 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     }
 
     override fun onLyricProjectionStale() {
+        cancelPausedKeepAliveExpiry()
         latestSnapshot = null
         lastVisibleSnapshot = null
         retainedMediaSnapshot = null
@@ -526,7 +560,21 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         if (retained != null) {
             retainedMediaSnapshot = retained
             latestSnapshot = retained
+            schedulePausedKeepAliveExpiry(retained)
         }
+    }
+
+    private fun schedulePausedKeepAliveExpiry(retained: LyricSnapshot?) {
+        mainHandler.removeCallbacks(pausedKeepAliveExpiry)
+        if (retained?.keepAlive != true) return
+        val pausedForMs = (SystemClock.elapsedRealtime() - retained.sampledAtElapsedMs)
+            .coerceAtLeast(0L)
+        val delayMs = (PAUSED_AOD_KEEP_ALIVE_MS - pausedForMs).coerceAtLeast(0L)
+        mainHandler.postDelayed(pausedKeepAliveExpiry, delayMs)
+    }
+
+    private fun cancelPausedKeepAliveExpiry() {
+        mainHandler.removeCallbacks(pausedKeepAliveExpiry)
     }
 
     private fun hideSurfaceOnly(pulse: Boolean = true) {
@@ -551,6 +599,7 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         mainHandler.removeCallbacks(stockMotionSettle)
         mainHandler.removeCallbacks(managedBurnInStart)
         mainHandler.removeCallbacks(managedBurnInAdvance)
+        cancelPausedKeepAliveExpiry()
         pendingStockMotionUpdate = null
         positionUpdates.clear()
         stockWidgetControlActive = false
