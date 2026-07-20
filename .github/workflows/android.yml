@@ -44,9 +44,29 @@ jobs:
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: ./gradlew :app:testDebugUnitTest :app:assembleRelease --console=plain
 
+      - name: Verify and name release APK
+        id: release
+        shell: bash
+        run: |
+          version_name="$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)"/\1/p' app/build.gradle.kts | head -n 1)"
+          test -n "$version_name"
+
+          apk="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' ! -name '*unsigned*' -print -quit)"
+          test -n "$apk"
+
+          apksigner="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -x "$apksigner"
+          "$apksigner" verify --verbose --print-certs "$apk"
+
+          mkdir -p artifacts
+          release_apk="artifacts/HyperGlow-v${version_name}.apk"
+          cp "$apk" "$release_apk"
+          sha256sum "$release_apk"
+          echo "release_apk=$release_apk" >> "$GITHUB_OUTPUT"
+
       - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
           name: hyperglow-release-apk
-          path: app/build/outputs/apk/release/*.apk
+          path: ${{ steps.release.outputs.release_apk }}
           if-no-files-found: error
