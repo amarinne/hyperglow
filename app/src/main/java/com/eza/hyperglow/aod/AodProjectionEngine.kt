@@ -3,6 +3,7 @@ package com.eza.hyperglow.aod
 import android.content.Context
 import android.os.SystemClock
 import com.eza.hyperglow.RuntimeCustomization
+import com.eza.hyperglow.bridge.SpicyBridgeDocument
 import com.eza.hyperglow.bridge.SpicyBridgeDocumentStore
 import com.eza.hyperglow.bridge.SpicyBridgeState
 import com.eza.hyperglow.bridge.SpicyBridgeStore
@@ -109,6 +110,7 @@ object AodProjectionEngine {
     private var appContext: Context? = null
     private val publicationGuard = ProjectionPublicationGuard()
     private val releaseGate = ProjectionReleaseGate()
+    private val powerSessionPolicy = AodPowerSessionPolicy()
 
     @Synchronized
     fun start(context: Context) {
@@ -139,7 +141,7 @@ object AodProjectionEngine {
         }
         cancelRelease()
         if (!SpicyBridgeStore.isCurrentActive(state) || !state.playing) {
-            releaseNow()
+            releaseNow(playbackActive = false)
             return
         }
         if (shouldShowPlaybackFallback(state.status, state.playing)) {
@@ -149,7 +151,7 @@ object AodProjectionEngine {
             return
         }
         if (state.status != "ready") {
-            releaseNow()
+            releaseNow(playbackActive = state.playing)
             return
         }
         stopStatusKeepAlive()
@@ -197,7 +199,8 @@ object AodProjectionEngine {
                 if (!SpicyBridgeStore.isCurrentActive(current) ||
                     !canRefreshFallback(expected, current)
                 ) break
-                AodStateBridge.refreshVisibleState()
+                val publicationToken = publicationGuard.current(current) ?: break
+                project(current, SystemClock.elapsedRealtime(), publicationToken)
             }
         }
     }
@@ -225,7 +228,7 @@ object AodProjectionEngine {
         val current = SpicyBridgeStore.state.value
         if (current != null && SpicyBridgeStore.isCurrentActive(current) && current.playing) return
         releaseJob = null
-        releaseNow()
+        releaseNow(playbackActive = false)
     }
 
     @Synchronized
@@ -236,14 +239,16 @@ object AodProjectionEngine {
     }
 
     @Synchronized
-    private fun releaseNow() {
+    private fun releaseNow(playbackActive: Boolean = false) {
         cancelRelease()
         publicationGuard.invalidate()
         stopStatusKeepAlive()
         stopScheduler()
+        powerSessionPolicy.clear()
         AodStateBridge.publish(
             AodDisplayState(
                 visible = false,
+                playbackActive = playbackActive,
                 userId = currentProcessUserId()
             )
         )
@@ -261,9 +266,12 @@ object AodProjectionEngine {
         val timedDocument = document?.takeIf { isTimedDocumentType(it.type) }
         val unsynced = document != null && timedDocument == null
         val noLyrics = state.status == "no_lyrics"
+        val hasTimedLyrics = !noLyrics && timedDocument?.let(::hasActualLyricTiming) == true
         val row = timedDocument?.primaryRowAt(position).takeUnless { noLyrics }
-        val fallback = state.line.takeIf { it.isNotBlank() }
-            ?: state.title.takeIf { state.status == "loading" }
+        val metadata = if (noLyrics) "" else listOf(state.title, state.artist)
+            .filter { it.isNotBlank() }
+            .joinToString(" · ")
+        val fallback = playbackFallback(state.status, state.line, metadata)
         val original = if (unsynced || noLyrics) "♪" else (row?.text ?: fallback).orEmpty()
         val romanized = if (unsynced || noLyrics) "" else
             (row?.romanized ?: state.romanizedLine.takeIf { document == null }).orEmpty()
@@ -275,24 +283,40 @@ object AodProjectionEngine {
         val aodEnabled = aodProfile?.enabled ?: prefs.aodEnabled
         val lockscreenEnabled = compiled?.profiles?.get(SceneCompiler.SURFACE_LOCKSCREEN)?.enabled
             ?: prefs.lockscreenEnabled
+        val persistentKeepAlive = shouldKeepAodAlive(
+            playing = state.playing,
+            aodEnabled = aodEnabled,
+            keepAwake = prefs.keepAwake,
+            keepAwakeUnsynced = prefs.keepAwakeUnsynced,
+            hasTimedLyrics = hasTimedLyrics
+        )
+        val powerDecision = powerSessionPolicy.resolve(
+            state = SpicyPowerSessionState(
+                session = ProjectionSessionIdentity.from(state),
+                playing = state.playing,
+                aodEnabled = aodEnabled,
+                keepAwake = prefs.keepAwake
+            ),
+            nowElapsedMs = now,
+            persistentKeepAlive = persistentKeepAlive
+        )
         val projectedState = AodDisplayState(
             visible = original.isNotBlank(),
+            playbackActive = state.playing,
             userId = currentProcessUserId(),
             trackGeneration = trackGeneration(state),
             aodEnabled = aodEnabled,
             lockscreenEnabled = lockscreenEnabled,
             seamlessTransitionEnabled = prefs.seamlessTransitionEnabled,
-            keepAlive = state.playing && prefs.keepAwake && aodEnabled,
+            keepAlive = powerDecision.keepAlive,
             positionFollowingEnabled = prefs.experimentalPositionFollowing,
             burnInPattern = prefs.burnInPattern,
             burnInIntervalMs = prefs.burnInIntervalMs,
-            wakeSignal = sessionWakeSignal(state),
+            wakeSignal = sessionWakeSignal(state, hasTimedLyrics),
             original = original,
             romanized = romanized,
             translated = translated,
-            metadata = if (noLyrics) "" else listOf(state.title, state.artist)
-                .filter { it.isNotBlank() }
-                .joinToString(" · "),
+            metadata = metadata,
             alignedRight = row?.alignedRight == true,
             lineLevelSync = document != null && row != null &&
                 isEffectiveLineLevelSync(document.type, row.words.size),
@@ -308,7 +332,7 @@ object AodProjectionEngine {
                     it.romanized,
                     it.startMs,
                     it.endMs,
-                    it.partOfWord,
+                    it.boundaryAfter,
                     it.sourceStart,
                     it.sourceEnd
                 )
@@ -394,8 +418,24 @@ object AodProjectionEngine {
     fun staticPlaybackPlaceholder(status: String): String? =
         "♪".takeIf { status == "no_lyrics" }
 
+    internal fun playbackFallback(status: String, line: String, metadata: String): String? =
+        if (status == "loading") metadata.takeIf { it.isNotBlank() }
+        else line.takeIf { it.isNotBlank() }
+
     fun isTimedDocumentType(type: String): Boolean =
         type.equals("Line", ignoreCase = true) || type.equals("Syllable", ignoreCase = true)
+
+    internal fun hasActualLyricTiming(document: SpicyBridgeDocument): Boolean =
+        isTimedDocumentType(document.type) && document.rows.any { it.endMs > it.startMs }
+
+    internal fun shouldKeepAodAlive(
+        playing: Boolean,
+        aodEnabled: Boolean,
+        keepAwake: Boolean,
+        keepAwakeUnsynced: Boolean,
+        hasTimedLyrics: Boolean
+    ): Boolean = playing && aodEnabled && keepAwake &&
+        (hasTimedLyrics || keepAwakeUnsynced)
 
     fun isLineLevelDocumentType(type: String): Boolean =
         type.equals("Line", ignoreCase = true)
@@ -404,8 +444,13 @@ object AodProjectionEngine {
         isLineLevelDocumentType(type) ||
             type.equals("Syllable", ignoreCase = true) && wordCount <= 0
 
-    private fun sessionWakeSignal(state: SpicyBridgeState): Long =
-        "${state.producerId}|${state.generation}|${state.trackUri}|${state.status}".hashCode().toLong()
+    internal fun sessionWakeSignal(state: SpicyBridgeState, hasTimedLyrics: Boolean): Long {
+        val phase = if (hasTimedLyrics) "timed" else "song"
+        return "${state.producerId}|${state.generation}|${state.trackUri}|$phase"
+            .hashCode()
+            .toLong()
+            .takeUnless { it == 0L } ?: 1L
+    }
 
     internal fun trackGeneration(state: SpicyBridgeState): Long {
         val identity = "${state.producerId}\u0000${state.generation}\u0000${state.trackUri}"
@@ -413,7 +458,7 @@ object AodProjectionEngine {
     }
 
     private const val KEEP_ALIVE_INTERVAL_MS = 4_000L
-    private const val FALLBACK_REFRESH_INTERVAL_MS = 4_000L
+    private const val FALLBACK_REFRESH_INTERVAL_MS = 1_000L
     private const val TRANSITION_GRACE_MS = 1_500L
     private const val CUSTOMIZATION_REFRESH_MS = 1_000L
 }

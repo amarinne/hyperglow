@@ -25,6 +25,8 @@ data class SurfaceProfile(
     val secondaryMode: String = "Main only",
     val metadataVisible: Boolean = false,
     val metadataAnchor: String = "top",
+    val metadataSizePercent: Int = 100,
+    val rubyVisible: Boolean = true,
     val weight: String = "Medium",
     val textSize: String = "normal",
     val textSizeCustom: Int = 100,
@@ -63,7 +65,8 @@ data class CompiledCustomization(
     val profiles: Map<String, CompiledSurfaceProfile>,
     val diagnosticLogging: Boolean = false,
     val lockscreenKeepAwake: Boolean = false,
-    val raiseToAod: Boolean = false
+    val raiseToAod: Boolean = false,
+    val suppressLockscreenEditorLongPress: Boolean = false
 )
 
 @Serializable
@@ -91,7 +94,9 @@ data class CompiledSurfaceProfile(
     val overflow: String,
     val adaptiveSectioning: Boolean,
     val palette: Map<String, String>,
-    val backgroundStyle: String = "none"
+    val backgroundStyle: String = "none",
+    val metadataSizePercent: Int = 100,
+    val rubyVisible: Boolean = true
 )
 
 const val CURRENT_CUSTOMIZATION_VERSION = 1

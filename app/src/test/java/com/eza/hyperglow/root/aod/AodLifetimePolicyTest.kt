@@ -8,7 +8,51 @@ import org.junit.Test
 
 class AodLifetimePolicyTest {
     @Test
-    fun pausedAodSnapshotStaysVisibleButKeepAliveExpiresAfterThirtySeconds() {
+    fun powerLifetimeDoesNotDependOnCanvasVisibility() {
+        assertTrue(shouldActivateAodPowerLifetime(true, true, true))
+        assertFalse(shouldActivateAodPowerLifetime(false, true, true))
+        assertFalse(shouldActivateAodPowerLifetime(true, false, true))
+        assertFalse(shouldActivateAodPowerLifetime(true, true, false))
+    }
+
+    @Test
+    fun wakeSignalOnlyFiresForNewContentEvents() {
+        assertFalse(isNewAodWakeSignal(9L, 0L))
+        assertFalse(isNewAodWakeSignal(9L, 9L))
+        assertTrue(isNewAodWakeSignal(0L, 9L))
+        assertTrue(isNewAodWakeSignal(8L, 9L))
+    }
+
+    @Test
+    fun timedPowerSessionSurvivesTransientHiddenEdgeAndRetriesDetachedWake() {
+        val timed = LyricSnapshot(
+            visible = true,
+            keepAlive = true,
+            lineStartMs = 1_000L,
+            lineEndMs = 4_000L,
+            original = "line"
+        )
+        val untimedLease = timed.copy(lineStartMs = 0L, lineEndMs = 0L)
+
+        assertTrue(hasPersistentTimedAodPower(timed))
+        assertFalse(hasPersistentTimedAodPower(untimedLease))
+        assertTrue(shouldStartTimedAodPowerGrace(true, true, true, true))
+        assertFalse(shouldStartTimedAodPowerGrace(true, false, true, true))
+        assertFalse(shouldStartTimedAodPowerGrace(true, true, true, false))
+        assertTrue(shouldRetryDetachedAodWake(false, true))
+        assertFalse(shouldRetryDetachedAodWake(true, true))
+        assertFalse(shouldRetryDetachedAodWake(false, false))
+    }
+
+    @Test
+    fun managedPositionFallbackStopsRetryingAfterBoundedAttempts() {
+        assertTrue(shouldRetryManagedAodPosition(0, 5))
+        assertTrue(shouldRetryManagedAodPosition(4, 5))
+        assertFalse(shouldRetryManagedAodPosition(5, 5))
+    }
+
+    @Test
+    fun pausedAodSnapshotStaysVisibleButReleasesKeepAliveImmediately() {
         val live = LyricSnapshot(
             visible = true,
             keepAlive = true,
@@ -19,16 +63,16 @@ class AodLifetimePolicyTest {
             speed = 1f,
             original = "line"
         )
-        val hidden = live.copy(visible = false, keepAlive = false)
+        val hidden = live.copy(visible = false, playbackActive = false, keepAlive = false)
         val retained = retainedAodSnapshotAfterUpdate(hidden, live, null, true, 3_000L)!!
 
         assertTrue(retained.visible)
-        assertTrue(retained.keepAlive)
+        assertFalse(retained.keepAlive)
         assertTrue(retained.positionFollowingEnabled)
         assertEquals(6_000L, retained.positionMs)
         assertEquals(0f, retained.speed)
         assertEquals(retained, retainedAodSnapshotAfterUpdate(hidden, null, retained, true, 8_000L))
-        assertTrue(retainedAodSnapshotAfterUpdate(hidden, null, retained, true, 32_999L)!!.keepAlive)
+        assertFalse(retainedAodSnapshotAfterUpdate(hidden, null, retained, true, 32_999L)!!.keepAlive)
         val expired = retainedAodSnapshotAfterUpdate(hidden, null, retained, true, 33_000L)!!
         assertTrue(expired.visible)
         assertFalse(expired.keepAlive)

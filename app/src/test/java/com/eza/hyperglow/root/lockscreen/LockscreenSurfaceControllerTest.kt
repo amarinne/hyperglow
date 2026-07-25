@@ -439,6 +439,24 @@ class LockscreenSurfaceControllerTest {
         assertEquals(retained, resolveLockscreenMediaSnapshot(hidden, retained, true))
         assertEquals(null, resolveLockscreenMediaSnapshot(live, retained, false))
         assertEquals(null, resolveLockscreenMediaSnapshot(hidden, retained, false))
+        assertEquals(
+            live,
+            resolveLockscreenMediaSnapshot(
+                live,
+                retained,
+                mediaPlayerPresent = false,
+                transitionSourceActive = true
+            )
+        )
+        assertEquals(
+            retained,
+            resolveLockscreenMediaSnapshot(
+                hidden,
+                retained,
+                mediaPlayerPresent = false,
+                transitionSourceActive = true
+            )
+        )
     }
 
     @Test

@@ -1,11 +1,15 @@
 package com.eza.hyperglow.root.aod
 
+import android.content.Context
+import android.graphics.Rect
+import android.hardware.display.DisplayManager
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import com.eza.hyperglow.root.HookLogger
@@ -21,7 +25,7 @@ import com.eza.hyperglow.root.projection.LyricSurfaceKind
 import com.eza.hyperglow.root.projection.SystemUiLyricProjectionRuntime
 import com.eza.hyperglow.root.projection.SystemUiLyricSubscriber
 import com.eza.hyperglow.root.projection.freezeAt
-import com.eza.hyperglow.root.projection.shouldActivateAodLifetime
+import com.eza.hyperglow.root.projection.shouldRenewAodDraw
 import com.eza.hyperglow.root.projection.shouldRequestAodWake
 import com.eza.hyperglow.root.surface.SurfaceEnvironment
 import com.eza.hyperglow.root.surface.PlacementEngine
@@ -31,9 +35,11 @@ import com.eza.hyperglow.root.surface.WidgetMeasurement
 import com.eza.hyperglow.root.transition.LinkageSceneRole
 import com.eza.hyperglow.root.transition.LinkageSurface
 import com.eza.hyperglow.root.transition.LinkageTransitionCoordinator
+import com.eza.hyperglow.root.transition.SystemUiClockMorphHook
 import com.eza.hyperglow.root.transition.TransitionRect
 import com.eza.hyperglow.root.transition.animateLinkageView
 import com.eza.hyperglow.root.transition.fadeOutLinkageView
+import com.eza.hyperglow.root.transition.isDimmedAodDisplayState
 import com.eza.hyperglow.root.transition.presentationRectInWindow
 import com.eza.hyperglow.root.transition.resetLinkageView
 import com.eza.hyperglow.root.transition.transitionRectInWindow
@@ -49,6 +55,73 @@ internal data class AodSurfaceRect(
     val width: Int get() = right - left
     val height: Int get() = bottom - top
 }
+
+internal data class AodRenderedClockBounds(
+    val top: Int,
+    val bottom: Int
+) {
+    val height: Int get() = bottom - top
+}
+
+private const val BRIGHT_LINKAGE_CLOCK_RESERVE_FRACTION = 0.35f
+
+internal fun resolveRenderedAodSceneZone(
+    managedZone: AodSceneZone,
+    renderedBounds: AodRenderedClockBounds?,
+    rootHeight: Int,
+    margin: Int
+): AodSceneZone {
+    if (managedZone == AodSceneZone.STOCK || renderedBounds == null ||
+        renderedBounds.height <= 0 || rootHeight <= 0
+    ) return managedZone
+    val freeAbove = (renderedBounds.top - margin).coerceAtLeast(0)
+    val freeBelow = (rootHeight - renderedBounds.bottom - margin).coerceAtLeast(0)
+    return when {
+        freeAbove > freeBelow -> AodSceneZone.CLOCK_BOTTOM
+        freeBelow > freeAbove -> AodSceneZone.CLOCK_TOP
+        else -> managedZone
+    }
+}
+
+internal fun resolvedAodClockBounds(
+    renderedBounds: AodRenderedClockBounds?,
+    controlledTop: Int?,
+    controlledBottom: Int?,
+    measuredTop: Int,
+    measuredBottom: Int,
+    exactPhysicalBounds: AodRenderedClockBounds? = null
+): AodRenderedClockBounds {
+    val controlled = if (controlledTop != null && controlledBottom != null) {
+        AodRenderedClockBounds(controlledTop, controlledBottom)
+    } else {
+        null
+    }
+    val validRendered = renderedBounds?.takeIf { it.height > 0 }
+    val validControlled = controlled?.takeIf { it.height > 0 }
+    val validPhysical = exactPhysicalBounds?.takeIf { it.height > 0 }
+    return when {
+        validPhysical != null -> validPhysical
+        validControlled != null -> validControlled
+        validRendered != null -> validRendered
+        else -> AodRenderedClockBounds(measuredTop, measuredBottom)
+    }
+}
+
+internal fun selectPhysicalAodClockBounds(
+    systemUiBounds: AodRenderedClockBounds?,
+    aodControllerBounds: AodRenderedClockBounds?
+): AodRenderedClockBounds? = systemUiBounds ?: aodControllerBounds
+
+internal fun brightLinkageClockBounds(rootHeight: Int): AodRenderedClockBounds =
+    AodRenderedClockBounds(0, (rootHeight * BRIGHT_LINKAGE_CLOCK_RESERVE_FRACTION).roundToInt())
+
+internal fun shouldUseBrightClockMorphGeometry(
+    linkageMode: Boolean,
+    morphingToAod: Boolean,
+    linkageAwaitingDim: Boolean,
+    displayState: Int
+): Boolean = linkageMode && !isDimmedAodDisplayState(displayState) &&
+    (morphingToAod || linkageAwaitingDim)
 
 internal fun calculateAodSurfaceRect(
     rootWidth: Int,
@@ -111,6 +184,9 @@ internal fun shouldRenderAodSnapshot(
     transitionFailed: Boolean
 ): Boolean = sceneActive && snapshotVisible && featureEnabled && profileEnabled && !transitionFailed
 
+internal fun isNewAodWakeSignal(previous: Long, incoming: Long): Boolean =
+    incoming != 0L && incoming != previous
+
 internal fun retainedAodSnapshotAfterUpdate(
     incoming: LyricSnapshot,
     lastVisible: LyricSnapshot?,
@@ -123,7 +199,7 @@ internal fun retainedAodSnapshotAfterUpdate(
     retained != null -> expirePausedAodKeepAlive(retained, nowElapsedMs)
     lastVisible != null -> lastVisible.freezeAt(
         nowElapsedMs,
-        keepAliveWhileFrozen = lastVisible.keepAlive
+        keepAliveWhileFrozen = incoming.playbackActive && lastVisible.keepAlive
     )
     else -> null
 }
@@ -147,6 +223,9 @@ internal fun smoothAodRevealProgress(progress: Float): Float {
     val value = progress.coerceIn(0f, 1f)
     return value * value * (3f - 2f * value)
 }
+
+internal fun shouldRetryManagedAodPosition(attempts: Int, maximumAttempts: Int): Boolean =
+    attempts < maximumAttempts
 
 internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     private const val TAG = "AodSurfaceController"
@@ -173,6 +252,8 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     private var transitionFailedHidden = false
     private var lastLayoutBlockTrace: String? = null
     private var lastSnapshotTrace: String? = null
+    private var lastBrightClockMorphPhase: Boolean? = null
+    private var lastClockGeometryAuthority: String? = null
     @Volatile private var stockWidgetControlActive = false
     @Volatile private var burnInPattern = "static_bottom"
     private var burnInIntervalMs = 60_000L
@@ -180,8 +261,43 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     private var controlledClockTop: Int? = null
     private var controlledClockBottom: Int? = null
     private var controlledLyricTopSafe: Int? = null
+    private var systemUiClockBounds: AodRenderedClockBounds? = null
+    private var aodControllerClockBounds: AodRenderedClockBounds? = null
+    private var renderedClockBounds: AodRenderedClockBounds? = null
+    private val renderedClockRootLocation = IntArray(2)
+    private val renderedClockUnion = Rect()
+    private val renderedClockScratch = Rect()
+    private var displayManager: DisplayManager? = null
+    private var observedDisplayId = -1
+    private var lastObservedDisplayState = -1
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) = Unit
+
+        override fun onDisplayRemoved(displayId: Int) = Unit
+
+        override fun onDisplayChanged(displayId: Int) {
+            if (displayId != observedDisplayId) return
+            val state = rootRef.get()?.display?.state ?: return
+            val changed = state != lastObservedDisplayState
+            if (changed) {
+                lastObservedDisplayState = state
+                HookLogger.i(TAG, "AOD root display state=$state displayId=$displayId")
+            }
+            LinkageTransitionCoordinator.onAodDisplayState(state)
+            if (changed) requestGeometryUpdate()
+        }
+    }
     private var pendingStockMotionUpdate: AodPositionUpdate? = null
+    private var stockMotionRevealPending = false
+    private var stockMotionTransitionActive = false
+    private var stockMotionAlphaAnimationActive = false
+    private var stockMotionAlphaCompletesTransition = false
+    private var stockMotionAlphaStartedAt = 0L
+    private var stockMotionAlphaDurationMs = 0L
+    private var stockMotionAlphaFrom = 1f
+    private var stockMotionAlphaTo = 1f
     private var drawWakeRenewalActive = false
+    private var managedPositionRetryCount = 0
     private var initialRevealPending = true
     private var initialRevealActive = false
     private var initialRevealStartedAt = 0L
@@ -197,6 +313,36 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     }
     private val layoutChangeListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
         requestGeometryUpdate()
+    }
+    private val clockGeometryPreDrawListener = ViewTreeObserver.OnPreDrawListener {
+        val root = rootRef.get()
+        val burnInContainer = burnInContainerRef.get()
+        root?.display?.state?.let(LinkageTransitionCoordinator::onAodDisplayState)
+        val snapshot = latestSnapshot
+        val brightClockMorph = root?.let(::isBrightClockMorphPhase) == true
+        val exactSystemUiBounds = root?.let(SystemUiClockMorphHook::renderedBoundsInRoot)
+        val exactAodControllerBounds = root?.let(AodPositionHook::renderedTargetBoundsInRoot)
+        val exactBoundsChanged = exactSystemUiBounds != systemUiClockBounds ||
+            exactAodControllerBounds != aodControllerClockBounds
+        if (exactBoundsChanged) {
+            systemUiClockBounds = exactSystemUiBounds
+            aodControllerClockBounds = exactAodControllerBounds
+            requestGeometryUpdate()
+        } else if (!brightClockMorph &&
+            !stockWidgetControlActive && root != null && burnInContainer != null &&
+            snapshot != null && canRenderAod(snapshot)
+        ) {
+            val nextBounds = renderedStockClockBounds(
+                root,
+                burnInContainer,
+                renderedClockBounds
+            )
+            if (nextBounds != null && nextBounds != renderedClockBounds) {
+                renderedClockBounds = nextBounds
+                requestGeometryUpdate()
+            }
+        }
+        true
     }
     private val geometryUpdate = Runnable {
         val update = positionUpdates.drain(attachmentGeneration) ?: return@Runnable
@@ -214,11 +360,42 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         val directSurface = surface ?: return@Runnable
         layoutSurface(root, burnInContainer, directSurface)
     }
-    private val stockMotionSettle = Runnable {
-        val update = pendingStockMotionUpdate ?: return@Runnable
+    private val stockMotionSettleTimeout = Runnable {
+        settleStockMotion("timeout")
+    }
+
+    private fun settleStockMotion(source: String) {
+        val update = pendingStockMotionUpdate ?: return
         pendingStockMotionUpdate = null
-        if (update.generation != attachmentGeneration) return@Runnable
+        if (update.generation != attachmentGeneration) return
+        stockMotionRevealPending = true
+        HookLogger.i(TAG, "Stock scene motion settled source=$source zone=${update.zone}")
         enqueueGeometryUpdate(update)
+    }
+    private val stockMotionAlphaFrame = object : Runnable {
+        override fun run() {
+            if (!stockMotionAlphaAnimationActive) return
+            val directSurface = surface ?: return cancelStockMotionTransition(resetAlpha = false)
+            val elapsed = (SystemClock.elapsedRealtime() - stockMotionAlphaStartedAt)
+                .coerceAtLeast(0L)
+            val linear = (elapsed / stockMotionAlphaDurationMs.coerceAtLeast(1L).toFloat())
+                .coerceIn(0f, 1f)
+            val progress = smoothAodRevealProgress(linear)
+            directSurface.alpha = stockMotionAlphaFrom +
+                (stockMotionAlphaTo - stockMotionAlphaFrom) * progress
+            directSurface.invalidate()
+            rootRef.get()?.invalidate()
+            if (linear < 1f) {
+                mainHandler.postDelayed(this, AOD_ANIMATION_FRAME_MS)
+            } else {
+                stockMotionAlphaAnimationActive = false
+                directSurface.alpha = stockMotionAlphaTo
+                if (stockMotionAlphaCompletesTransition) {
+                    stockMotionTransitionActive = false
+                    stockMotionAlphaCompletesTransition = false
+                }
+            }
+        }
     }
     private val drawWakeRenewal = object : Runnable {
         override fun run() {
@@ -252,11 +429,21 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
             if (AodPositionHook.hasManagedPosition() ||
                 AodPositionHook.advanceManagedPosition(burnInPattern, animated = false)
             ) {
+                managedPositionRetryCount = 0
                 if (managedAodPatternRepeats(burnInPattern)) {
                     mainHandler.postDelayed(managedBurnInAdvance, burnInIntervalMs)
                 }
             } else {
-                mainHandler.postDelayed(this, MANAGED_BURN_IN_RETRY_MS)
+                managedPositionRetryCount++
+                if (shouldRetryManagedAodPosition(
+                        managedPositionRetryCount,
+                        MAX_MANAGED_POSITION_RETRIES
+                    )
+                ) {
+                    mainHandler.postDelayed(this, MANAGED_BURN_IN_RETRY_MS)
+                } else {
+                    HookLogger.i(TAG, "Managed AOD position unavailable; using stock geometry")
+                }
             }
         }
     }
@@ -305,15 +492,23 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
                 )
                 rootRef = WeakReference(root)
                 burnInContainerRef = WeakReference(burnInContainer)
+                observeDisplayState(root)
+                AodPositionHook.observeAodRoot(root)
                 val directSurface = buildSurface(root)
                 surface = directSurface
                 root.overlay.add(directSurface)
                 root.addOnLayoutChangeListener(layoutChangeListener)
                 burnInContainer.addOnLayoutChangeListener(layoutChangeListener)
+                burnInContainer.viewTreeObserver.addOnPreDrawListener(
+                    clockGeometryPreDrawListener
+                )
                 LinkageTransitionCoordinator.registerSurface(this)
+                AodPowerCoordinator.onSurfaceAttached()
+                LinkageTransitionCoordinator.onAodSurfaceMode(AodPositionHook.isLinkageMode())
                 val generation = attachmentGeneration
                 root.post {
                     if (generation == attachmentGeneration && rootRef.get() === root) {
+                        root.display?.state?.let(LinkageTransitionCoordinator::onAodDisplayState)
                         val laidOut = layoutSurface(root, burnInContainer, directSurface)
                         HookLogger.i(
                             TAG,
@@ -375,12 +570,17 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
             }
             if (zoneChanged && animated) {
                 pendingStockMotionUpdate = update
-                mainHandler.removeCallbacks(stockMotionSettle)
-                hideForStockMotion()
-                mainHandler.postDelayed(stockMotionSettle, STOCK_MOTION_SETTLE_MS)
+                mainHandler.removeCallbacks(stockMotionSettleTimeout)
+                fadeForStockMotion()
+                mainHandler.postDelayed(stockMotionSettleTimeout, STOCK_MOTION_SETTLE_TIMEOUT_MS)
             } else if (pendingStockMotionUpdate != null && animated) {
                 pendingStockMotionUpdate = update
             } else {
+                if (!animated) {
+                    pendingStockMotionUpdate = null
+                    mainHandler.removeCallbacks(stockMotionSettleTimeout)
+                    cancelStockMotionTransition(resetAlpha = true)
+                }
                 enqueueGeometryUpdate(update)
             }
         }
@@ -392,6 +592,18 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     }
 
     fun isStockWidgetControlActive(): Boolean = stockWidgetControlActive
+
+    fun onStockPositionSettled() {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            mainHandler.removeCallbacks(stockMotionSettleTimeout)
+            settleStockMotion("callback")
+        } else {
+            mainHandler.post {
+                mainHandler.removeCallbacks(stockMotionSettleTimeout)
+                settleStockMotion("callback")
+            }
+        }
+    }
 
     fun managedBurnInPattern(): String = burnInPattern
 
@@ -491,7 +703,7 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         val directSurface = surface ?: return
         val root = rootRef.get() ?: return
         val burnInContainer = burnInContainerRef.get() ?: return
-        val wakeRequired = resolvedSnapshot.wakeSignal != lastWakeSignal
+        val wakeRequired = isNewAodWakeSignal(lastWakeSignal, resolvedSnapshot.wakeSignal)
         lastWakeSignal = resolvedSnapshot.wakeSignal
         if (renderContent == lastRenderContent && directSurface.visibility == View.VISIBLE) {
             updateLifetimeGuard()
@@ -523,11 +735,11 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
             wakeSignal = signal.wakeSignal
         )
         updateLifetimeGuard()
-        if (!effectiveKeepAlive) return
+        val wakeRequired = isNewAodWakeSignal(lastWakeSignal, signal.wakeSignal)
+        lastWakeSignal = signal.wakeSignal
+        if (!effectiveKeepAlive && !wakeRequired) return
         val directSurface = surface ?: return
         val root = rootRef.get() ?: return
-        val wakeRequired = signal.wakeSignal != lastWakeSignal
-        lastWakeSignal = signal.wakeSignal
         requestWakeIfAllowed(root, directSurface, wakeRequired)
     }
 
@@ -582,6 +794,8 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
             setStockWidgetControlActive(false)
         }
         finishInitialReveal()
+        surface?.animate()?.cancel()
+        surface?.alpha = 1f
         val wasVisible = surface?.visibility == View.VISIBLE
         surface?.visibility = View.GONE
         lyricCanvas?.stop()
@@ -596,22 +810,30 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     private fun detachCurrent() {
         attachmentGeneration++
         mainHandler.removeCallbacks(geometryUpdate)
-        mainHandler.removeCallbacks(stockMotionSettle)
+        mainHandler.removeCallbacks(stockMotionSettleTimeout)
         mainHandler.removeCallbacks(managedBurnInStart)
         mainHandler.removeCallbacks(managedBurnInAdvance)
         cancelPausedKeepAliveExpiry()
         pendingStockMotionUpdate = null
+        stockMotionRevealPending = false
+        cancelStockMotionTransition(resetAlpha = false)
         positionUpdates.clear()
         stockWidgetControlActive = false
         AodPositionHook.restoreStockTranslation()
         AodPositionHook.abandonManagedSession()
         setDrawWakeRenewalActive(false)
         finishInitialReveal()
+        AodPowerCoordinator.onSurfaceDetached()
         LinkageTransitionCoordinator.unregisterSurface(this)
         SystemUiLyricProjectionRuntime.projection.detach(this)
-        AodLifetimeController.setLyricActive(false)
         rootRef.get()?.removeOnLayoutChangeListener(layoutChangeListener)
         burnInContainerRef.get()?.removeOnLayoutChangeListener(layoutChangeListener)
+        burnInContainerRef.get()?.viewTreeObserver?.takeIf { it.isAlive }
+            ?.removeOnPreDrawListener(clockGeometryPreDrawListener)
+        displayManager?.unregisterDisplayListener(displayListener)
+        displayManager = null
+        observedDisplayId = -1
+        lastObservedDisplayState = -1
         surface?.let { directSurface ->
             rootRef.get()?.overlay?.remove(directSurface)
             (directSurface.parent as? ViewGroup)?.removeView(directSurface)
@@ -638,10 +860,15 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         transitionFailedHidden = false
         lastLayoutBlockTrace = null
         lastSnapshotTrace = null
+        lastBrightClockMorphPhase = null
+        lastClockGeometryAuthority = null
         sceneZone = AodSceneZone.STOCK
         controlledClockTop = null
         controlledClockBottom = null
         controlledLyricTopSafe = null
+        systemUiClockBounds = null
+        aodControllerClockBounds = null
+        renderedClockBounds = null
         environment = SurfaceEnvironment(LyricSurfaceKind.AOD, attachmentGeneration)
     }
 
@@ -654,6 +881,11 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         if (active) {
             startManagedBurnInSchedule()
         } else {
+            pendingStockMotionUpdate = null
+            stockMotionRevealPending = false
+            mainHandler.removeCallbacks(stockMotionSettleTimeout)
+            cancelStockMotionTransition(resetAlpha = true)
+            managedPositionRetryCount = 0
             mainHandler.removeCallbacks(managedBurnInStart)
             mainHandler.removeCallbacks(managedBurnInAdvance)
             AodPositionHook.restoreStockTranslation()
@@ -664,22 +896,15 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         mainHandler.removeCallbacks(managedBurnInStart)
         mainHandler.removeCallbacks(managedBurnInAdvance)
         AodPositionHook.restartManagedPattern()
+        managedPositionRetryCount = 0
         mainHandler.post(managedBurnInStart)
-    }
-
-    private fun hideForStockMotion() {
-        surface?.visibility = View.INVISIBLE
-        lyricCanvas?.stop()
-        lyricCanvas?.visibility = View.GONE
-        lastRenderContent = null
-        updateLifetimeGuard()
     }
 
     private fun updateLifetimeGuard() {
         val snapshot = latestSnapshot
         val active = XiaomiCapabilityResolver.hasCapability(
             XiaomiCapability.AOD_LIFETIME_GUARD
-        ) && shouldActivateAodLifetime(
+        ) && shouldRenewAodDraw(
             surfaceKind = surfaceKind,
             attached = rootRef.get() != null,
             sceneActive = isSceneActive(),
@@ -689,7 +914,6 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
             keepAlive = snapshot?.keepAlive == true
         )
         setDrawWakeRenewalActive(active)
-        AodLifetimeController.setLyricActive(active)
     }
 
     private fun setDrawWakeRenewalActive(active: Boolean) {
@@ -767,16 +991,6 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
             failClosedLayout(directSurface, "root=${root.width}x${root.height}")
             return false
         }
-        if (stockWidgetControlActive && !AodPositionHook.hasManagedPosition()) {
-            directSurface.visibility = View.INVISIBLE
-            traceLayoutBlock("managed-position-pending")
-            return false
-        }
-        if (pendingStockMotionUpdate != null) {
-            directSurface.visibility = View.INVISIBLE
-            traceLayoutBlock("stock-motion-pending")
-            return false
-        }
         val rootLocation = IntArray(2)
         root.getLocationInWindow(rootLocation)
         var stockTop = root.height
@@ -795,15 +1009,68 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
             )
         }
         if (!foundStockContent) stockTop = 0
-        val effectiveClockTop = controlledClockTop ?: stockTop
-        val effectiveClockBottom = controlledClockBottom ?: stockBottom
         val density = root.resources.displayMetrics.density
         val margin = (SURFACE_MARGIN_DP * density).roundToInt()
+        val brightLinkage = isBrightClockMorphPhase(root)
+        val physicalClockBounds = selectPhysicalAodClockBounds(
+            systemUiClockBounds,
+            aodControllerClockBounds
+        )
+        val effectiveClockBounds = if (brightLinkage && physicalClockBounds == null) {
+            brightLinkageClockBounds(root.height)
+        } else {
+            resolvedAodClockBounds(
+                renderedClockBounds,
+                controlledClockTop,
+                controlledClockBottom,
+                stockTop,
+                stockBottom,
+                physicalClockBounds
+            )
+        }
+        val effectiveClockTop = effectiveClockBounds.top
+        val effectiveClockBottom = effectiveClockBounds.bottom
+        val clockGeometryAuthority = when {
+            systemUiClockBounds != null -> "physical-systemui"
+            aodControllerClockBounds != null -> "physical-aod"
+            brightLinkage -> "bright-fallback"
+            controlledClockTop != null && controlledClockBottom != null -> "managed"
+            renderedClockBounds != null -> "rendered-fallback"
+            else -> "measured-fallback"
+        }
+        if (clockGeometryAuthority != lastClockGeometryAuthority) {
+            lastClockGeometryAuthority = clockGeometryAuthority
+            HookLogger.i(
+                TAG,
+                "Clock geometry authority=$clockGeometryAuthority bounds=" +
+                    "$effectiveClockTop..$effectiveClockBottom managed=" +
+                    "${controlledClockTop ?: "?"}..${controlledClockBottom ?: "?"}"
+            )
+        }
+        val layoutZone = if (brightLinkage || physicalClockBounds != null) {
+            resolveRenderedAodSceneZone(
+                AodSceneZone.CLOCK_TOP,
+                effectiveClockBounds,
+                root.height,
+                margin
+            )
+        } else if (controlledClockTop != null && controlledClockBottom != null &&
+            sceneZone != AodSceneZone.STOCK
+        ) {
+            sceneZone
+        } else {
+            resolveRenderedAodSceneZone(
+                sceneZone,
+                effectiveClockBounds,
+                root.height,
+                margin
+            )
+        }
         val profile = currentAodProfile()
         val metadataHeight = if (profile.metadataVisible &&
             profile.widgets.any { it.type == "metadata" }
         ) {
-            36f * density
+            metadataWidgetHeightDp(profile.metadataSizePercent) * density
         } else {
             0f
         }
@@ -822,25 +1089,25 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
             root.width,
             root.height,
             effectiveClockTop,
-            controlledLyricTopSafe ?: margin,
+            minOf(controlledLyricTopSafe ?: margin, effectiveClockTop).coerceAtLeast(0),
             margin,
-            sceneZone
+            layoutZone
         )
         val placement = PlacementEngine.resolve(
             profile.copy(
                 maxHeightFraction = aodPlacementMaxHeightFraction(
                     profile.maxHeightFraction,
-                    sceneZone
+                    layoutZone
                 )
             ),
             PlacementEnvironment(
                 safeCanvas = safeCanvas,
-                stockClockBottom = if (sceneZone == AodSceneZone.CLOCK_BOTTOM) {
+                stockClockBottom = if (layoutZone == AodSceneZone.CLOCK_BOTTOM) {
                     safeCanvas.top
                 } else {
                     (effectiveClockBottom + margin).toFloat()
                 },
-                bottomReserveTop = if (sceneZone == AodSceneZone.CLOCK_BOTTOM) {
+                bottomReserveTop = if (layoutZone == AodSceneZone.CLOCK_BOTTOM) {
                     safeCanvas.bottom
                 } else {
                     ((environment.safeBottom ?: root.height) - margin)
@@ -882,12 +1149,15 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
             failClosedLayout(
                 directSurface,
                 "invalid-rect=$rect stock=$effectiveClockTop..$effectiveClockBottom " +
-                    "zone=$sceneZone placed=$placed"
+                    "zone=$layoutZone managed=$sceneZone placed=$placed"
             )
             return false
         }
         if (lastLayoutBlockTrace != null) {
-            HookLogger.i(TAG, "Layout ready after=$lastLayoutBlockTrace rect=$rect zone=$sceneZone")
+            HookLogger.i(
+                TAG,
+                "Layout ready after=$lastLayoutBlockTrace rect=$rect zone=$layoutZone"
+            )
             lastLayoutBlockTrace = null
         }
         directSurface.measure(
@@ -895,7 +1165,18 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
             View.MeasureSpec.makeMeasureSpec(rect.height, View.MeasureSpec.EXACTLY)
         )
         directSurface.layout(rect.left, rect.top, rect.right, rect.bottom)
-        if (!handoffActive && !initialRevealActive) directSurface.alpha = 1f
+        if (stockMotionRevealPending) {
+            stockMotionRevealPending = false
+            directSurface.alpha = 0f
+            startStockMotionAlphaAnimation(
+                targetAlpha = 1f,
+                durationMs = STOCK_MOTION_FADE_IN_MS,
+                completesTransition = true
+            )
+        }
+        if (!handoffActive && !initialRevealActive && !stockMotionTransitionActive) {
+            directSurface.alpha = 1f
+        }
         val snapshot = latestSnapshot
         val visible = snapshot != null && canRenderAod(snapshot)
         directSurface.visibility = if (visible) View.VISIBLE else View.GONE
@@ -921,6 +1202,63 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         return true
     }
 
+    private fun renderedStockClockBounds(
+        root: ViewGroup,
+        burnInContainer: ViewGroup,
+        previous: AodRenderedClockBounds?
+    ): AodRenderedClockBounds? {
+        root.getLocationInWindow(renderedClockRootLocation)
+        renderedClockUnion.setEmpty()
+        var found = false
+        for (index in 0 until burnInContainer.childCount) {
+            found = collectRenderedClockBounds(
+                burnInContainer.getChildAt(index),
+                burnInContainer.alpha,
+                root
+            ) || found
+        }
+        if (!found || renderedClockUnion.bottom <= renderedClockUnion.top) return null
+        return previous?.takeIf {
+            it.top == renderedClockUnion.top && it.bottom == renderedClockUnion.bottom
+        } ?: AodRenderedClockBounds(renderedClockUnion.top, renderedClockUnion.bottom)
+    }
+
+    private fun collectRenderedClockBounds(
+        view: View,
+        inheritedAlpha: Float,
+        root: ViewGroup
+    ): Boolean {
+        if (view.visibility != View.VISIBLE || view.width <= 0 || view.height <= 0) return false
+        val effectiveAlpha = inheritedAlpha * view.alpha
+        if (effectiveAlpha <= MIN_RENDERED_CLOCK_ALPHA) return false
+        if (view is ViewGroup && view.childCount > 0) {
+            var childRendered = false
+            for (index in 0 until view.childCount) {
+                childRendered = collectRenderedClockBounds(
+                    view.getChildAt(index),
+                    effectiveAlpha,
+                    root
+                ) || childRendered
+            }
+            if (childRendered) return true
+            if (view.background == null && view.willNotDraw()) return false
+        }
+        if (!view.getGlobalVisibleRect(renderedClockScratch) ||
+            renderedClockScratch.height() <= 0
+        ) return false
+        renderedClockScratch.offset(
+            -renderedClockRootLocation[0],
+            -renderedClockRootLocation[1]
+        )
+        if (!renderedClockScratch.intersect(0, 0, root.width, root.height)) return false
+        if (renderedClockUnion.isEmpty) {
+            renderedClockUnion.set(renderedClockScratch)
+        } else {
+            renderedClockUnion.union(renderedClockScratch)
+        }
+        return true
+    }
+
     private fun traceLayoutBlock(reason: String) {
         if (!HookLogger.traceEnabled) return
         if (lastLayoutBlockTrace == reason) return
@@ -939,8 +1277,44 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         updateLifetimeGuard()
     }
 
+    private fun fadeForStockMotion() {
+        if (surface == null) return
+        stockMotionTransitionActive = true
+        startStockMotionAlphaAnimation(
+            targetAlpha = 0f,
+            durationMs = STOCK_MOTION_FADE_OUT_MS,
+            completesTransition = false
+        )
+    }
+
+    private fun startStockMotionAlphaAnimation(
+        targetAlpha: Float,
+        durationMs: Long,
+        completesTransition: Boolean
+    ) {
+        val directSurface = surface ?: return
+        mainHandler.removeCallbacks(stockMotionAlphaFrame)
+        stockMotionAlphaFrom = directSurface.alpha
+        stockMotionAlphaTo = targetAlpha.coerceIn(0f, 1f)
+        stockMotionAlphaStartedAt = SystemClock.elapsedRealtime()
+        stockMotionAlphaDurationMs = durationMs.coerceAtLeast(1L)
+        stockMotionAlphaCompletesTransition = completesTransition
+        stockMotionAlphaAnimationActive = true
+        mainHandler.post(stockMotionAlphaFrame)
+    }
+
+    private fun cancelStockMotionTransition(resetAlpha: Boolean) {
+        mainHandler.removeCallbacks(stockMotionAlphaFrame)
+        stockMotionTransitionActive = false
+        stockMotionAlphaAnimationActive = false
+        stockMotionAlphaCompletesTransition = false
+        stockMotionAlphaStartedAt = 0L
+        stockMotionAlphaDurationMs = 0L
+        if (resetAlpha) surface?.alpha = 1f
+    }
+
     override fun transitionRectInWindow(): TransitionRect? =
-        transitionRectInWindow(surface)
+        if (awaitingInitialManagedLinkageGeometry()) null else transitionRectInWindow(surface)
 
     override fun presentationRectInWindow(): TransitionRect? =
         presentationRectInWindow(surface)
@@ -951,7 +1325,8 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         lyricCanvas?.setSceneActive(isSceneActive())
         if (!isSceneActive()) {
             pendingStockMotionUpdate = null
-            mainHandler.removeCallbacks(stockMotionSettle)
+            stockMotionRevealPending = false
+            mainHandler.removeCallbacks(stockMotionSettleTimeout)
             setStockWidgetControlActive(false)
             resetLinkageView(surface)
             hideSurfaceOnly(pulse = false)
@@ -976,11 +1351,12 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         token: Long,
         onComplete: (Long) -> Unit
     ) {
+        val preserveStockLinkageAlpha = AodPositionHook.isLinkageMode()
         animateLinkageView(
             surface,
             source,
             fadeIn,
-            preserveAlpha,
+            preserveAlpha || preserveStockLinkageAlpha,
             durationMs,
             token,
             onComplete
@@ -1038,6 +1414,20 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         )
     }
 
+    private fun observeDisplayState(root: ViewGroup) {
+        displayManager?.unregisterDisplayListener(displayListener)
+        displayManager = root.context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
+        observedDisplayId = root.display?.displayId ?: -1
+        lastObservedDisplayState = root.display?.state ?: -1
+        displayManager?.registerDisplayListener(displayListener, mainHandler)
+        HookLogger.i(
+            TAG,
+            "AOD root display observer registered displayId=$observedDisplayId " +
+                "state=$lastObservedDisplayState"
+        )
+        LinkageTransitionCoordinator.onAodDisplayState(lastObservedDisplayState)
+    }
+
     private fun enqueueGeometryUpdate(
         translationX: Float,
         translationY: Float,
@@ -1067,6 +1457,31 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     }.getOrNull()
 
     private fun isSceneActive(): Boolean = sceneRole != LinkageSceneRole.INACTIVE
+
+    private fun isBrightClockMorphPhase(root: ViewGroup): Boolean {
+        val active = shouldUseBrightClockMorphGeometry(
+            linkageMode = AodPositionHook.isLinkageMode(),
+            morphingToAod = SystemUiClockMorphHook.isMorphingToAod(),
+            linkageAwaitingDim = LinkageTransitionCoordinator.isAwaitingAodDimOwnership(),
+            displayState = root.display?.state ?: -1
+        )
+        if (active != lastBrightClockMorphPhase) {
+            lastBrightClockMorphPhase = active
+            HookLogger.i(
+                TAG,
+                "Bright clock morph phase active=$active display=${root.display?.state ?: -1} " +
+                    "physical=${SystemUiClockMorphHook.isMorphingToAod()} " +
+                    "linkage=${LinkageTransitionCoordinator.isAwaitingAodDimOwnership()}"
+            )
+        }
+        return active
+    }
+
+    private fun awaitingInitialManagedLinkageGeometry(): Boolean =
+        stockWidgetControlActive &&
+            AodPositionHook.isLinkageMode() &&
+            (sceneZone == AodSceneZone.STOCK ||
+                controlledClockTop == null || controlledClockBottom == null)
 
     private fun isSurfaceRenderActive(): Boolean {
         val directSurface = surface ?: return false
@@ -1110,8 +1525,12 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     private const val AOD_ANIMATION_FRAME_MS = 16L
     private const val SURFACE_MARGIN_DP = 12f
     private const val MIN_LYRIC_HEIGHT_DP = 96f
-    private const val STOCK_MOTION_SETTLE_MS = 850L
+    private const val STOCK_MOTION_SETTLE_TIMEOUT_MS = 1_500L
+    private const val STOCK_MOTION_FADE_OUT_MS = 150L
+    private const val STOCK_MOTION_FADE_IN_MS = 180L
+    private const val MIN_RENDERED_CLOCK_ALPHA = 0.02f
     private const val MANAGED_BURN_IN_RETRY_MS = 1_000L
+    private const val MAX_MANAGED_POSITION_RETRIES = 5
     private val DEFAULT_AOD_PROFILE = SceneCompiler.compile(SceneCompiler.safeDefaultDocument())
         .profiles.getValue(SceneCompiler.SURFACE_AOD)
 }

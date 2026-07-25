@@ -88,4 +88,19 @@ class DiagnosticLoggingTest {
         assertNotEquals(base.hash, enabled.hash)
         assertEquals(base.profiles, enabled.profiles)
     }
+
+    @Test
+    fun editorGestureSuppressionChangesRuntimeIdentityIndependentlyOfLyrics() {
+        val base = SceneCompiler.compile(SceneCompiler.safeDefaultDocument())
+        val enabled = RuntimeCustomization.withDiagnosticLogging(
+            base,
+            diagnosticLogging = false,
+            available = true,
+            suppressLockscreenEditorLongPress = true
+        )
+
+        assertTrue(enabled.suppressLockscreenEditorLongPress)
+        assertNotEquals(base.hash, enabled.hash)
+        assertEquals(base.profiles, enabled.profiles)
+    }
 }

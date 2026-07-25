@@ -62,6 +62,7 @@ class SystemUiLyricProjectionTest {
             updatedAtElapsedMs = 22L,
             keepAlive = true,
             wakeSignal = 23L,
+            playbackActive = true,
             value = AodStateWireSnapshot(
                 trackGeneration = 24L,
                 aodEnabled = false,
@@ -121,6 +122,7 @@ class SystemUiLyricProjectionTest {
         assertEquals("four_corner", value.burnInPattern)
         assertEquals(120_000L, value.burnInIntervalMs)
         assertEquals(23L, value.wakeSignal)
+        assertTrue(value.playbackActive)
         assertEquals("original", value.original)
         assertEquals("romanized", value.romanized)
         assertEquals("translated", value.translated)
@@ -265,19 +267,19 @@ class SystemUiLyricProjectionTest {
 
     @Test
     fun nonAuthoritativeAodCannotRequestLifetimeOrWake() {
-        assertFalse(shouldActivateAodLifetime(
+        assertFalse(shouldRenewAodDraw(
             LyricSurfaceKind.LOCKSCREEN, true, true, true, false, true
         ))
-        assertFalse(shouldActivateAodLifetime(
+        assertFalse(shouldRenewAodDraw(
             LyricSurfaceKind.AOD, true, false, true, false, true
         ))
-        assertFalse(shouldActivateAodLifetime(
+        assertFalse(shouldRenewAodDraw(
             LyricSurfaceKind.AOD, true, true, false, false, true
         ))
-        assertTrue(shouldActivateAodLifetime(
+        assertTrue(shouldRenewAodDraw(
             LyricSurfaceKind.AOD, true, true, true, false, true
         ))
-        assertTrue(shouldActivateAodLifetime(
+        assertTrue(shouldRenewAodDraw(
             LyricSurfaceKind.AOD, true, true, false, true, true
         ))
         assertFalse(shouldRequestAodWake(true, false, true))
@@ -308,7 +310,8 @@ class SystemUiLyricProjectionTest {
             SceneCompiler.compile(SceneCompiler.safeDefaultDocument()),
             diagnosticLogging = true,
             available = true,
-            raiseToAod = true
+            raiseToAod = true,
+            suppressLockscreenEditorLongPress = true
         )
 
         assertTrue(harness.projection.acceptConfiguration(configuration))
@@ -316,6 +319,7 @@ class SystemUiLyricProjectionTest {
 
         assertEquals(listOf(true, false), harness.diagnosticLoggingStates)
         assertEquals(listOf(true, false), harness.raiseToAodStates)
+        assertEquals(listOf(true, false), harness.editorGestureSuppressionStates)
     }
 
     @Test
@@ -420,12 +424,14 @@ class SystemUiLyricProjectionTest {
         val scheduler = FakeExpiryScheduler()
         val diagnosticLoggingStates = ArrayList<Boolean>()
         val raiseToAodStates = ArrayList<Boolean>()
+        val editorGestureSuppressionStates = ArrayList<Boolean>()
         val projection = SystemUiLyricProjection(
             expiryScheduler = scheduler,
             elapsedRealtime = { 0L },
             processUserId = { 0 },
             setDiagnosticLogging = diagnosticLoggingStates::add,
-            setRaiseToAod = raiseToAodStates::add
+            setRaiseToAod = raiseToAodStates::add,
+            setSuppressLockscreenEditorLongPress = editorGestureSuppressionStates::add
         ) { _, onState, onDisconnected ->
             sendState = onState
             disconnect = onDisconnected

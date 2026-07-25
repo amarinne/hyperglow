@@ -54,6 +54,41 @@ internal data class AodBurnInPatternSlot(
     val horizontalStep: Int
 )
 
+internal data class AodNaturalTranslation(
+    val x: Int,
+    val y: Float
+)
+
+internal fun naturalAodTranslation(
+    geometry: AodClockGeometry,
+    moveCurrent: Int
+): AodNaturalTranslation? {
+    if (!geometry.baseTranslationY.isFinite() ||
+        !geometry.translationYStep.isFinite() ||
+        geometry.translationYStep <= 0f ||
+        geometry.viewHeight <= 0
+    ) return null
+    val halfStep = moveCurrent / 2
+    val verticalStep: Int
+    val horizontalStep: Int
+    when (geometry.mode) {
+        0 -> {
+            horizontalStep = halfStep % 3 - 1
+            verticalStep = halfStep / 3
+        }
+        2, 3 -> {
+            horizontalStep = 0
+            verticalStep = halfStep
+        }
+        else -> return null
+    }
+    return AodNaturalTranslation(
+        x = geometry.translationXStep * horizontalStep,
+        y = geometry.baseTranslationY +
+            geometry.translationYStep * verticalStep - geometry.viewTop
+    )
+}
+
 internal fun aodBurnInPatternSlots(pattern: String): List<AodBurnInPatternSlot> = when (pattern) {
     "static_top" -> listOf(
         AodBurnInPatternSlot(AodSceneZone.CLOCK_TOP, 0)

@@ -78,7 +78,7 @@ class SpicyBridgeDocumentTest {
         val loading = state(durationMs = 3_000, status = "loading", generation = 7)
         val expected = AodProjectionEngine.fallbackRefreshSession(loading)
 
-        assertEquals(4_000L, AodProjectionEngine.fallbackRefreshIntervalMs())
+        assertEquals(1_000L, AodProjectionEngine.fallbackRefreshIntervalMs())
         assertTrue(AodProjectionEngine.canRefreshFallback(expected, loading))
         assertFalse(AodProjectionEngine.canRefreshFallback(expected, loading.copy(status = "no_lyrics")))
         assertFalse(AodProjectionEngine.canRefreshFallback(expected, loading.copy(generation = 8)))
@@ -91,6 +91,15 @@ class SpicyBridgeDocumentTest {
         assertEquals(2 to 6, normalizeSpicySourceRange(8, 2, 6))
         assertEquals(-1 to -1, normalizeSpicySourceRange(8, 6, 2))
         assertEquals(-1 to -1, normalizeSpicySourceRange(8, 2, 9))
+    }
+
+    @Test
+    fun bridgeV2PrefersCanonicalBoundaryAndV1NormalizesLegacyFlagOnce() {
+        assertEquals(true, normalizeSpicyBoundaryAfter(2, true, true))
+        assertEquals(false, normalizeSpicyBoundaryAfter(2, false, false))
+        assertEquals(true, normalizeSpicyBoundaryAfter(1, null, false))
+        assertEquals(false, normalizeSpicyBoundaryAfter(1, null, true))
+        assertNull(normalizeSpicyBoundaryAfter(2, null, false))
     }
 
     @Test
@@ -225,7 +234,8 @@ class SpicyBridgeDocumentTest {
         )
 
         assertTrue(isValidSpicyBridgeDocumentMetadata(valid))
-        assertFalse(isValidSpicyBridgeDocumentMetadata(valid.copy(documentVersion = 2)))
+        assertTrue(isValidSpicyBridgeDocumentMetadata(valid.copy(documentVersion = 2)))
+        assertFalse(isValidSpicyBridgeDocumentMetadata(valid.copy(documentVersion = 3)))
         assertFalse(isValidSpicyBridgeDocumentMetadata(valid.copy(producerId = "")))
         assertFalse(isValidSpicyBridgeDocumentMetadata(valid.copy(generation = -1)))
         assertFalse(isValidSpicyBridgeDocumentMetadata(valid.copy(trackUri = "not-spotify")))

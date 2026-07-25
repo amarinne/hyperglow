@@ -4,11 +4,15 @@ import android.app.Application
 import com.eza.hyperglow.root.aod.AodSurfaceHook
 import com.eza.hyperglow.root.aod.AodLifetimeHook
 import com.eza.hyperglow.root.aod.AodPositionHook
+import com.eza.hyperglow.root.aod.AodDisplayStateHook
+import com.eza.hyperglow.root.aod.AodWakeBroker
 import com.eza.hyperglow.root.capability.XiaomiCapabilityResolver
 import com.eza.hyperglow.root.lockscreen.LockscreenSurfaceHook
+import com.eza.hyperglow.root.lockscreen.LockscreenEditorGestureHook
 import com.eza.hyperglow.root.lockscreen.RaiseToAodHook
 import com.eza.hyperglow.root.projection.SystemUiLyricProjectionRuntime
 import com.eza.hyperglow.root.transition.LinkageTransitionHook
+import com.eza.hyperglow.root.transition.SystemUiClockMorphHook
 import io.github.libxposed.api.XposedInterface.Chain
 import io.github.libxposed.api.XposedInterface.Hooker
 import io.github.libxposed.api.XposedModule
@@ -46,9 +50,19 @@ class HookEntry : XposedModule() {
             HookLogger.w(TAG, "Linkage hook unavailable", error)
         }
         try {
+            SystemUiClockMorphHook.install(this, param.defaultClassLoader)
+        } catch (error: Exception) {
+            HookLogger.w(TAG, "SystemUI clock morph geometry hook unavailable", error)
+        }
+        try {
             RaiseToAodHook.install(this, param.defaultClassLoader)
         } catch (error: Exception) {
             HookLogger.w(TAG, "Raise-to-AOD hook unavailable", error)
+        }
+        try {
+            LockscreenEditorGestureHook.install(this, param.defaultClassLoader)
+        } catch (error: Exception) {
+            HookLogger.w(TAG, "Lockscreen editor gesture hook unavailable", error)
         }
 
         try {
@@ -65,6 +79,16 @@ class HookEntry : XposedModule() {
             AodPositionHook.install(this, param.defaultClassLoader)
         } catch (error: Exception) {
             HookLogger.w(TAG, "Default-loader AOD position hook unavailable", error)
+        }
+        try {
+            AodDisplayStateHook.install(this, param.defaultClassLoader)
+        } catch (error: Exception) {
+            HookLogger.w(TAG, "Default-loader AOD display-state hook unavailable", error)
+        }
+        try {
+            AodWakeBroker.install(this, param.defaultClassLoader)
+        } catch (error: Exception) {
+            HookLogger.w(TAG, "Default-loader AOD wake broker unavailable", error)
         }
         try {
             val loaderClass = Class.forName("dalvik.system.BaseDexClassLoader")
@@ -98,6 +122,16 @@ class HookEntry : XposedModule() {
                 AodPositionHook.install(module, loader)
             } catch (error: Exception) {
                 HookLogger.w(TAG, "Dynamic-loader AOD position hook failed", error)
+            }
+            try {
+                AodDisplayStateHook.install(module, loader)
+            } catch (error: Exception) {
+                HookLogger.w(TAG, "Dynamic-loader AOD display-state hook failed", error)
+            }
+            try {
+                AodWakeBroker.install(module, loader)
+            } catch (error: Exception) {
+                HookLogger.w(TAG, "Dynamic-loader AOD wake broker failed", error)
             }
             return result
         }

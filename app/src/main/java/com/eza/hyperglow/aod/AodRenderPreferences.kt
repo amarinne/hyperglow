@@ -20,11 +20,13 @@ data class AodRenderConfig(
     val glow: String = "Off",
     val adaptiveSectioning: Boolean = true,
     val keepAwake: Boolean = true,
+    val keepAwakeUnsynced: Boolean = false,
     val experimentalPositionFollowing: Boolean = false,
     val burnInPattern: String = "static_bottom",
     val burnInIntervalMs: Long = 60_000L,
     val lockscreenKeepAwake: Boolean = false,
-    val raiseToAod: Boolean = false
+    val raiseToAod: Boolean = false,
+    val suppressLockscreenEditorLongPress: Boolean = false
 )
 
 internal fun normalizeAodAlignment(value: String?): String = when (value) {
@@ -116,11 +118,13 @@ object AodRenderPreferences {
     const val GLOW = "glow"
     const val ADAPTIVE_SECTIONING = "adaptive_sectioning"
     const val KEEP_AWAKE = "keep_awake"
+    const val KEEP_AWAKE_UNSYNCED = "keep_awake_unsynced"
     const val EXPERIMENTAL_POSITION_FOLLOWING = "experimental_position_following"
     const val BURN_IN_PATTERN = "burn_in_pattern"
     const val BURN_IN_INTERVAL_MS = "burn_in_interval_ms"
     const val LOCKSCREEN_KEEP_AWAKE = "lockscreen_keep_awake"
     const val RAISE_TO_AOD = "raise_to_aod"
+    const val SUPPRESS_LOCKSCREEN_EDITOR_LONG_PRESS = "suppress_lockscreen_editor_long_press"
 
     private var preferences: SharedPreferences? = null
     private var cachedConfig: AodRenderConfig? = null
@@ -151,11 +155,13 @@ object AodRenderPreferences {
             normalizeAodGlow(prefs.getString(GLOW, "Off")),
             prefs.getBoolean(ADAPTIVE_SECTIONING, true),
             prefs.getBoolean(KEEP_AWAKE, true),
+            prefs.getBoolean(KEEP_AWAKE_UNSYNCED, false),
             prefs.getBoolean(EXPERIMENTAL_POSITION_FOLLOWING, false),
             normalizeAodBurnInPattern(prefs.getString(BURN_IN_PATTERN, "static_bottom")),
             normalizeAodBurnInInterval(prefs.getLong(BURN_IN_INTERVAL_MS, 60_000L)),
             prefs.getBoolean(LOCKSCREEN_KEEP_AWAKE, false),
-            prefs.getBoolean(RAISE_TO_AOD, false)
+            prefs.getBoolean(RAISE_TO_AOD, false),
+            prefs.getBoolean(SUPPRESS_LOCKSCREEN_EDITOR_LONG_PRESS, false)
         ).also { cachedConfig = it }
     }
 }

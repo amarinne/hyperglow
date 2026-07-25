@@ -9,11 +9,13 @@ internal enum class XiaomiCapability {
     AOD_SURFACE,
     AOD_POSITION_UPDATES,
     AOD_LIFETIME_GUARD,
+    AOD_WAKE_BROKER,
     LOCKSCREEN_HOST,
     LOCKSCREEN_GEOMETRY,
     LINKAGE_DIRECTION,
     LINKAGE_GEOMETRY,
     RAISE_TO_AOD,
+    LOCKSCREEN_EDITOR_GESTURE,
     FULL_AOD,
     VIDEO_DEPTH
 }
@@ -22,11 +24,13 @@ internal data class XiaomiSymbolSnapshot(
     val aodSurface: Boolean = false,
     val aodPositionUpdates: Boolean = false,
     val aodLifetimeGuard: Boolean = false,
+    val aodWakeBroker: Boolean = false,
     val lockscreenHost: Boolean = false,
     val lockscreenGeometry: Boolean = false,
     val linkageDirection: Boolean = false,
     val linkageGeometry: Boolean = false,
     val raiseToAod: Boolean = false,
+    val lockscreenEditorGesture: Boolean = false,
     val fullAod: Boolean = false,
     val videoDepth: Boolean = false
 )
@@ -43,6 +47,9 @@ internal fun resolveXiaomiCapabilities(
         if (verifiedRuntimeProfile && symbols.aodSurface && symbols.aodLifetimeGuard) {
             add(XiaomiCapability.AOD_LIFETIME_GUARD)
         }
+        if (verifiedRuntimeProfile && symbols.aodWakeBroker) {
+            add(XiaomiCapability.AOD_WAKE_BROKER)
+        }
         if (verifiedRuntimeProfile && symbols.lockscreenHost) add(XiaomiCapability.LOCKSCREEN_HOST)
         if (verifiedRuntimeProfile && symbols.lockscreenHost && symbols.lockscreenGeometry) {
             add(XiaomiCapability.LOCKSCREEN_GEOMETRY)
@@ -56,6 +63,9 @@ internal fun resolveXiaomiCapabilities(
             add(XiaomiCapability.LINKAGE_GEOMETRY)
         }
         if (verifiedRuntimeProfile && symbols.raiseToAod) add(XiaomiCapability.RAISE_TO_AOD)
+        if (verifiedRuntimeProfile && symbols.lockscreenEditorGesture) {
+            add(XiaomiCapability.LOCKSCREEN_EDITOR_GESTURE)
+        }
         if (verifiedRuntimeProfile && symbols.aodSurface && symbols.fullAod) {
             add(XiaomiCapability.FULL_AOD)
         }
@@ -139,6 +149,12 @@ internal object XiaomiCapabilityResolver {
                 "long",
                 "java.lang.String"
             ),
+            lockscreenEditorGesture = hasMethod(
+                classLoader,
+                KEYGUARD_EDITOR_HELPER,
+                "onTouchEvent",
+                "android.view.MotionEvent"
+            ) && hasNoArgMethod(classLoader, KEYGUARD_EDITOR_HELPER, "tryStartEditActivity"),
             fullAod = hasClass(classLoader, FULL_AOD_MANAGER),
             videoDepth = hasClass(classLoader, VIDEO_DEPTH_SURFACE_HOLDER)
         )
@@ -158,9 +174,17 @@ internal object XiaomiCapabilityResolver {
                 "boolean",
                 "int",
                 "float"
-            ),
+            ) && hasNoArgMethod(classLoader, AOD_DOZE_HOST, "updatePosition"),
             aodLifetimeGuard = hasNoArgMethod(classLoader, AOD_LIFETIME_CONTROLLER, "smartHide") &&
                 hasNoArgMethod(classLoader, AOD_LIFETIME_CONTROLLER, "hideDoze"),
+            aodWakeBroker = hasField(classLoader, AOD_DOZE_TRIGGERS, "mHost") &&
+                hasField(classLoader, AOD_DOZE_TRIGGERS, "mContext") && hasMethod(
+                classLoader,
+                AOD_DOZE_HOST,
+                "fireAodState",
+                "boolean",
+                "java.lang.String"
+            ),
             fullAod = hasNoArgMethod(classLoader, AOD_SETTINGS, "needFullAod")
         )
         logIfChanged()
@@ -179,11 +203,13 @@ internal object XiaomiCapabilityResolver {
             aodSurface = aodSymbols.aodSurface,
             aodPositionUpdates = aodSymbols.aodPositionUpdates,
             aodLifetimeGuard = aodSymbols.aodLifetimeGuard,
+            aodWakeBroker = aodSymbols.aodWakeBroker,
             lockscreenHost = defaultSymbols.lockscreenHost,
             lockscreenGeometry = defaultSymbols.lockscreenGeometry,
             linkageDirection = defaultSymbols.linkageDirection,
             linkageGeometry = defaultSymbols.linkageGeometry,
             raiseToAod = defaultSymbols.raiseToAod,
+            lockscreenEditorGesture = defaultSymbols.lockscreenEditorGesture,
             fullAod = defaultSymbols.fullAod && aodSymbols.fullAod,
             videoDepth = defaultSymbols.videoDepth
         )
@@ -226,6 +252,9 @@ internal object XiaomiCapabilityResolver {
         methodName: String
     ): Boolean = hasMethod(classLoader, className, methodName)
 
+    private fun hasField(classLoader: ClassLoader, className: String, fieldName: String): Boolean =
+        runCatching { classLoader.loadClass(className).getDeclaredField(fieldName) }.isSuccess
+
     private fun hasMethod(
         classLoader: ClassLoader,
         className: String,
@@ -252,6 +281,8 @@ internal object XiaomiCapabilityResolver {
     private const val AOD_VIEW = "com.miui.aod.AODView"
     private const val AOD_POSITION_CONTROLLER = "com.miui.aod.AODUpdatePositionController"
     private const val AOD_LIFETIME_CONTROLLER = "com.miui.aod.doze.MiuiShowStyleController"
+    private const val AOD_DOZE_TRIGGERS = "com.miui.aod.doze.DozeTriggers"
+    private const val AOD_DOZE_HOST = "com.miui.aod.DozeHost"
     private const val AOD_SETTINGS = "com.miui.aod.widget.AODSettings"
     private const val KEYGUARD_PANEL_SECTION =
         "com.android.keyguard.blueprint.KeyguardPanelViewSection"
@@ -264,6 +295,8 @@ internal object XiaomiCapabilityResolver {
     private const val ANIMATION_HELPER = "com.android.keyguard.clock.animation.AnimationHelper"
     private const val KEYGUARD_SENSOR_INJECTOR =
         "com.android.keyguard.injector.KeyguardSensorInjector"
+    private const val KEYGUARD_EDITOR_HELPER =
+        "com.android.keyguard.editor.KeyguardEditorHelper"
     private const val POWER_MANAGER = "android.os.PowerManager"
     private const val FULL_AOD_MANAGER = "com.miui.interfaces.keyguard.IMiuiFullAodManager"
     private const val VIDEO_DEPTH_SURFACE_HOLDER = "com.miui.keyguard.VideoDepthSurfaceHolder"

@@ -11,6 +11,7 @@ import com.eza.hyperglow.aod.AodStateWireMessage
 import com.eza.hyperglow.customization.CompiledCustomization
 import com.eza.hyperglow.root.aod.AodLyricClient
 import com.eza.hyperglow.root.lockscreen.RaiseToAodController
+import com.eza.hyperglow.root.lockscreen.LockscreenEditorGestureController
 import com.eza.hyperglow.root.customization.CompiledCustomizationBundleCodec
 import com.eza.hyperglow.root.customization.CompiledCustomizationBundleCodec.WirePayload
 import java.util.IdentityHashMap
@@ -27,7 +28,7 @@ internal fun isPlausibleWireTimestamp(updatedAtElapsedMs: Long, nowElapsedMs: Lo
 internal fun currentProcessUserId(): Int =
     UserHandle.getUserHandleForUid(Process.myUid()).hashCode()
 
-internal fun shouldActivateAodLifetime(
+internal fun shouldRenewAodDraw(
     surfaceKind: LyricSurfaceKind,
     attached: Boolean,
     sceneActive: Boolean,
@@ -100,6 +101,8 @@ internal class SystemUiLyricProjection(
     private val processUserId: () -> Int = ::currentProcessUserId,
     private val setDiagnosticLogging: (Boolean) -> Unit = DiagnosticLoggingRuntime::setEnabled,
     private val setRaiseToAod: (Boolean) -> Unit = RaiseToAodController::setEnabled,
+    private val setSuppressLockscreenEditorLongPress: (Boolean) -> Unit =
+        LockscreenEditorGestureController::setEnabled,
     clientFactory: ((WirePayload) -> Unit, (AodStateWireMessage) -> Unit, () -> Unit) ->
         LyricProjectionClient = { onConfiguration, onState, onDisconnected ->
             AodLyricClient(onConfiguration, onState, onDisconnected)
@@ -171,7 +174,8 @@ internal class SystemUiLyricProjection(
                 latestSnapshot = current.copy(
                     updatedAtElapsedMs = message.updatedAtElapsedMs,
                     keepAlive = message.value.keepAlive,
-                    wakeSignal = message.value.wakeSignal
+                    wakeSignal = message.value.wakeSignal,
+                    playbackActive = message.value.playbackActive
                 )
                 if (current.visible) latestVisibleSnapshot = latestSnapshot
                 latestSnapshot?.let(::scheduleExpiry)
@@ -224,6 +228,7 @@ internal class SystemUiLyricProjection(
     internal fun acceptConfiguration(configuration: CompiledCustomization): Boolean {
         setDiagnosticLogging(configuration.diagnosticLogging)
         setRaiseToAod(configuration.raiseToAod)
+        setSuppressLockscreenEditorLongPress(configuration.suppressLockscreenEditorLongPress)
         val current = latestConfiguration
         if (current != null && current.revision == configuration.revision &&
             current.hash == configuration.hash
@@ -255,6 +260,7 @@ internal class SystemUiLyricProjection(
     private fun clearCachedState() {
         setDiagnosticLogging(false)
         setRaiseToAod(false)
+        setSuppressLockscreenEditorLongPress(false)
         expiryScheduler.cancel()
         latestSnapshot = null
         latestVisibleSnapshot = null

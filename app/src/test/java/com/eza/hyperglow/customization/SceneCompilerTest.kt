@@ -104,6 +104,25 @@ class SceneCompilerTest {
     }
 
     @Test
+    fun metadataSizeClampsAndFuriganaPreferenceSurvivesValidation() {
+        val compiled = SceneCompiler.compile(
+            CustomizationDocument(
+                profiles = mapOf(
+                    SceneCompiler.SURFACE_AOD to SurfaceProfile(
+                        metadataSizePercent = 900,
+                        rubyVisible = false
+                    )
+                )
+            )
+        )
+        val validated = SystemUiCustomizationValidator.validate(compiled)!!
+            .profiles.getValue(SceneCompiler.SURFACE_AOD)
+
+        assertEquals(200, validated.metadataSizePercent)
+        assertFalse(validated.rubyVisible)
+    }
+
+    @Test
     fun lineLevelSweepDirectionIsCompiledAndValidated() {
         val compiled = SceneCompiler.compile(
             CustomizationDocument(

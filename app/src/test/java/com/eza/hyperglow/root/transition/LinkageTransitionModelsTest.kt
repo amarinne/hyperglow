@@ -68,6 +68,27 @@ class LinkageTransitionModelsTest {
     }
 
     @Test
+    fun pendingForwardCanReturnToBrightLockscreenSource() {
+        val machine = LinkageStateMachine()
+        machine.attach(LyricSurfaceKind.LOCKSCREEN)
+        val token = machine.linkage(toLockscreen = false)
+
+        assertTrue(machine.cancelToSource(token))
+        assertEquals(LinkageTransitionState.LOCKSCREEN, machine.state)
+        assertEquals(LinkageSceneRole.AUTHORITATIVE, machine.authority.roleOf(LyricSurfaceKind.LOCKSCREEN))
+        assertEquals(LinkageSceneRole.INACTIVE, machine.authority.roleOf(LyricSurfaceKind.AOD))
+        assertFalse(machine.cancelToSource(token))
+    }
+
+    @Test
+    fun dimmedDisplayStatesGrantAodOwnership() {
+        assertFalse(isDimmedAodDisplayState(1))
+        assertFalse(isDimmedAodDisplayState(2))
+        assertTrue(isDimmedAodDisplayState(3))
+        assertTrue(isDimmedAodDisplayState(4))
+    }
+
+    @Test
     fun authorityTracksStableSurfaceAndActiveTransitionRoles() {
         val machine = LinkageStateMachine()
         machine.attach(LyricSurfaceKind.LOCKSCREEN)

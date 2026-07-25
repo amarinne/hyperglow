@@ -8,6 +8,82 @@ import org.junit.Test
 
 class AodPositionUpdateTest {
     @Test
+    fun brightLinkageReservesTopClockMorphRegion() {
+        assertEquals(AodRenderedClockBounds(0, 935), brightLinkageClockBounds(2670))
+    }
+
+    @Test
+    fun physicalBrightClockMorphDoesNotDependOnLyricLinkageAcceptance() {
+        assertTrue(shouldUseBrightClockMorphGeometry(true, true, false, 2))
+        assertTrue(shouldUseBrightClockMorphGeometry(true, false, true, 2))
+        assertFalse(shouldUseBrightClockMorphGeometry(true, true, false, 3))
+        assertFalse(shouldUseBrightClockMorphGeometry(false, true, true, 2))
+    }
+
+    @Test
+    fun managedClockBoundsRemainSingleStableGeometryAuthority() {
+        assertEquals(
+            AodRenderedClockBounds(1463, 2037),
+            resolvedAodClockBounds(
+                renderedBounds = AodRenderedClockBounds(1851, 2425),
+                controlledTop = 1463,
+                controlledBottom = 2037,
+                measuredTop = 1907,
+                measuredBottom = 2350
+            )
+        )
+    }
+
+    @Test
+    fun exactPhysicalClockBoundsOverrideDivergedManagedTarget() {
+        assertEquals(
+            AodRenderedClockBounds(263, 837),
+            resolvedAodClockBounds(
+                renderedBounds = null,
+                controlledTop = 1851,
+                controlledBottom = 2425,
+                measuredTop = 1851,
+                measuredBottom = 2425,
+                exactPhysicalBounds = AodRenderedClockBounds(263, 837)
+            )
+        )
+    }
+
+    @Test
+    fun exactClockCollisionAuthorityPrefersVisibleSystemUiThenAodTarget() {
+        val systemUi = AodRenderedClockBounds(263, 837)
+        val aodTarget = AodRenderedClockBounds(1851, 2425)
+
+        assertEquals(systemUi, selectPhysicalAodClockBounds(systemUi, aodTarget))
+        assertEquals(aodTarget, selectPhysicalAodClockBounds(null, aodTarget))
+        assertEquals(
+            aodTarget,
+            resolvedAodClockBounds(
+                renderedBounds = AodRenderedClockBounds(426, 837),
+                controlledTop = aodTarget.top,
+                controlledBottom = aodTarget.bottom,
+                measuredTop = 426,
+                measuredBottom = 837,
+                exactPhysicalBounds = selectPhysicalAodClockBounds(null, null)
+            )
+        )
+    }
+
+    @Test
+    fun opposingClockCrossfadeUsesManagedTargetBounds() {
+        assertEquals(
+            AodRenderedClockBounds(1851, 2425),
+            resolvedAodClockBounds(
+                renderedBounds = AodRenderedClockBounds(426, 837),
+                controlledTop = 1851,
+                controlledBottom = 2425,
+                measuredTop = 426,
+                measuredBottom = 2425
+            )
+        )
+    }
+
+    @Test
     fun aodRevealProgressUsesSmoothElapsedTimeCurve() {
         assertEquals(0f, smoothAodRevealProgress(0f), 0.0001f)
         assertEquals(0.5f, smoothAodRevealProgress(0.5f), 0.0001f)
@@ -134,6 +210,42 @@ class AodPositionUpdateTest {
     }
 
     @Test
+    fun stockLinkageInitialPositionIsDeterministicBeforeFirstTranslationCallback() {
+        assertEquals(
+            AodNaturalTranslation(0, 500f),
+            naturalAodTranslation(
+                AodClockGeometry(
+                    mode = 3,
+                    baseTranslationY = 120f,
+                    translationYStep = 100f,
+                    viewTop = 20,
+                    viewHeight = 300,
+                    translationXStep = 18
+                ),
+                moveCurrent = 8
+            )
+        )
+    }
+
+    @Test
+    fun standardAodInitialPositionUsesXiaomiGridIndex() {
+        assertEquals(
+            AodNaturalTranslation(18, 300f),
+            naturalAodTranslation(
+                AodClockGeometry(
+                    mode = 0,
+                    baseTranslationY = 120f,
+                    translationYStep = 100f,
+                    viewTop = 20,
+                    viewHeight = 300,
+                    translationXStep = 18
+                ),
+                moveCurrent = 16
+            )
+        )
+    }
+
+    @Test
     fun managedAnchorReappliesWhenXiaomiGeometryChangesAcrossScreenState() {
         val before = managedAodClockDecision(
             "static_bottom",
@@ -203,6 +315,71 @@ class AodPositionUpdateTest {
     fun clockBottomZoneUsesEntireAlreadyBoundedLyricRegion() {
         assertEquals(1f, aodPlacementMaxHeightFraction(0.42f, AodSceneZone.CLOCK_BOTTOM))
         assertEquals(0.42f, aodPlacementMaxHeightFraction(0.42f, AodSceneZone.CLOCK_TOP))
+    }
+
+    @Test
+    fun renderedClockPositionOwnsTheFreeSideDuringManagedMotion() {
+        assertEquals(
+            AodSceneZone.CLOCK_TOP,
+            resolveRenderedAodSceneZone(
+                AodSceneZone.CLOCK_BOTTOM,
+                AodRenderedClockBounds(120, 420),
+                rootHeight = 2400,
+                margin = 24
+            )
+        )
+        assertEquals(
+            AodSceneZone.CLOCK_BOTTOM,
+            resolveRenderedAodSceneZone(
+                AodSceneZone.CLOCK_TOP,
+                AodRenderedClockBounds(1740, 2040),
+                rootHeight = 2400,
+                margin = 24
+            )
+        )
+        assertEquals(
+            AodSceneZone.STOCK,
+            resolveRenderedAodSceneZone(
+                AodSceneZone.STOCK,
+                AodRenderedClockBounds(1740, 2040),
+                rootHeight = 2400,
+                margin = 24
+            )
+        )
+    }
+
+    @Test
+    fun renderedClockNeverOverridesManagedTarget() {
+        assertEquals(
+            AodRenderedClockBounds(120, 420),
+            resolvedAodClockBounds(
+                renderedBounds = AodRenderedClockBounds(700, 1100),
+                controlledTop = 120,
+                controlledBottom = 420,
+                measuredTop = 80,
+                measuredBottom = 380
+            )
+        )
+        assertEquals(
+            AodRenderedClockBounds(120, 420),
+            resolvedAodClockBounds(
+                renderedBounds = null,
+                controlledTop = 120,
+                controlledBottom = 420,
+                measuredTop = 80,
+                measuredBottom = 380
+            )
+        )
+        assertEquals(
+            AodRenderedClockBounds(80, 380),
+            resolvedAodClockBounds(
+                renderedBounds = null,
+                controlledTop = 420,
+                controlledBottom = 120,
+                measuredTop = 80,
+                measuredBottom = 380
+            )
+        )
     }
 
     @Test

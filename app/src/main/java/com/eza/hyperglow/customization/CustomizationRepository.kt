@@ -172,6 +172,8 @@ object CustomizationRepository {
         secondaryMode = secondaryMode,
         metadataVisible = metadataVisible,
         metadataAnchor = metadataAnchor,
+        metadataSizePercent = metadataSizePercent,
+        rubyVisible = rubyVisible,
         weight = weight,
         textSize = textSize,
         textSizeCustom = textSizeCustom,

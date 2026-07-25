@@ -10,7 +10,7 @@ internal data class LyricWord(
     val romanized: String,
     val startMs: Long,
     val endMs: Long,
-    val partOfWord: Boolean,
+    val boundaryAfter: Boolean,
     val sourceStart: Int = -1,
     val sourceEnd: Int = -1
 )
@@ -31,6 +31,7 @@ internal data class LyricSnapshot(
     val trackGeneration: Long = 0L,
     val updatedAtElapsedMs: Long = 0L,
     val visible: Boolean = false,
+    val playbackActive: Boolean = false,
     val aodEnabled: Boolean = true,
     val lockscreenEnabled: Boolean = false,
     val seamlessTransitionEnabled: Boolean = true,
@@ -144,6 +145,7 @@ internal data class LyricKeepAliveSignal(
     val updatedAtElapsedMs: Long,
     val keepAlive: Boolean,
     val wakeSignal: Long,
+    val playbackActive: Boolean = false,
     val userId: Int = 0
 )
 
@@ -259,6 +261,7 @@ internal fun AodStateWireMessage.toLyricProjectionMessage(): LyricProjectionMess
             trackGeneration = value.trackGeneration,
             updatedAtElapsedMs = updatedAtElapsedMs,
             visible = true,
+            playbackActive = playbackActive,
             aodEnabled = value.aodEnabled,
             lockscreenEnabled = value.lockscreenEnabled,
             seamlessTransitionEnabled = value.seamlessTransitionEnabled,
@@ -285,7 +288,7 @@ internal fun AodStateWireMessage.toLyricProjectionMessage(): LyricProjectionMess
                     romanized = word.romanized,
                     startMs = word.startMs,
                     endMs = word.endMs,
-                    partOfWord = word.partOfWord,
+                    boundaryAfter = word.boundaryAfter,
                     sourceStart = word.sourceStart,
                     sourceEnd = word.sourceEnd
                 )
@@ -325,6 +328,7 @@ internal fun AodStateWireMessage.toLyricProjectionMessage(): LyricProjectionMess
             userId = userId,
             updatedAtElapsedMs = updatedAtElapsedMs,
             visible = false,
+            playbackActive = playbackActive,
             keepAlive = keepAlive,
             wakeSignal = wakeSignal
         )
@@ -335,6 +339,7 @@ internal fun AodStateWireMessage.toLyricProjectionMessage(): LyricProjectionMess
             updatedAtElapsedMs = updatedAtElapsedMs,
             keepAlive = keepAlive,
             wakeSignal = wakeSignal,
+            playbackActive = playbackActive,
             userId = userId
         )
     )

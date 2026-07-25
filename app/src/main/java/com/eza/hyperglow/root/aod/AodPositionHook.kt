@@ -1,7 +1,10 @@
 package com.eza.hyperglow.root.aod
 
+import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
+import android.view.View
+import android.view.ViewGroup
 import com.eza.hyperglow.root.HookLogger
 import io.github.libxposed.api.XposedInterface.Chain
 import io.github.libxposed.api.XposedInterface.Hooker
@@ -43,24 +46,66 @@ internal object AodPositionHook {
     )
     private val controllerStates = WeakHashMap<Any, ControllerState>()
     private var lastControllerRef = WeakReference<Any>(null)
+    private var targetViewRef = WeakReference<View>(null)
+    private val targetViewScratch = Rect()
+    private val targetRootLocation = IntArray(2)
 
     fun install(module: XposedModule, classLoader: ClassLoader) {
         val controller = runCatching { classLoader.loadClass(CONTROLLER_CLASS) }.getOrNull() ?: return
-        if (!hookedClassLoaders.add(classLoader)) return
         val update = controller.getDeclaredMethod(
             "updateTranslation",
             Boolean::class.javaPrimitiveType,
             Int::class.javaPrimitiveType,
             Float::class.javaPrimitiveType
         ).apply { isAccessible = true }
+        val updatePosition = classLoader.loadClass(DOZE_HOST_CLASS)
+            .getDeclaredMethod("updatePosition").apply { isAccessible = true }
+        if (!hookedClassLoaders.add(classLoader)) return
         module.deoptimize(update)
+        module.deoptimize(updatePosition)
         module.hook(update).intercept(PositionHooker)
+        module.hook(updatePosition).intercept(PositionCompletionHooker)
         HookLogger.i(TAG, "AOD position hook installed")
+    }
+
+    fun observeAodRoot(root: Any) {
+        val controller = runCatching {
+            root.javaClass.getDeclaredField("mPositionController").apply {
+                isAccessible = true
+            }.get(root)
+        }.getOrNull() ?: return
+        synchronized(controllerStates) {
+            controllerStates.getOrPut(controller) { ControllerState() }
+            lastControllerRef = WeakReference(controller)
+        }
+        captureTargetView(controller)
+    }
+
+    fun renderedTargetBoundsInRoot(root: ViewGroup): AodRenderedClockBounds? {
+        val target = targetViewRef.get() ?: return null
+        if (!root.isAttachedToWindow || !target.isAttachedToWindow ||
+            target.windowToken != root.windowToken ||
+            target.visibility != View.VISIBLE || target.width <= 0 || target.height <= 0 ||
+            root.width <= 0 || root.height <= 0 || effectiveAlpha(target) <= MIN_VISIBLE_ALPHA
+        ) return null
+        if (!target.getGlobalVisibleRect(targetViewScratch) || targetViewScratch.height() <= 0) {
+            return null
+        }
+        root.getLocationInWindow(targetRootLocation)
+        val top = (targetViewScratch.top - targetRootLocation[1]).coerceIn(0, root.height)
+        val bottom = (targetViewScratch.bottom - targetRootLocation[1]).coerceIn(top, root.height)
+        return AodRenderedClockBounds(top, bottom).takeIf { it.height > 0 }
+    }
+
+    fun isLinkageMode(): Boolean = synchronized(controllerStates) {
+        val controller = lastControllerRef.get() ?: return@synchronized false
+        runCatching { readIntField(controller, "mMode") == LINKAGE_MODE }.getOrDefault(false)
     }
 
     private object PositionHooker : Hooker {
         override fun intercept(chain: Chain): Any? {
             val controller = chain.thisObject
+            if (controller != null) captureTargetView(controller)
             val requestedX = (chain.args.getOrNull(1) as? Number)?.toInt()
             val requestedY = (chain.args.getOrNull(2) as? Number)?.toFloat()
             val animated = chain.args.firstOrNull() as? Boolean ?: false
@@ -102,6 +147,14 @@ internal object AodPositionHook {
                 appliedAnimated &&
                     (decision?.overridden == true || decision?.zoneChanged == true)
             )
+            return result
+        }
+    }
+
+    private object PositionCompletionHooker : Hooker {
+        override fun intercept(chain: Chain): Any? {
+            val result = chain.proceed()
+            AodSurfaceController.onStockPositionSettled()
             return result
         }
     }
@@ -153,9 +206,15 @@ internal object AodPositionHook {
         val advance = synchronized(controllerStates) {
             val controller = lastControllerRef.get() ?: return@synchronized null
             val state = controllerStates[controller] ?: return@synchronized null
-            val stockX = state.lastStockTranslationX ?: return@synchronized null
-            val stockY = state.lastStockTranslationY ?: return@synchronized null
             val geometry = readClockGeometry(controller) ?: return@synchronized null
+            val natural = naturalAodTranslation(
+                geometry,
+                readIntField(controller, "mAodMoveCurrent")
+            )
+            val stockX = state.lastStockTranslationX ?: natural?.x ?: return@synchronized null
+            val stockY = state.lastStockTranslationY ?: natural?.y ?: return@synchronized null
+            state.lastStockTranslationX = stockX
+            state.lastStockTranslationY = stockY
             val previousStep = state.managedStep
             val previousDecision = state.currentManagedDecision
             val nextStep = previousStep + 1
@@ -343,7 +402,36 @@ internal object AodPositionHook {
         y.takeIf { shown && it > 0 }
     }.getOrNull()
 
+    private fun captureTargetView(controller: Any) {
+        val target = try {
+            controller.javaClass.getDeclaredField("mTargetView").apply {
+                isAccessible = true
+            }.get(controller) as? View
+        } catch (_: Exception) {
+            null
+        }
+        val previous = targetViewRef.get()
+        if (previous === target) return
+        targetViewRef = WeakReference(target)
+        HookLogger.i(TAG, "AOD position target captured=${target?.javaClass?.name}")
+    }
+
+    private fun effectiveAlpha(view: View): Float {
+        var alpha = view.alpha
+        var parent = view.parent
+        while (parent is View) {
+            if (parent.visibility != View.VISIBLE) return 0f
+            alpha *= parent.alpha
+            if (alpha <= MIN_VISIBLE_ALPHA) return alpha
+            parent = parent.parent
+        }
+        return alpha
+    }
+
     private const val CONTROLLER_CLASS = "com.miui.aod.AODUpdatePositionController"
+    private const val DOZE_HOST_CLASS = "com.miui.aod.DozeHost"
+    private const val LINKAGE_MODE = 3
+    private const val MIN_VISIBLE_ALPHA = 0.02f
     private const val TAG = "AodPositionHook"
 }
 

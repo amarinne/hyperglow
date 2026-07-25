@@ -17,6 +17,7 @@ class XiaomiCapabilityResolverTest {
             XiaomiSymbolSnapshot(
                 aodPositionUpdates = true,
                 aodLifetimeGuard = true,
+                aodWakeBroker = true,
                 lockscreenGeometry = true,
                 linkageDirection = true,
                 linkageGeometry = true,
@@ -27,6 +28,7 @@ class XiaomiCapabilityResolverTest {
 
         assertFalse(XiaomiCapability.AOD_POSITION_UPDATES in capabilities)
         assertFalse(XiaomiCapability.AOD_LIFETIME_GUARD in capabilities)
+        assertTrue(XiaomiCapability.AOD_WAKE_BROKER in capabilities)
         assertFalse(XiaomiCapability.LOCKSCREEN_GEOMETRY in capabilities)
         assertFalse(XiaomiCapability.LINKAGE_DIRECTION in capabilities)
         assertFalse(XiaomiCapability.LINKAGE_GEOMETRY in capabilities)
@@ -41,11 +43,13 @@ class XiaomiCapabilityResolverTest {
                 aodSurface = true,
                 aodPositionUpdates = true,
                 aodLifetimeGuard = true,
+                aodWakeBroker = true,
                 lockscreenHost = true,
                 lockscreenGeometry = true,
                 linkageDirection = true,
                 linkageGeometry = false,
                 raiseToAod = true,
+                lockscreenEditorGesture = true,
                 fullAod = false,
                 videoDepth = true
             )
@@ -54,11 +58,13 @@ class XiaomiCapabilityResolverTest {
         assertTrue(XiaomiCapability.AOD_SURFACE in capabilities)
         assertTrue(XiaomiCapability.AOD_POSITION_UPDATES in capabilities)
         assertTrue(XiaomiCapability.AOD_LIFETIME_GUARD in capabilities)
+        assertTrue(XiaomiCapability.AOD_WAKE_BROKER in capabilities)
         assertTrue(XiaomiCapability.LOCKSCREEN_HOST in capabilities)
         assertTrue(XiaomiCapability.LOCKSCREEN_GEOMETRY in capabilities)
         assertTrue(XiaomiCapability.LINKAGE_DIRECTION in capabilities)
         assertFalse(XiaomiCapability.LINKAGE_GEOMETRY in capabilities)
         assertTrue(XiaomiCapability.RAISE_TO_AOD in capabilities)
+        assertTrue(XiaomiCapability.LOCKSCREEN_EDITOR_GESTURE in capabilities)
         assertFalse(XiaomiCapability.FULL_AOD in capabilities)
         assertTrue(XiaomiCapability.VIDEO_DEPTH in capabilities)
     }
@@ -70,19 +76,23 @@ class XiaomiCapabilityResolverTest {
                 aodSurface = true,
                 aodPositionUpdates = true,
                 aodLifetimeGuard = true,
+                aodWakeBroker = true,
                 lockscreenHost = true,
                 lockscreenGeometry = true,
                 linkageDirection = true,
-                raiseToAod = true
+                raiseToAod = true,
+                lockscreenEditorGesture = true
             ),
             verifiedRuntimeProfile = false
         )
 
         assertFalse(XiaomiCapability.AOD_SURFACE in capabilities)
         assertFalse(XiaomiCapability.AOD_LIFETIME_GUARD in capabilities)
+        assertFalse(XiaomiCapability.AOD_WAKE_BROKER in capabilities)
         assertFalse(XiaomiCapability.AOD_POSITION_UPDATES in capabilities)
         assertFalse(XiaomiCapability.LOCKSCREEN_HOST in capabilities)
         assertFalse(XiaomiCapability.RAISE_TO_AOD in capabilities)
+        assertFalse(XiaomiCapability.LOCKSCREEN_EDITOR_GESTURE in capabilities)
     }
 
     @Test

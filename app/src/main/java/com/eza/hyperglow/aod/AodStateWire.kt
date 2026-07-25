@@ -33,7 +33,7 @@ internal data class AodStateWireWord(
     val romanized: String,
     val startMs: Long,
     val endMs: Long,
-    val partOfWord: Boolean,
+    val boundaryAfter: Boolean,
     val sourceStart: Int,
     val sourceEnd: Int
 )
@@ -98,6 +98,7 @@ internal sealed interface AodStateWireMessage {
     val updatedAtElapsedMs: Long
     val keepAlive: Boolean
     val wakeSignal: Long
+    val playbackActive: Boolean
 
     data class Snapshot(
         override val revision: Long,
@@ -105,6 +106,7 @@ internal sealed interface AodStateWireMessage {
         override val updatedAtElapsedMs: Long,
         override val keepAlive: Boolean,
         override val wakeSignal: Long,
+        override val playbackActive: Boolean = false,
         val value: AodStateWireSnapshot
     ) : AodStateWireMessage
 
@@ -113,7 +115,8 @@ internal sealed interface AodStateWireMessage {
         override val userId: Int,
         override val updatedAtElapsedMs: Long,
         override val keepAlive: Boolean,
-        override val wakeSignal: Long
+        override val wakeSignal: Long,
+        override val playbackActive: Boolean = false
     ) : AodStateWireMessage
 
     data class KeepAlive(
@@ -121,7 +124,8 @@ internal sealed interface AodStateWireMessage {
         override val userId: Int,
         override val updatedAtElapsedMs: Long,
         override val keepAlive: Boolean,
-        override val wakeSignal: Long
+        override val wakeSignal: Long,
+        override val playbackActive: Boolean = false
     ) : AodStateWireMessage
 }
 
@@ -133,7 +137,8 @@ internal data class AodStateWireEnvelope(
     val updatedAtElapsedMs: Long,
     val keepAlive: Boolean,
     val wakeSignal: Long,
-    val body: ByteArray?
+    val body: ByteArray?,
+    val playbackActive: Boolean = false
 )
 
 internal object AodStateWireCodec {
@@ -152,7 +157,8 @@ internal object AodStateWireCodec {
                     updatedAtElapsedMs = message.updatedAtElapsedMs,
                     keepAlive = message.keepAlive,
                     wakeSignal = message.wakeSignal,
-                    body = body
+                    body = body,
+                    playbackActive = message.playbackActive
                 )
             }
             is AodStateWireMessage.Hidden -> AodStateWireEnvelope(
@@ -163,7 +169,8 @@ internal object AodStateWireCodec {
                 updatedAtElapsedMs = message.updatedAtElapsedMs,
                 keepAlive = message.keepAlive,
                 wakeSignal = message.wakeSignal,
-                body = null
+                body = null,
+                playbackActive = message.playbackActive
             )
             is AodStateWireMessage.KeepAlive -> AodStateWireEnvelope(
                 protocol = AodStateWireContract.PROTOCOL_VERSION,
@@ -173,7 +180,8 @@ internal object AodStateWireCodec {
                 updatedAtElapsedMs = message.updatedAtElapsedMs,
                 keepAlive = message.keepAlive,
                 wakeSignal = message.wakeSignal,
-                body = null
+                body = null,
+                playbackActive = message.playbackActive
             )
         }
     }
@@ -196,6 +204,7 @@ internal object AodStateWireCodec {
                     updatedAtElapsedMs = envelope.updatedAtElapsedMs,
                     keepAlive = envelope.keepAlive,
                     wakeSignal = envelope.wakeSignal,
+                    playbackActive = envelope.playbackActive,
                     value = snapshot
                 )
             }
@@ -204,14 +213,16 @@ internal object AodStateWireCodec {
                 userId = envelope.userId,
                 updatedAtElapsedMs = envelope.updatedAtElapsedMs,
                 keepAlive = envelope.keepAlive,
-                wakeSignal = envelope.wakeSignal
+                wakeSignal = envelope.wakeSignal,
+                playbackActive = envelope.playbackActive
             )
             AodStateWireContract.KIND_KEEPALIVE -> AodStateWireMessage.KeepAlive(
                 revision = envelope.revision,
                 userId = envelope.userId,
                 updatedAtElapsedMs = envelope.updatedAtElapsedMs,
                 keepAlive = envelope.keepAlive,
-                wakeSignal = envelope.wakeSignal
+                wakeSignal = envelope.wakeSignal,
+                playbackActive = envelope.playbackActive
             )
             else -> null
         }
@@ -266,7 +277,7 @@ internal object AodStateWireCodec {
                     output.writeBoundedString(word.romanized)
                     output.writeLong(word.startMs)
                     output.writeLong(word.endMs)
-                    output.writeStrictBoolean(word.partOfWord)
+                    output.writeStrictBoolean(word.boundaryAfter)
                     output.writeInt(word.sourceStart)
                     output.writeInt(word.sourceEnd)
                 }
@@ -371,7 +382,7 @@ internal object AodStateWireCodec {
                     romanized = wordRomanized,
                     startMs = input.readLong(),
                     endMs = input.readLong(),
-                    partOfWord = input.readStrictBoolean() ?: return null,
+                    boundaryAfter = input.readStrictBoolean() ?: return null,
                     sourceStart = input.readInt(),
                     sourceEnd = input.readInt()
                 )
@@ -646,6 +657,7 @@ internal object AodStateWireBundleCodec {
         putLong(KEY_UPDATED_AT, envelope.updatedAtElapsedMs)
         putBoolean(KEY_KEEP_ALIVE, envelope.keepAlive)
         putLong(KEY_WAKE_SIGNAL, envelope.wakeSignal)
+        putBoolean(KEY_PLAYBACK_ACTIVE, envelope.playbackActive)
         envelope.body?.let { putByteArray(KEY_BODY, it) }
     }
 
@@ -663,7 +675,8 @@ internal object AodStateWireBundleCodec {
                 bundle.getByteArray(KEY_BODY)
             } else {
                 null
-            }
+            },
+            playbackActive = bundle.getBoolean(KEY_PLAYBACK_ACTIVE, false)
         )
         return AodStateWireCodec.decode(envelope)
     }
@@ -675,5 +688,6 @@ internal object AodStateWireBundleCodec {
     private const val KEY_UPDATED_AT = "updatedAtElapsed"
     private const val KEY_KEEP_ALIVE = "keepAlive"
     private const val KEY_WAKE_SIGNAL = "wakeSignal"
+    private const val KEY_PLAYBACK_ACTIVE = "playbackActive"
     private const val KEY_BODY = "stateBody"
 }

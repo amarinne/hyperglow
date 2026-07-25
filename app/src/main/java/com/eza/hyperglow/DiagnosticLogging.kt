@@ -43,23 +43,29 @@ internal object DiagnosticLoggingPreferences {
 }
 
 internal object RuntimeCustomization {
-    fun loadCompiled(context: Context): CompiledCustomization = withDiagnosticLogging(
-        CustomizationRepository.loadCompiled(context),
-        DiagnosticLoggingPreferences.read(context),
-        lockscreenKeepAwake = AodRenderPreferences.read(context).lockscreenKeepAwake,
-        raiseToAod = AodRenderPreferences.read(context).raiseToAod
-    )
+    fun loadCompiled(context: Context): CompiledCustomization {
+        val preferences = AodRenderPreferences.read(context)
+        return withDiagnosticLogging(
+            CustomizationRepository.loadCompiled(context),
+            DiagnosticLoggingPreferences.read(context),
+            lockscreenKeepAwake = preferences.lockscreenKeepAwake,
+            raiseToAod = preferences.raiseToAod,
+            suppressLockscreenEditorLongPress = preferences.suppressLockscreenEditorLongPress
+        )
+    }
 
     fun compile(
         document: CustomizationDocument,
         diagnosticLogging: Boolean,
         lockscreenKeepAwake: Boolean = false,
-        raiseToAod: Boolean = false
+        raiseToAod: Boolean = false,
+        suppressLockscreenEditorLongPress: Boolean = false
     ): CompiledCustomization = withDiagnosticLogging(
         SceneCompiler.compile(document),
         diagnosticLogging,
         lockscreenKeepAwake = lockscreenKeepAwake,
-        raiseToAod = raiseToAod
+        raiseToAod = raiseToAod,
+        suppressLockscreenEditorLongPress = suppressLockscreenEditorLongPress
     )
 
     internal fun withDiagnosticLogging(
@@ -67,7 +73,9 @@ internal object RuntimeCustomization {
         diagnosticLogging: Boolean,
         available: Boolean = BuildConfig.TRACE_LOGGING_AVAILABLE,
         lockscreenKeepAwake: Boolean = configuration.lockscreenKeepAwake,
-        raiseToAod: Boolean = configuration.raiseToAod
+        raiseToAod: Boolean = configuration.raiseToAod,
+        suppressLockscreenEditorLongPress: Boolean =
+            configuration.suppressLockscreenEditorLongPress
     ): CompiledCustomization = requireNotNull(
         SceneCompiler.finalizeCompiled(
             configuration.copy(
@@ -78,7 +86,8 @@ internal object RuntimeCustomization {
                     diagnosticLogging
                 ),
                 lockscreenKeepAwake = lockscreenKeepAwake,
-                raiseToAod = raiseToAod
+                raiseToAod = raiseToAod,
+                suppressLockscreenEditorLongPress = suppressLockscreenEditorLongPress
             )
         )
     )

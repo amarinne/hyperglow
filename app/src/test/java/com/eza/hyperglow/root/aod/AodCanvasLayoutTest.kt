@@ -4,6 +4,7 @@ import com.eza.hyperglow.customization.CustomizationDocument
 import com.eza.hyperglow.customization.SceneCompiler
 import com.eza.hyperglow.customization.SurfaceProfile
 import com.eza.hyperglow.root.projection.LyricSnapshot
+import com.eza.hyperglow.root.projection.LyricRuby
 import com.eza.hyperglow.root.projection.LyricWord
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -80,8 +81,8 @@ class AodCanvasLayoutTest {
     @Test
     fun blankWordReadingDoesNotDiscardOtherTimedReadings() {
         val words = listOf(
-            AodCanvasWord("first", "first", 0L, 100L, false),
-            AodCanvasWord("missing", "", 100L, 200L, false),
+            AodCanvasWord("first", "first", 0L, 100L, true),
+            AodCanvasWord("missing", "", 100L, 200L, true),
             AodCanvasWord("third", "third", 200L, 300L, false)
         )
 
@@ -138,6 +139,70 @@ class AodCanvasLayoutTest {
             LyricSnapshot(lineSyncFillMode = "Top to bottom")
                 .toAodCanvasContent(profile)
                 .lineSyncFillMode
+        )
+    }
+
+    @Test
+    fun surfaceProfileCanSuppressFuriganaWithoutChangingTransportSnapshot() {
+        val profile = SceneCompiler.compile(
+            CustomizationDocument(
+                profiles = mapOf(
+                    SceneCompiler.SURFACE_AOD to SurfaceProfile(rubyVisible = false)
+                )
+            )
+        ).profiles.getValue(SceneCompiler.SURFACE_AOD)
+        val snapshot = LyricSnapshot(
+            original = "漢字",
+            ruby = listOf(LyricRuby(0, 2, "かんじ"))
+        )
+
+        assertTrue(snapshot.ruby.isNotEmpty())
+        assertTrue(snapshot.toAodCanvasContent(profile).ruby.isEmpty())
+    }
+
+    @Test
+    fun metadataSizingUsesBoundedScaleAndHeightReservation() {
+        assertEquals(0.5f, metadataTextSizeMultiplier(1), 0.0001f)
+        assertEquals(1f, metadataTextSizeMultiplier(100), 0.0001f)
+        assertEquals(2f, metadataTextSizeMultiplier(900), 0.0001f)
+        assertEquals(36f, metadataWidgetHeightDp(100), 0.0001f)
+        assertTrue(metadataWidgetHeightDp(200) > metadataWidgetHeightDp(50))
+    }
+
+    @Test
+    fun loadingMetadataCanMorphOnlyIntoMatchingVisiblePersistentMetadata() {
+        assertTrue(
+            shouldMorphSongChangeMetadata(
+                "Song · Artist",
+                "Song · Artist",
+                0L,
+                0L,
+                false,
+                "Song · Artist",
+                true
+            )
+        )
+        assertFalse(
+            shouldMorphSongChangeMetadata(
+                "Song · Artist",
+                "Song · Artist",
+                0L,
+                0L,
+                false,
+                "Other · Artist",
+                true
+            )
+        )
+        assertFalse(
+            shouldMorphSongChangeMetadata(
+                "Song · Artist",
+                "Song · Artist",
+                0L,
+                0L,
+                false,
+                "Song · Artist",
+                false
+            )
         )
     }
 
@@ -304,15 +369,15 @@ class AodCanvasLayoutTest {
 
     @Test
     fun currentWordControlsFollowingGap() {
-        assertEquals(8f, aodWordGapAfter(false, 8f), 0.0001f)
-        assertEquals(0f, aodWordGapAfter(true, 8f), 0.0001f)
+        assertEquals(0f, aodWordGapAfter(false, 8f), 0.0001f)
+        assertEquals(8f, aodWordGapAfter(true, 8f), 0.0001f)
     }
 
     @Test
     fun adaptiveOffNeverWrapsBetweenAttachedWordFragments() {
         val words = listOf(
-            AodCanvasWord("hello", "", 0L, 100L, false),
-            AodCanvasWord("phra", "", 100L, 200L, true),
+            AodCanvasWord("hello", "", 0L, 100L, true),
+            AodCanvasWord("phra", "", 100L, 200L, false),
             AodCanvasWord("se", "", 200L, 300L, false)
         )
 
@@ -330,6 +395,18 @@ class AodCanvasLayoutTest {
     }
 
     @Test
+    fun camouflageFragmentsUseTrailingEdgeBoundaries() {
+        val words = listOf(
+            AodCanvasWord("My", "My", 0L, 100L, true),
+            AodCanvasWord("Camoufla", "Camoufla", 100L, 200L, false),
+            AodCanvasWord("ge", "ge", 200L, 300L, false)
+        )
+
+        assertEquals(listOf(0 until 1, 1 until 3), attachedWordRanges(words))
+        assertEquals("My Camouflage", joinedRomanizedWords(words.map { it.romanized to it.boundaryAfter }))
+    }
+
+    @Test
     fun serializedOffsetsPreserveAuthoredJapaneseAndSpaceSeparators() {
         val adjacent = authoredWordSeparator(
             "朝か昼か",
@@ -338,7 +415,7 @@ class AodCanvasLayoutTest {
         )
         val spaced = authoredWordSeparator(
             "day night",
-            AodCanvasWord("day", "", 0L, 1L, false, 0, 3),
+            AodCanvasWord("day", "", 0L, 1L, true, 0, 3),
             AodCanvasWord("night", "", 1L, 2L, false, 4, 9)
         )
 
@@ -368,15 +445,15 @@ class AodCanvasLayoutTest {
         val words = coalesceRubyWords(
             "甲乙 丙",
             listOf(
-                AodCanvasWord("甲", "ka", 0L, 100L, true, 0, 1),
-                AodCanvasWord("乙", "otsu", 100L, 200L, false, 1, 2),
+                AodCanvasWord("甲", "ka", 0L, 100L, false, 0, 1),
+                AodCanvasWord("乙", "otsu", 100L, 200L, true, 1, 2),
                 AodCanvasWord("丙", "hei", 200L, 300L, false, 3, 4)
             ),
             listOf(AodCanvasRuby(0, 2, "かおつ"))
         )
 
-        assertFalse(words[0].partOfWord)
-        assertEquals(8f, aodWordGapAfter(words[0].partOfWord, 8f), 0.0001f)
+        assertTrue(words[0].boundaryAfter)
+        assertEquals(8f, aodWordGapAfter(words[0].boundaryAfter, 8f), 0.0001f)
     }
 
     @Test
@@ -697,9 +774,9 @@ class AodCanvasLayoutTest {
             "watashi tachi no tsuzuki",
             joinedRomanizedWords(
                 listOf(
-                    "watashi" to false,
-                    "tachi" to false,
-                    "no" to false,
+                    "watashi" to true,
+                    "tachi" to true,
+                    "no" to true,
                     "tsuzuki" to false
                 )
             )

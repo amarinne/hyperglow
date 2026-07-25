@@ -31,7 +31,8 @@ class AodStateWireCodecTest {
             userId = 10,
             updatedAtElapsedMs = 900L,
             keepAlive = true,
-            wakeSignal = 44L
+            wakeSignal = 44L,
+            playbackActive = true
         )
         val keepAliveEnvelope = AodStateWireCodec.encode(keepAlive)
             ?.copy(body = byteArrayOf(1, 2, 3))
@@ -241,6 +242,7 @@ class AodStateWireCodecTest {
         updatedAtElapsedMs = 800L,
         keepAlive = true,
         wakeSignal = 33L,
+        playbackActive = true,
         value = value
     )
 

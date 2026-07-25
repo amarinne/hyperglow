@@ -25,7 +25,7 @@ data class SpicyBridgeWord(
     val romanized: String,
     val startMs: Long,
     val endMs: Long,
-    val partOfWord: Boolean,
+    val boundaryAfter: Boolean,
     val sourceStart: Int = -1,
     val sourceEnd: Int = -1
 )
@@ -36,6 +36,12 @@ internal fun normalizeSpicySourceRange(textLength: Int, start: Int, end: Int): P
     } else {
         -1 to -1
     }
+
+internal fun normalizeSpicyBoundaryAfter(
+    documentVersion: Int,
+    boundaryAfter: Boolean?,
+    legacyPartOfWord: Boolean?
+): Boolean? = if (documentVersion >= 2) boundaryAfter else legacyPartOfWord?.not()
 
 data class SpicyBridgeRuby(val start: Int, val end: Int, val reading: String)
 
@@ -129,7 +135,7 @@ internal data class SpicyBridgeDocumentMetadata(
 }
 
 internal fun isValidSpicyBridgeDocumentMetadata(metadata: SpicyBridgeDocumentMetadata): Boolean =
-    metadata.documentVersion == 1 &&
+    metadata.documentVersion in 1..2 &&
         metadata.producerId.isNotBlank() && metadata.producerId.length <= 64 &&
         metadata.generation >= 0 &&
         metadata.trackUri.startsWith("spotify:track:") && metadata.trackUri.length <= 512 &&
@@ -212,7 +218,8 @@ private class ExactLengthInputStream(
 }
 
 object SpicyBridgeDocumentStore {
-    private const val DOCUMENT_VERSION = 1
+    private const val DOCUMENT_VERSION = 2
+    private const val MIN_DOCUMENT_VERSION = 1
     private const val MAX_COMPRESSED_BYTES = MAX_DOCUMENT_COMPRESSED_BYTES
     private const val MAX_ROWS = 5_000
     private const val MAX_WORDS = 20_000
@@ -229,7 +236,7 @@ object SpicyBridgeDocumentStore {
         arrivalRevision: Long
     ): Boolean {
         descriptor.use { fd ->
-            if (metadata.documentVersion != DOCUMENT_VERSION ||
+            if (metadata.documentVersion !in MIN_DOCUMENT_VERSION..DOCUMENT_VERSION ||
                 metadata.compressedBytes !in 1..MAX_COMPRESSED_BYTES
             ) return false
             val producerId = metadata.producerId
@@ -245,7 +252,8 @@ object SpicyBridgeDocumentStore {
                 metadata.compressedBytes
             )
             val root = Json.parseToJsonElement(bytes.toString(Charsets.UTF_8)).jsonObject
-            if (root.requiredInt("version") != DOCUMENT_VERSION ||
+            val documentVersion = root.requiredInt("version")
+            if (documentVersion != metadata.documentVersion ||
                 root.requiredString("producerId") != producerId ||
                 root.requiredInt("generation") != generation ||
                 root.requiredString("trackUri") != trackUri) return false
@@ -289,7 +297,11 @@ object SpicyBridgeDocumentStore {
                             word.boundedString("romanized"),
                             wordStart,
                             wordEnd,
-                            word.requiredBoolean("partOfWord"),
+                            normalizeSpicyBoundaryAfter(
+                                documentVersion,
+                                word["boundaryAfter"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull(),
+                                word["partOfWord"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull()
+                            ) ?: return false,
                             sourceRange.first,
                             sourceRange.second
                         )

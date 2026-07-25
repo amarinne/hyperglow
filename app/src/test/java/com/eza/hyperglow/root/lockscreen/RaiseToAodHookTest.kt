@@ -10,7 +10,7 @@ class RaiseToAodHookTest {
         assertTrue(
             shouldSuppressPickupWake(
                 enabled = true,
-                supported = true,
+                wakeHookSupported = true,
                 details = "com.android.systemui:PICK_UP"
             )
         )

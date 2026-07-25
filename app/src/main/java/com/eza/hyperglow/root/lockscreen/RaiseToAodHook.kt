@@ -1,5 +1,6 @@
 package com.eza.hyperglow.root.lockscreen
 
+import com.eza.hyperglow.root.aod.AodWakeBroker
 import com.eza.hyperglow.root.HookLogger
 import com.eza.hyperglow.root.capability.XiaomiCapability
 import com.eza.hyperglow.root.capability.XiaomiCapabilityResolver
@@ -17,7 +18,7 @@ internal object RaiseToAodController {
 
     fun shouldSuppress(details: String?): Boolean = shouldSuppressPickupWake(
         enabled = enabled,
-        supported = XiaomiCapabilityResolver.hasCapability(XiaomiCapability.RAISE_TO_AOD),
+        wakeHookSupported = XiaomiCapabilityResolver.hasCapability(XiaomiCapability.RAISE_TO_AOD),
         details = details
     )
 }
@@ -44,7 +45,11 @@ internal object RaiseToAodHook {
         override fun intercept(chain: Chain): Any? {
             val details = chain.args.getOrNull(1) as? String
             if (!RaiseToAodController.shouldSuppress(details)) return chain.proceed()
-            HookLogger.i(TAG, "Suppressed full pickup wake; retaining stock AOD")
+            if (AodWakeBroker.requestPickupWake()) {
+                HookLogger.i(TAG, "Requested pickup AOD and suppressed full wake")
+            } else {
+                HookLogger.i(TAG, "Pickup AOD unavailable; full wake remains suppressed")
+            }
             return null
         }
     }
@@ -55,8 +60,8 @@ internal object RaiseToAodHook {
 
 internal fun shouldSuppressPickupWake(
     enabled: Boolean,
-    supported: Boolean,
+    wakeHookSupported: Boolean,
     details: String?
-): Boolean = enabled && supported && details == PICKUP_WAKE_DETAILS
+): Boolean = enabled && wakeHookSupported && details == PICKUP_WAKE_DETAILS
 
 private const val PICKUP_WAKE_DETAILS = "com.android.systemui:PICK_UP"

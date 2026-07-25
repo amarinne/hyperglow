@@ -24,12 +24,16 @@ internal fun LyricSnapshot.toAodCanvasContent(
             it.romanized,
             it.startMs,
             it.endMs,
-            it.partOfWord,
+            it.boundaryAfter,
             it.sourceStart,
             it.sourceEnd
         )
     },
-    ruby = ruby.map { AodCanvasRuby(it.start, it.end, it.reading) },
+    ruby = if (profile?.rubyVisible == false) {
+        emptyList()
+    } else {
+        ruby.map { AodCanvasRuby(it.start, it.end, it.reading) }
+    },
     layoutGroups = layoutGroups.map {
         AodCanvasLayoutGroup(it.start, it.end, it.kind, it.keepTogether, it.confidence)
     },
@@ -54,6 +58,7 @@ internal fun LyricSnapshot.toAodCanvasContent(
     alignmentMode = profile?.alignment ?: alignmentMode,
     metadataVisible = profile?.metadataVisible ?: metadataVisible,
     metadataAnchor = if ((profile?.metadataAnchor ?: metadataAnchor) == "bottom") "bottom" else "top",
+    metadataSizePercent = profile?.metadataSizePercent ?: 100,
     adaptiveSectioning = profile?.adaptiveSectioning ?: adaptiveSectioning,
     palette = profile?.palette.orEmpty()
 )

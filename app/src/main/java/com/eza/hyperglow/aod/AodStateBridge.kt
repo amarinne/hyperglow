@@ -10,6 +10,7 @@ import kotlin.math.abs
 
 data class AodDisplayState(
     val visible: Boolean,
+    val playbackActive: Boolean = false,
     val userId: Int = 0,
     val trackGeneration: Long = 0L,
     val aodEnabled: Boolean = true,
@@ -57,7 +58,7 @@ data class AodDisplayWord(
     val romanized: String,
     val startMs: Long,
     val endMs: Long,
-    val partOfWord: Boolean,
+    val boundaryAfter: Boolean,
     val sourceStart: Int = -1,
     val sourceEnd: Int = -1
 )
@@ -168,7 +169,8 @@ object AodStateBridge {
             userId = current.userId,
             updatedAtElapsedMs = updatedAt,
             keepAlive = current.keepAlive,
-            wakeSignal = current.wakeSignal
+            wakeSignal = current.wakeSignal,
+            playbackActive = current.playbackActive
         )
         val envelope = AodStateWireCodec.encode(keepAlive) ?: return
         broadcast(AodStateWireBundleCodec.toBundle(envelope))
@@ -220,7 +222,8 @@ internal fun encodeNormalizedAodStatePublication(
             userId = state.userId,
             updatedAtElapsedMs = updatedAtElapsedMs,
             keepAlive = false,
-            wakeSignal = state.wakeSignal
+            wakeSignal = state.wakeSignal,
+            playbackActive = state.playbackActive
         )
     } else {
         intendedMessage
@@ -328,7 +331,8 @@ private fun AodDisplayState.toWireMessage(
         userId = userId,
         updatedAtElapsedMs = updatedAtElapsedMs,
         keepAlive = keepAlive,
-        wakeSignal = wakeSignal
+        wakeSignal = wakeSignal,
+        playbackActive = playbackActive
     )
 } else {
     AodStateWireMessage.Snapshot(
@@ -337,6 +341,7 @@ private fun AodDisplayState.toWireMessage(
         updatedAtElapsedMs = updatedAtElapsedMs,
         keepAlive = keepAlive,
         wakeSignal = wakeSignal,
+        playbackActive = playbackActive,
         value = AodStateWireSnapshot(
             trackGeneration = trackGeneration,
             aodEnabled = aodEnabled,
@@ -363,7 +368,7 @@ private fun AodDisplayState.toWireMessage(
                     romanized = word.romanized,
                     startMs = word.startMs,
                     endMs = word.endMs,
-                    partOfWord = word.partOfWord,
+                    boundaryAfter = word.boundaryAfter,
                     sourceStart = word.sourceStart,
                     sourceEnd = word.sourceEnd
                 )

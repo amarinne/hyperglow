@@ -1,6 +1,9 @@
 package com.eza.hyperglow.aod
 
 import com.eza.hyperglow.bridge.SpicyBridgeState
+import com.eza.hyperglow.bridge.SpicyBridgeDocument
+import com.eza.hyperglow.bridge.SpicyBridgeRow
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -67,6 +70,76 @@ class AodProjectionLifecycleTest {
         assertFalse(gate.isCurrent(oldRelease))
         assertTrue(gate.isCurrent(newRelease))
     }
+
+    @Test
+    fun keepAliveTimingRequiresTimedTypeAndPositiveRowDuration() {
+        assertTrue(AodProjectionEngine.hasActualLyricTiming(document("Line", 100L, 200L)))
+        assertTrue(AodProjectionEngine.hasActualLyricTiming(document("Syllable", 100L, 200L)))
+        assertFalse(AodProjectionEngine.hasActualLyricTiming(document("Static", 100L, 200L)))
+        assertFalse(AodProjectionEngine.hasActualLyricTiming(document("Line", 100L, 100L)))
+        assertFalse(AodProjectionEngine.hasActualLyricTiming(document("Syllable", 0L, 0L)))
+    }
+
+    @Test
+    fun keepAlivePolicyDefaultsToTimedButAllowsExplicitUnsyncedOverride() {
+        assertTrue(AodProjectionEngine.shouldKeepAodAlive(true, true, true, false, true))
+        assertFalse(AodProjectionEngine.shouldKeepAodAlive(true, true, true, false, false))
+        assertTrue(AodProjectionEngine.shouldKeepAodAlive(true, true, true, true, false))
+        assertFalse(AodProjectionEngine.shouldKeepAodAlive(false, true, true, true, true))
+        assertFalse(AodProjectionEngine.shouldKeepAodAlive(true, false, true, true, true))
+        assertFalse(AodProjectionEngine.shouldKeepAodAlive(true, true, false, true, true))
+    }
+
+    @Test
+    fun songChangeAndLaterTimedAvailabilityHaveDistinctWakeSignals() {
+        val state = state()
+        val songChange = AodProjectionEngine.sessionWakeSignal(state, hasTimedLyrics = false)
+        val timedAvailable = AodProjectionEngine.sessionWakeSignal(state, hasTimedLyrics = true)
+
+        assertTrue(songChange != 0L)
+        assertTrue(timedAvailable != 0L)
+        assertTrue(songChange != timedAvailable)
+    }
+
+    @Test
+    fun loadingPresentationPrefersCurrentMetadataOverAnyStaleLine() {
+        assertEquals(
+            "New song · Artist",
+            AodProjectionEngine.playbackFallback(
+                "loading",
+                "previous lyric",
+                "New song · Artist"
+            )
+        )
+        assertEquals(
+            "current lyric",
+            AodProjectionEngine.playbackFallback("ready", "current lyric", "Song · Artist")
+        )
+    }
+
+    private fun document(type: String, startMs: Long, endMs: Long) = SpicyBridgeDocument(
+        producerId = "producer",
+        generation = 7,
+        trackUri = "spotify:track:test",
+        provider = "test",
+        language = "en",
+        type = type,
+        durationMs = 1_000L,
+        processingVersion = 1,
+        rows = listOf(
+            SpicyBridgeRow(
+                role = "LEAD",
+                startMs = startMs,
+                endMs = endMs,
+                fillEndMs = endMs,
+                alignedRight = false,
+                text = "line",
+                romanized = "",
+                translated = "",
+                words = emptyList()
+            )
+        )
+    )
 
     private fun state(
         sequence: Long = 1L,

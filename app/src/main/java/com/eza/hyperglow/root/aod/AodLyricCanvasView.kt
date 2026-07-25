@@ -21,7 +21,7 @@ internal data class AodCanvasWord(
     val romanized: String,
     val startMs: Long,
     val endMs: Long,
-    val partOfWord: Boolean,
+    val boundaryAfter: Boolean,
     val sourceStart: Int = -1,
     val sourceEnd: Int = -1
 )
@@ -57,15 +57,15 @@ internal fun transportedWordOffset(text: String, word: AodCanvasWord): IntRange?
         null
     }
 
-internal fun aodWordGapAfter(partOfWord: Boolean, gap: Float): Float =
-    if (partOfWord) 0f else gap
+internal fun aodWordGapAfter(boundaryAfter: Boolean, gap: Float): Float =
+    if (boundaryAfter) gap else 0f
 
 internal fun attachedWordRanges(words: List<AodCanvasWord>): List<IntRange> {
     if (words.isEmpty()) return emptyList()
     val ranges = ArrayList<IntRange>()
     var start = 0
     words.forEachIndexed { index, word ->
-        if (!word.partOfWord || index == words.lastIndex) {
+        if (word.boundaryAfter || index == words.lastIndex) {
             ranges += start until index + 1
             start = index + 1
         }
@@ -125,10 +125,10 @@ internal fun coalesceRubyWords(
         val end = last.sourceEnd
         output += AodCanvasWord(
             text.substring(start, end),
-            joinedRomanizedWords(words.subList(range.first, range.last + 1).map { it.romanized to it.partOfWord }),
+            joinedRomanizedWords(words.subList(range.first, range.last + 1).map { it.romanized to it.boundaryAfter }),
             first.startMs,
             maxOf(first.startMs + 1L, last.endMs),
-            last.partOfWord,
+            last.boundaryAfter,
             start,
             end
         )
@@ -192,6 +192,7 @@ internal data class AodCanvasContent(
     val alignmentMode: String,
     val metadataVisible: Boolean,
     val metadataAnchor: String,
+    val metadataSizePercent: Int = 100,
     val adaptiveSectioning: Boolean,
     val palette: Map<String, String>
 )
@@ -488,10 +489,10 @@ internal fun balancedTokenLineTexts(
 }
 
 internal fun joinedRomanizedWords(words: List<Pair<String, Boolean>>): String = buildString {
-    words.forEachIndexed { index, (text, attached) ->
+    words.forEachIndexed { index, (text, boundaryAfter) ->
         if (text.isBlank()) return@forEachIndexed
-        if (isNotEmpty() && index > 0 && !attached) append(' ')
         append(text)
+        if (boundaryAfter && words.drop(index + 1).any { it.first.isNotBlank() }) append(' ')
     }
 }
 
@@ -556,6 +557,12 @@ internal fun metadataLayoutBounds(
         MetadataLayoutBounds(metadataBaseline, metadataBaseline + metadataDescent + gap, height - paddingBottom)
     }
 }
+
+internal fun metadataTextSizeMultiplier(percent: Int): Float =
+    percent.coerceIn(50, 200) / 100f
+
+internal fun metadataWidgetHeightDp(percent: Int): Float =
+    22f + 14f * metadataTextSizeMultiplier(percent)
 
 internal fun originalLineBaseline(
     rowBaseline: Float,
@@ -686,6 +693,43 @@ internal fun shouldStartLineTransition(
     resuming: Boolean = false
 ): Boolean = lineChanged && transitionMode != "None" && !handoffActive && !resuming
 
+internal fun isSongChangeMetadataPlaceholder(
+    original: String,
+    metadata: String,
+    lineStartMs: Long,
+    lineEndMs: Long,
+    hasTimedWords: Boolean
+): Boolean = metadata.isNotBlank() && original == metadata &&
+    lineEndMs <= lineStartMs && !hasTimedWords
+
+internal fun shouldMorphSongChangeMetadata(
+    previousOriginal: String,
+    previousMetadata: String,
+    previousLineStartMs: Long,
+    previousLineEndMs: Long,
+    previousHasTimedWords: Boolean,
+    nextMetadata: String,
+    nextMetadataVisible: Boolean
+): Boolean = nextMetadataVisible && previousMetadata == nextMetadata &&
+    isSongChangeMetadataPlaceholder(
+        previousOriginal,
+        previousMetadata,
+        previousLineStartMs,
+        previousLineEndMs,
+        previousHasTimedWords
+    )
+
+internal fun interpolateAodColor(start: Int, end: Int, progress: Float): Int {
+    val value = progress.coerceIn(0f, 1f)
+    fun channel(from: Int, to: Int): Int = (from + (to - from) * value).roundToInt()
+    return Color.argb(
+        channel(Color.alpha(start), Color.alpha(end)),
+        channel(Color.red(start), Color.red(end)),
+        channel(Color.green(start), Color.green(end)),
+        channel(Color.blue(start), Color.blue(end))
+    )
+}
+
 internal data class AodCanvasVerticalBounds(val top: Float, val bottom: Float)
 
 internal fun unionAodCanvasVerticalBounds(
@@ -803,6 +847,7 @@ internal class AodLyricCanvasView(
         alignmentMode = "auto",
         metadataVisible = true,
         metadataAnchor = "top",
+        metadataSizePercent = 100,
         adaptiveSectioning = true,
         palette = emptyMap()
     )
@@ -928,6 +973,9 @@ internal class AodLyricCanvasView(
             rubyPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
         }
         originalPaint.textSize = baseSp * scaledDensity
+        metadataPaint.textSize = 14f * metadataTextSizeMultiplier(
+            nextContent.metadataSizePercent
+        ) * scaledDensity
         romanizedPaint.textSize = max(14f, kotlin.math.round(baseSp * 0.48f)) * scaledDensity
         translatedPaint.textSize = max(13f, kotlin.math.round(baseSp * 0.48f) - 1f) * scaledDensity
         rubyPaint.textSize = originalPaint.textSize * 0.46f
@@ -1021,22 +1069,43 @@ internal class AodLyricCanvasView(
         super.onDraw(canvas)
         recordDozeDraw()
         syncCadence()
-        drawMetadata(canvas, layout)
         val snapshot = exitSnapshot
         if (snapshot == null) {
+            drawMetadata(canvas, layout)
             drawRows(canvas, layout, content, 1f, 0f)
             return
         }
         val elapsed = (SystemClock.elapsedRealtime() - transitionStartedAt).coerceAtLeast(0L)
         val exitProgress = (elapsed / EXIT_TRANSITION_MS.toFloat()).coerceIn(0f, 1f)
         val enterProgress = (elapsed / ENTER_TRANSITION_MS.toFloat()).coerceIn(0f, 1f)
+        val metadataMorph = shouldMorphSongChangeMetadata(
+            previousOriginal = snapshot.content.original,
+            previousMetadata = snapshot.content.metadata,
+            previousLineStartMs = snapshot.content.lineStartMs,
+            previousLineEndMs = snapshot.content.lineEndMs,
+            previousHasTimedWords = snapshot.content.words.any { it.endMs > it.startMs },
+            nextMetadata = content.metadata,
+            nextMetadataVisible = content.metadataVisible
+        ) && canDrawMetadataMorph(snapshot)
+        if (metadataMorph) {
+            drawMetadataMorph(canvas, snapshot, enterProgress)
+        } else if (snapshot.content.metadata != content.metadata ||
+            snapshot.content.metadataVisible != content.metadataVisible ||
+            snapshot.content.metadataAnchor != content.metadataAnchor
+        ) {
+            drawMetadata(canvas, snapshot.layout, 1f - exitProgress, snapshot.renderStyle)
+            drawMetadata(canvas, layout, enterProgress)
+        } else {
+            drawMetadata(canvas, layout)
+        }
         drawRows(
             canvas,
             snapshot.layout,
             snapshot.content,
             1f - exitProgress,
             if (content.transitionMode == "Fade up") -14f * density * exitProgress else 0f,
-            snapshot.renderStyle
+            snapshot.renderStyle,
+            skipOriginal = metadataMorph
         )
         drawRows(canvas, layout, content, enterProgress, if (content.transitionMode == "Fade up") 14f * density * (1f - enterProgress) else 0f)
         if (enterProgress >= 1f) {
@@ -1052,9 +1121,13 @@ internal class AodLyricCanvasView(
         drawContent: AodCanvasContent,
         alpha: Float,
         translateY: Float,
-        renderStyle: RenderStyleSnapshot? = null
+        renderStyle: RenderStyleSnapshot? = null,
+        skipOriginal: Boolean = false
     ) {
-        if (alpha <= 0f || drawLayout.rows.none { it.row.kind != RowKind.METADATA }) return
+        if (alpha <= 0f || drawLayout.rows.none {
+                it.row.kind != RowKind.METADATA && (!skipOriginal || it.row.kind != RowKind.ORIGINAL)
+            }
+        ) return
         val savedContent = content
         val savedLayout = layout
         if (renderStyle != null) applyRenderStyle(renderStyle)
@@ -1080,7 +1153,7 @@ internal class AodLyricCanvasView(
                 val row = drawLayout.rows[rowIndex]
                 when (row.row.kind) {
                     RowKind.METADATA -> Unit
-                    RowKind.ORIGINAL -> drawOriginal(canvas, row.baseline)
+                    RowKind.ORIGINAL -> if (!skipOriginal) drawOriginal(canvas, row.baseline)
                     else -> drawText(canvas, row.row, row.baseline)
                 }
                 rowIndex++
@@ -1226,12 +1299,19 @@ internal class AodLyricCanvasView(
         alignment = style.alignment
     }
 
-    private fun drawMetadata(canvas: Canvas, drawLayout: LayoutState) {
+    private fun drawMetadata(
+        canvas: Canvas,
+        drawLayout: LayoutState,
+        alpha: Float = 1f,
+        renderStyle: RenderStyleSnapshot? = null
+    ) {
+        if (alpha <= 0f) return
         val metadata = drawLayout.rows.firstOrNull { it.row.kind == RowKind.METADATA } ?: return
+        if (renderStyle != null) applyRenderStyle(renderStyle)
         canvas.save()
         canvas.clipRect(paddingLeft, paddingTop, width - paddingRight, height - paddingBottom)
         metadata.row.paint.color = resolvedPalette.metadataText
-        metadata.row.paint.alpha = 255
+        metadata.row.paint.alpha = (255f * alpha.coerceIn(0f, 1f)).roundToInt()
         metadata.row.lines.forEachIndexed { index, line ->
             canvas.drawText(
                 line.text,
@@ -1241,12 +1321,64 @@ internal class AodLyricCanvasView(
             )
         }
         canvas.restore()
+        if (renderStyle != null) applyRenderStyle(currentRenderStyle)
+    }
+
+    private fun canDrawMetadataMorph(snapshot: CanvasSnapshot): Boolean =
+        snapshot.layout.original.lines.size == 1 &&
+            snapshot.layout.rows.count { it.row.kind == RowKind.ORIGINAL } == 1 &&
+            layout.rows.firstOrNull { it.row.kind == RowKind.METADATA }
+                ?.row?.lines?.size == 1
+
+    private fun drawMetadataMorph(
+        canvas: Canvas,
+        snapshot: CanvasSnapshot,
+        progress: Float
+    ) {
+        val sourceRow = snapshot.layout.rows.firstOrNull {
+            it.row.kind == RowKind.ORIGINAL
+        } ?: return
+        val sourceLine = snapshot.layout.original.lines.singleOrNull() ?: return
+        val destinationRow = layout.rows.firstOrNull {
+            it.row.kind == RowKind.METADATA
+        } ?: return
+        val destinationLine = destinationRow.row.lines.singleOrNull() ?: return
+        val value = progress.coerceIn(0f, 1f)
+        val paint = Paint(
+            if (value < 0.5f) snapshot.renderStyle.originalPaint
+            else currentRenderStyle.metadataPaint
+        ).apply {
+            textSize = snapshot.renderStyle.originalPaint.textSize +
+                (currentRenderStyle.metadataPaint.textSize -
+                    snapshot.renderStyle.originalPaint.textSize) * value
+            color = interpolateAodColor(
+                snapshot.renderStyle.palette.primaryText,
+                currentRenderStyle.palette.metadataText,
+                value
+            )
+            alpha = 255
+            shader = null
+            clearShadowLayer()
+        }
+        val x = sourceLine.startX + (destinationLine.startX - sourceLine.startX) * value
+        val y = sourceRow.baseline + (destinationRow.baseline - sourceRow.baseline) * value
+        canvas.save()
+        canvas.clipRect(paddingLeft, paddingTop, width - paddingRight, height - paddingBottom)
+        canvas.drawText(content.metadata, x, y, paint)
+        canvas.restore()
     }
 
     private fun rebuildLayout() {
         val originalLayout = buildOriginalLayout()
         val rows = ArrayList<Row>(4)
-        if (content.metadataVisible && content.metadata.isNotBlank()) {
+        val metadataPlaceholder = isSongChangeMetadataPlaceholder(
+            content.original,
+            content.metadata,
+            content.lineStartMs,
+            content.lineEndMs,
+            content.words.any { it.endMs > it.startMs }
+        )
+        if (content.metadataVisible && content.metadata.isNotBlank() && !metadataPlaceholder) {
             rows += row(RowKind.METADATA, content.metadata, metadataPaint, 0f, false)
         }
         if (content.original.isNotBlank()) {
@@ -1700,15 +1832,15 @@ internal class AodLyricCanvasView(
         val ranges = coveredLayoutRanges(content.original, content.layoutGroups)
         if (ranges.isEmpty()) return wrapText(content.original, originalPaint)
         val synthetic = ranges.mapIndexed { index, range ->
-            val previousEnd = ranges.getOrNull(index - 1)?.last?.plus(1) ?: range.first
-            val attached = index > 0 && content.original.substring(previousEnd, range.first)
-                .none { it.isWhitespace() }
+            val nextStart = ranges.getOrNull(index + 1)?.first ?: range.last + 1
+            val boundaryAfter = index < ranges.lastIndex && content.original
+                .substring(range.last + 1, nextStart).any { it.isWhitespace() }
             AodCanvasWord(
                 content.original.substring(range.first, range.last + 1),
                 "",
                 0L,
                 0L,
-                attached,
+                boundaryAfter,
                 range.first,
                 range.last + 1
             )
@@ -1726,7 +1858,7 @@ internal class AodLyricCanvasView(
             } else {
                 authoredWordSeparator(content.original, word, words[index + 1])
                     ?.let(originalPaint::measureText)
-                    ?: aodWordGapAfter(word.partOfWord, gap)
+                    ?: aodWordGapAfter(word.boundaryAfter, gap)
             }
             PlacedWord(word, wordWidth, gapAfter, offsets[index])
         }
@@ -1827,11 +1959,7 @@ internal class AodLyricCanvasView(
             SecondaryTimedSegment(
                 text = text,
                 width = romanizedPaint.measureText(text),
-                gapAfter = if (nextSourceIndex != null && sourceWords[nextSourceIndex].partOfWord) {
-                    0f
-                } else {
-                    spaceWidth
-                },
+                gapAfter = if (nextSourceIndex != null && word.boundaryAfter) spaceWidth else 0f,
                 startMs = word.startMs,
                 endMs = word.endMs
             )

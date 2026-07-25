@@ -18,6 +18,7 @@ import com.eza.hyperglow.customization.CompiledSurfaceProfile
 import com.eza.hyperglow.customization.SceneCompiler
 import com.eza.hyperglow.root.aod.AodLyricCanvasView
 import com.eza.hyperglow.root.aod.AodCanvasVerticalAlignment
+import com.eza.hyperglow.root.aod.metadataWidgetHeightDp
 import com.eza.hyperglow.root.aod.textSizeModeMultiplier
 import com.eza.hyperglow.root.aod.toAodCanvasContent
 import com.eza.hyperglow.root.capability.XiaomiCapability
@@ -204,8 +205,11 @@ internal fun freezeLockscreenSnapshot(
 internal fun resolveLockscreenMediaSnapshot(
     latest: LyricSnapshot?,
     retained: LyricSnapshot?,
-    mediaPlayerPresent: Boolean
-): LyricSnapshot? = if (!mediaPlayerPresent) {
+    mediaPlayerPresent: Boolean,
+    transitionSourceActive: Boolean = false
+): LyricSnapshot? = if (transitionSourceActive) {
+    latest?.takeIf { it.visible } ?: retained
+} else if (!mediaPlayerPresent) {
     null
 } else {
     latest?.takeIf { it.visible } ?: retained
@@ -384,7 +388,7 @@ internal fun estimatedLockscreenSceneHeight(
     }
     val metadataHeight = if (profile.metadataVisible &&
         profile.widgets.any { it.type == "metadata" }
-    ) 32f else 0f
+    ) metadataWidgetHeightDp(profile.metadataSizePercent) else 0f
     val progressHeight = if (profile.widgets.any { it.type == "media_progress" }) {
         PROGRESS_HEIGHT_DP + PROGRESS_GAP_DP
     } else {
@@ -824,7 +828,9 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
         val snapshot = resolveLockscreenMediaSnapshot(
             latestSnapshot,
             retainedMediaSnapshot,
-            mediaPlayerPresent
+            mediaPlayerPresent,
+            transitionSourceActive = handoffActive &&
+                sceneRole == LinkageSceneRole.TRANSITION_SOURCE
         )
         val wasVisible = directSurface.visibility == View.VISIBLE && canvas.visibility == View.VISIBLE
         val layoutResult = layoutCanvas(controller, host, canvas)
@@ -968,7 +974,7 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
         }
         val metadataHeight = if (profile.metadataVisible &&
             profile.widgets.any { it.type == "metadata" }
-        ) 36f * density else 0f
+        ) metadataWidgetHeightDp(profile.metadataSizePercent) * density else 0f
         val progressHeightWithGap = if (profile.widgets.any { it.type == "media_progress" }) {
             (PROGRESS_HEIGHT_DP + PROGRESS_GAP_DP) * density
         } else {

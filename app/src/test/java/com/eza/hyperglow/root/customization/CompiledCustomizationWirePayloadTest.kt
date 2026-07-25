@@ -15,7 +15,8 @@ class CompiledCustomizationWirePayloadTest {
             SceneCompiler.compile(SceneCompiler.safeDefaultDocument()),
             diagnosticLogging = true,
             available = true,
-            raiseToAod = true
+            raiseToAod = true,
+            suppressLockscreenEditorLongPress = true
         )
         val payload = CompiledCustomizationBundleCodec.toWirePayload(configuration, userId = 10)
 
@@ -35,6 +36,12 @@ class CompiledCustomizationWirePayloadTest {
                 payload,
                 expectedUserId = 10
             )?.raiseToAod == true
+        )
+        assertTrue(
+            CompiledCustomizationBundleCodec.fromWirePayload(
+                payload,
+                expectedUserId = 10
+            )?.suppressLockscreenEditorLongPress == true
         )
         assertNull(
             CompiledCustomizationBundleCodec.fromWirePayload(payload, expectedUserId = 0)

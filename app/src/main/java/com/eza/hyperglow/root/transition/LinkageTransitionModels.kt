@@ -178,6 +178,17 @@ internal class LinkageStateMachine {
         return true
     }
 
+    fun cancelToSource(expectedToken: Long): Boolean {
+        if (expectedToken != token) return false
+        state = when (state) {
+            LinkageTransitionState.TO_AOD -> LinkageTransitionState.LOCKSCREEN
+            LinkageTransitionState.TO_LOCKSCREEN -> LinkageTransitionState.AOD
+            else -> return false
+        }
+        syncStableAuthority()
+        return true
+    }
+
     fun timeout(expectedToken: Long): Boolean {
         if (expectedToken != token) return false
         state = when (state) {

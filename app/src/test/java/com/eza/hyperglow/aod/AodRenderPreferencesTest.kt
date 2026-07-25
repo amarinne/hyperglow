@@ -60,10 +60,12 @@ class AodRenderPreferencesTest {
         assertEquals("Gradient", config.animation)
         assertEquals("Off", config.glow)
         assertEquals(true, config.adaptiveSectioning)
+        assertFalse(config.keepAwakeUnsynced)
         assertEquals(false, config.experimentalPositionFollowing)
         assertEquals("static_bottom", config.burnInPattern)
         assertEquals(60_000L, config.burnInIntervalMs)
         assertFalse(config.lockscreenKeepAwake)
         assertFalse(config.raiseToAod)
+        assertFalse(config.suppressLockscreenEditorLongPress)
     }
 }

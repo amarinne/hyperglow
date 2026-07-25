@@ -4,6 +4,7 @@ import android.app.Application
 import android.os.Handler
 import android.os.Looper
 import com.eza.hyperglow.root.capability.XiaomiCapabilityResolver
+import com.eza.hyperglow.root.aod.AodPowerCoordinator
 import com.eza.hyperglow.root.projection.SystemUiLyricProjectionRuntime
 import io.github.libxposed.api.XposedInterface.Chain
 import io.github.libxposed.api.XposedInterface.Hooker
@@ -33,6 +34,7 @@ internal object SystemUiLifecycleHook {
             val application = chain.thisObject as? Application ?: return result
             XiaomiCapabilityResolver.observeContext(application)
             SystemUiLyricProjectionRuntime.projection.bootstrap(application)
+            SystemUiLyricProjectionRuntime.projection.attach(AodPowerCoordinator, application)
             return result
         }
     }

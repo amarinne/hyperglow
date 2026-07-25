@@ -9,6 +9,7 @@ import android.view.animation.PathInterpolator
 import com.eza.hyperglow.root.capability.XiaomiCapability
 import com.eza.hyperglow.root.capability.XiaomiCapabilityResolver
 import com.eza.hyperglow.root.HookLogger
+import com.eza.hyperglow.root.aod.AodDisplayStateHook
 import com.eza.hyperglow.root.projection.LyricSnapshot
 import com.eza.hyperglow.root.projection.LyricSurfaceKind
 import com.eza.hyperglow.root.projection.SystemUiLyricProjectionRuntime
@@ -44,6 +45,8 @@ internal interface LinkageSurface {
     fun applyTransitionSnapshot(snapshot: LyricSnapshot)
 }
 
+internal fun isDimmedAodDisplayState(state: Int): Boolean = state == 3 || state == 4
+
 internal object LinkageTransitionCoordinator {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val surfaces = EnumMap<LyricSurfaceKind, LinkageSurface>(LyricSurfaceKind::class.java)
@@ -56,6 +59,7 @@ internal object LinkageTransitionCoordinator {
     private var timeoutToken = -1L
     private var activeDurationMs = DEFAULT_DURATION_MS
     private var targetWaitLoggedToken = -1L
+    private var awaitingAodDimOwnership = false
     private val timeout = Runnable { onTimeout(timeoutToken) }
 
     fun registerSurface(surface: LinkageSurface) = onMain {
@@ -116,8 +120,54 @@ internal object LinkageTransitionCoordinator {
         }
     }
 
+    fun onAodSurfaceMode(linkageMode: Boolean) = onMain {
+        if (!linkageMode ||
+            stateMachine.state != LinkageTransitionState.TO_AOD ||
+            targetKind != LyricSurfaceKind.AOD
+        ) return@onMain
+        awaitingAodDimOwnership = true
+        mainHandler.removeCallbacks(timeout)
+        publishAuthority()
+        HookLogger.i(
+            TAG,
+            "AOD target prepared; waiting for dimmed ownership token=$activeToken " +
+                "hook=${AodDisplayStateHook.isInstalled()}"
+        )
+    }
+
+    fun onAodDisplayState(state: Int) = onMain {
+        if (!isDimmedAodDisplayState(state)) return@onMain
+        grantAodDimOwnership(activeToken, "display-state-$state")
+    }
+
+    fun isAwaitingAodDimOwnership(): Boolean = awaitingAodDimOwnership
+
+    private fun grantAodDimOwnership(token: Long, reason: String) {
+        if (token != activeToken || !awaitingAodDimOwnership ||
+            stateMachine.state != LinkageTransitionState.TO_AOD
+        ) return
+        awaitingAodDimOwnership = false
+        sourceRect = surfaces[LyricSurfaceKind.LOCKSCREEN]?.presentationRectInWindow() ?: sourceRect
+        if (!stateMachine.targetReady(token)) return
+        publishAuthority()
+        SystemUiLyricProjectionRuntime.projection.cachedSnapshot()?.let { snapshot ->
+            surfaces[LyricSurfaceKind.AOD]?.applyTransitionSnapshot(snapshot)
+        }
+        HookLogger.i(
+            TAG,
+            "AOD ownership granted token=$activeToken reason=$reason sourceRect=$sourceRect"
+        )
+        settleTransition()
+    }
+
     fun onLinkage(toLockscreen: Boolean) = onMain {
         val currentState = stateMachine.state
+        if (toLockscreen && currentState == LinkageTransitionState.TO_AOD &&
+            awaitingAodDimOwnership
+        ) {
+            cancelBrightForwardTransition()
+            return@onMain
+        }
         if ((!toLockscreen && currentState == LinkageTransitionState.TO_AOD) ||
             (toLockscreen && currentState == LinkageTransitionState.TO_LOCKSCREEN)
         ) return@onMain
@@ -169,6 +219,7 @@ internal object LinkageTransitionCoordinator {
         } else {
             lockscreenProfile?.transition?.durationMs
         } ?: DEFAULT_DURATION_MS.toInt()).toLong().coerceIn(150L, 600L)
+        awaitingAodDimOwnership = false
         freeze.start(activeSnapshot, SystemClock.elapsedRealtime())
         publishAuthority()
         surfaces.values.forEach(LinkageSurface::resetTransition)
@@ -181,9 +232,7 @@ internal object LinkageTransitionCoordinator {
         )
         if (toLockscreen) surfaces[sourceKind]?.fadeOut(activeDurationMs)
         tryStartTarget()
-        timeoutToken = token
-        mainHandler.removeCallbacks(timeout)
-        mainHandler.postDelayed(timeout, TARGET_TIMEOUT_MS)
+        scheduleTargetTimeout(token)
     }
 
     fun resolveSnapshot(snapshot: LyricSnapshot): LyricSnapshot =
@@ -191,7 +240,7 @@ internal object LinkageTransitionCoordinator {
 
     private fun tryStartTarget() {
         val token = activeToken
-        if (token < 0L || animationStartedToken == token) return
+        if (token < 0L || animationStartedToken == token || awaitingAodDimOwnership) return
         val kind = targetKind ?: return
         val target = surfaces[kind] ?: return
         val targetRect = target.transitionRectInWindow()
@@ -250,6 +299,7 @@ internal object LinkageTransitionCoordinator {
         sourceRect = null
         activeDurationMs = DEFAULT_DURATION_MS
         targetWaitLoggedToken = -1L
+        awaitingAodDimOwnership = false
     }
 
     private fun finishWithoutTarget(token: Long) {
@@ -269,6 +319,32 @@ internal object LinkageTransitionCoordinator {
         sourceRect = null
         activeDurationMs = DEFAULT_DURATION_MS
         targetWaitLoggedToken = -1L
+        awaitingAodDimOwnership = false
+    }
+
+    private fun cancelBrightForwardTransition() {
+        val token = activeToken
+        if (!stateMachine.cancelToSource(token)) return
+        HookLogger.i(TAG, "Bright AOD handoff cancelled back to lockscreen token=$token")
+        mainHandler.removeCallbacks(timeout)
+        awaitingAodDimOwnership = false
+        publishAuthority()
+        surfaces.values.forEach(LinkageSurface::resetTransition)
+        surfaces.values.forEach { it.setHandoffActive(false) }
+        freeze.clear()
+        activeToken = -1L
+        animationStartedToken = -1L
+        targetKind = null
+        sourceRect = null
+        activeDurationMs = DEFAULT_DURATION_MS
+        targetWaitLoggedToken = -1L
+    }
+
+    private fun scheduleTargetTimeout(token: Long) {
+        if (token < 0L || awaitingAodDimOwnership) return
+        timeoutToken = token
+        mainHandler.removeCallbacks(timeout)
+        mainHandler.postDelayed(timeout, TARGET_TIMEOUT_MS)
     }
 
     private fun publishAuthority() {
