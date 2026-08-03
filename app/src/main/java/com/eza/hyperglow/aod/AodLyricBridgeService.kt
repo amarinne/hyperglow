@@ -11,7 +11,10 @@ import com.eza.hyperglow.AppLog
 class AodLyricBridgeService : Service() {
     private val binder = object : IAodLyricBridge.Stub() {
         override fun registerCallback(callback: IAodLyricCallback?) {
-            if (callback != null && isSystemUiCaller()) AodStateBridge.register(callback)
+            if (callback != null && isSystemUiCaller()) {
+                AodStateBridge.register(callback)
+                AppLog.bootstrap(TAG, "systemui_callback_accepted")
+            }
         }
 
         override fun unregisterCallback(callback: IAodLyricCallback?) {
@@ -19,7 +22,10 @@ class AodLyricBridgeService : Service() {
         }
 
         override fun reportCapabilities(report: Bundle?) {
-            if (report != null && isSystemUiCaller()) XiaomiCapabilityStore.save(this@AodLyricBridgeService, report)
+            if (report != null && isSystemUiCaller()) {
+                XiaomiCapabilityStore.save(this@AodLyricBridgeService, report)
+                AppLog.bootstrap(TAG, "systemui_capability_report_accepted")
+            }
         }
     }
 

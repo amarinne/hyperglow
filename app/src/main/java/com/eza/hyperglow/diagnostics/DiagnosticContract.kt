@@ -333,7 +333,14 @@ internal object DiagnosticReportCodec {
         "ro.miui.build.region"
     )
     private val CONFIGURED_SURFACE_KEYS = setOf("aod", "lockscreen")
-    private val COMMAND_FAILURE_KEYS = setOf("root_access", "logs", "crash", "lsposed")
+    private val COMMAND_FAILURE_KEYS = setOf(
+        "root_access",
+        "logs",
+        "systemui_processes",
+        "framework",
+        "crash",
+        "lsposed"
+    )
     private val TRUNCATION_KEYS = setOf(
         "diagnosticEventsAndLogs",
         "crashExcerpt",

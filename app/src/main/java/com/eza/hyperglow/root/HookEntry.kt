@@ -1,6 +1,7 @@
 package com.eza.hyperglow.root
 
 import android.app.Application
+import com.eza.hyperglow.BuildConfig
 import com.eza.hyperglow.root.aod.AodSurfaceHook
 import com.eza.hyperglow.root.aod.AodLifetimeHook
 import com.eza.hyperglow.root.aod.AodPositionHook
@@ -23,16 +24,35 @@ class HookEntry : XposedModule() {
     override fun onModuleLoaded(param: ModuleLoadedParam) {
         super.onModuleLoaded(param)
         HookLogger.module = this
+        HookLogger.bootstrap(
+            TAG,
+            "module_loaded version=${BuildConfig.VERSION_CODE} " +
+                "minApi=$LIBXPOSED_MIN_API targetApi=$LIBXPOSED_TARGET_API " +
+                "process=${processClass(param.processName)}"
+        )
         HookLogger.i(TAG, "Module loaded")
     }
 
     override fun onPackageLoaded(param: PackageLoadedParam) {
         if (param.packageName != SYSTEM_UI_PACKAGE) return
         val processName = runCatching { Application.getProcessName() }.getOrDefault("")
-        if (processName.contains(':')) return
+        HookLogger.bootstrap(TAG, "systemui_package_loaded process=${processClass(processName)}")
+        if (processName.contains(':')) {
+            HookLogger.bootstrap(TAG, "systemui_secondary_process_skipped")
+            return
+        }
 
         XiaomiCapabilityResolver.observeDefaultLoader(param.defaultClassLoader)
         XiaomiCapabilityResolver.observeAodLoader(param.defaultClassLoader)
+        val capabilityReport = XiaomiCapabilityResolver.snapshot()
+        val presentProbes = capabilityReport.rawProbes.values.count { it }
+        // Default-loader probes only. The AOD dex is not loaded yet, so this is an early lower
+        // bound, not the effective profile; `capability_report_sent` carries the settled counts.
+        HookLogger.bootstrap(
+            TAG,
+            "systemui_capability_probes_default_loader probes=$presentProbes/" +
+                "${capabilityReport.rawProbes.size} profile=${capabilityReport.profileState.wireValue}"
+        )
         try {
             SystemUiLifecycleHook.install(this, param.defaultClassLoader)
         } catch (error: Exception) {
@@ -140,5 +160,14 @@ class HookEntry : XposedModule() {
     companion object {
         private const val TAG = "HookEntry"
         private const val SYSTEM_UI_PACKAGE = "com.android.systemui"
+        private const val LIBXPOSED_MIN_API = 101
+        private const val LIBXPOSED_TARGET_API = 102
+
+        private fun processClass(processName: String): String = when {
+            processName.isBlank() -> "unknown"
+            processName.contains(':') -> "secondary"
+            processName == SYSTEM_UI_PACKAGE -> "primary"
+            else -> "unexpected"
+        }
     }
 }

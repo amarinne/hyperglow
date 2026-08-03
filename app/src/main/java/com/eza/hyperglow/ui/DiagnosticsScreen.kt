@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,6 +44,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.eza.hyperglow.BuildConfig
 import com.eza.hyperglow.R
+import com.eza.hyperglow.aod.AodStateBridge
+import com.eza.hyperglow.aod.XiaomiCapabilityStore
 import com.eza.hyperglow.diagnostics.DiagnosticCaptureManager
 import com.eza.hyperglow.diagnostics.DiagnosticDraftStore
 import com.eza.hyperglow.diagnostics.DiagnosticGitHubIssue
@@ -106,8 +109,25 @@ internal fun DiagnosticsScreen(onBack: () -> Unit) {
     var showCategoryDialog by remember { mutableStateOf(false) }
     var showPreviewDialog by remember { mutableStateOf(false) }
     var pendingExportJson by remember { mutableStateOf<String?>(null) }
+    var capabilityReportPresent by remember {
+        mutableStateOf(XiaomiCapabilityStore.read(context).hasReport)
+    }
+    DisposableEffect(context) {
+        val capabilityPrefs = context.getSharedPreferences(XiaomiCapabilityStore.PREFS, 0)
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+            capabilityReportPresent = XiaomiCapabilityStore.read(context).hasReport
+        }
+        capabilityPrefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { capabilityPrefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
     val category = HyperGlowReportCategory.entries.firstOrNull { it.name == categoryName }
         ?: HyperGlowReportCategory.COMPATIBILITY
+    val compatibilityCaptureRequired = category == HyperGlowReportCategory.COMPATIBILITY &&
+        DiagnosticReportFactory.requiresCompatibilityGuidedCapture(
+            capabilityReportPresent = capabilityReportPresent,
+            systemUiCallbackPresent = AodStateBridge.hasSystemUiCallback()
+        )
+    val guidedCapture = category.requiresCapture || compatibilityCaptureRequired
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
@@ -275,14 +295,14 @@ internal fun DiagnosticsScreen(onBack: () -> Unit) {
                 item {
                     SmallTitle(
                         text = stringResource(
-                            if (category.requiresCapture) R.string.diagnostic_guided_capture
+                            if (guidedCapture) R.string.diagnostic_guided_capture
                             else R.string.diagnostic_section_report
                         )
                     )
                 }
                 item {
                     SettingsCard {
-                        if (category.requiresCapture) {
+                        if (guidedCapture) {
                             Text(
                                 text = stringResource(R.string.diagnostic_capture_explanation),
                                 modifier = Modifier.padding(16.dp)
@@ -290,7 +310,7 @@ internal fun DiagnosticsScreen(onBack: () -> Unit) {
                         }
                         TextButton(
                             text = stringResource(
-                                if (category.requiresCapture) R.string.diagnostic_start_capture
+                                if (guidedCapture) R.string.diagnostic_start_capture
                                 else R.string.diagnostic_prepare_report
                             ),
                             modifier = Modifier
@@ -300,11 +320,12 @@ internal fun DiagnosticsScreen(onBack: () -> Unit) {
                             colors = ButtonDefaults.textButtonColorsPrimary(),
                             onClick = {
                                 statusMessage = ""
-                                if (category.requiresCapture) {
+                                if (guidedCapture) {
                                     val session = DiagnosticCaptureManager.start(
                                         context,
                                         category,
-                                        description
+                                        description,
+                                        forceCapture = compatibilityCaptureRequired
                                     )
                                     if (session != null) {
                                         activeCapture = session
@@ -350,6 +371,10 @@ internal fun DiagnosticsScreen(onBack: () -> Unit) {
                     SettingsCard {
                         DiagnosticSetupChecklist(report.productMetadata.setupChecks)
                         BasicDiagnosticSummary(report)
+                        Text(
+                            text = stringResource(R.string.diagnostic_included_data_summary),
+                            modifier = Modifier.padding(16.dp)
+                        )
                         ArrowPreference(
                             title = stringResource(R.string.diagnostic_preview_json),
                             onClick = { showPreviewDialog = true },

@@ -212,7 +212,7 @@
     <string name="diagnostic_description">Describe what happened</string>
     <string name="diagnostic_byte_count">%1$d/%2$d</string>
     <string name="diagnostic_guided_capture">Guided capture</string>
-    <string name="diagnostic_capture_active">Capture active. Leave HyperGlow, reproduce the problem, then return and finish.</string>
+    <string name="diagnostic_capture_active">Capture active. Restart System UI now, reproduce the problem, then return and finish.</string>
     <string name="diagnostic_finish_capture">Finish capture</string>
     <string name="diagnostic_finishing">Finishing…</string>
     <string name="diagnostic_section_report">Report</string>
@@ -223,6 +223,7 @@
     <string name="diagnostic_preview_json">Report JSON</string>
     <string name="diagnostic_data_policy">Data policy</string>
     <string name="diagnostic_accept_policy">I accept the policy</string>
+    <string name="diagnostic_included_data_summary">Guided capture may include filtered HyperGlow logs, allowed crash excerpts, SystemUI/HyperGlow USER, UID, PID, and process names, plus fixed /data/adb framework markers, module.prop id/name/version/versionCode, root-solution markers, and matching LSPosed manager package names. It never includes a full app inventory or arbitrary files.</string>
     <string name="diagnostic_upload">Upload</string>
     <string name="diagnostic_uploading">Uploading…</string>
     <string name="diagnostic_report_received">Report received</string>

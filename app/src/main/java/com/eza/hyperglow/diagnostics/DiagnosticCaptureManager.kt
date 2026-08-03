@@ -15,6 +15,7 @@ internal data class DiagnosticCaptureSession(
     val reportId: String,
     val category: HyperGlowReportCategory,
     val description: String,
+    val forcedCapture: Boolean,
     val startedAtUtcMillis: Long,
     val startedAtElapsedMillis: Long,
     val previousDiagnosticLogging: Boolean
@@ -82,9 +83,11 @@ internal object DiagnosticCaptureManager {
     fun start(
         context: Context,
         category: HyperGlowReportCategory,
-        description: String
+        description: String,
+        forceCapture: Boolean = false
     ): DiagnosticCaptureSession? {
-        require(category.requiresCapture)
+        val forcedCapture = forceCapture && category == HyperGlowReportCategory.COMPATIBILITY
+        require(category.requiresCapture || forcedCapture)
         require(description.isNotBlank() && description.utf8Size() <= DiagnosticLimits.DESCRIPTION_BYTES)
         if (!cancel(context)) return null
         val previousDiagnosticLogging = DiagnosticLoggingPreferences.read(context)
@@ -97,6 +100,7 @@ internal object DiagnosticCaptureManager {
             reportId = DiagnosticReportId.generate(),
             category = category,
             description = description,
+            forcedCapture = forcedCapture,
             startedAtUtcMillis = System.currentTimeMillis(),
             startedAtElapsedMillis = SystemClock.elapsedRealtime(),
             previousDiagnosticLogging = previousDiagnosticLogging
@@ -193,13 +197,17 @@ internal object DiagnosticCaptureManager {
         ) ?: return null
         val reportId = prefs.getString(KEY_REPORT_ID, "").orEmpty()
         val description = prefs.getString(KEY_DESCRIPTION, "").orEmpty()
-        if (!isValidDiagnosticReportId(reportId) || !category.requiresCapture ||
+        val forcedCapture = prefs.getBoolean(KEY_FORCED_CAPTURE, false)
+        if (!isValidDiagnosticReportId(reportId) ||
+            (!category.requiresCapture &&
+                !(forcedCapture && category == HyperGlowReportCategory.COMPATIBILITY)) ||
             description.isBlank() || description.utf8Size() > DiagnosticLimits.DESCRIPTION_BYTES
         ) return null
         return DiagnosticCaptureSession(
             reportId = reportId,
             category = category,
             description = description,
+            forcedCapture = forcedCapture,
             startedAtUtcMillis = prefs.getLong(KEY_STARTED_WALL, -1L),
             startedAtElapsedMillis = prefs.getLong(KEY_STARTED_ELAPSED, -1L),
             previousDiagnosticLogging = prefs.getBoolean(KEY_PREVIOUS_LOGGING, false)
@@ -212,6 +220,7 @@ internal object DiagnosticCaptureManager {
             .putString(KEY_REPORT_ID, session.reportId)
             .putString(KEY_CATEGORY, session.category.wireValue)
             .putString(KEY_DESCRIPTION, session.description)
+            .putBoolean(KEY_FORCED_CAPTURE, session.forcedCapture)
             .putLong(KEY_STARTED_WALL, session.startedAtUtcMillis)
             .putLong(KEY_STARTED_ELAPSED, session.startedAtElapsedMillis)
             .putBoolean(KEY_PREVIOUS_LOGGING, session.previousDiagnosticLogging)
@@ -244,6 +253,7 @@ internal object DiagnosticCaptureManager {
     private const val KEY_REPORT_ID = "report_id"
     private const val KEY_CATEGORY = "category"
     private const val KEY_DESCRIPTION = "description"
+    private const val KEY_FORCED_CAPTURE = "forced_capture"
     private const val KEY_STARTED_WALL = "started_wall"
     private const val KEY_STARTED_ELAPSED = "started_elapsed"
     private const val KEY_PREVIOUS_LOGGING = "previous_logging"

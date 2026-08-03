@@ -10,6 +10,7 @@ import com.eza.hyperglow.DiagnosticLoggingRuntime
 import com.eza.hyperglow.aod.AodStateWireMessage
 import com.eza.hyperglow.customization.CompiledCustomization
 import com.eza.hyperglow.root.aod.AodLyricClient
+import com.eza.hyperglow.root.HookLogger
 import com.eza.hyperglow.root.lockscreen.RaiseToAodController
 import com.eza.hyperglow.root.lockscreen.LockscreenEditorGestureController
 import com.eza.hyperglow.root.customization.CompiledCustomizationBundleCodec
@@ -275,9 +276,15 @@ internal class SystemUiLyricProjection(
     private fun ensureBound() {
         if (clientBound) return
         clientBound = true
+        val userId = expectedUserId ?: processUserId()
+        val source = if (expectedUserId != null) "tracker" else "process"
+        HookLogger.bootstrap(
+            "SystemUiProjection",
+            "bridge_bind_user=${userId.coerceIn(-1, 99_999)} source=$source"
+        )
         client.bind(
             hostContext = bindingContext,
-            userId = expectedUserId ?: processUserId()
+            userId = userId
         )
     }
 

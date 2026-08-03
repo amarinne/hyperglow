@@ -19,6 +19,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 internal object DiagnosticReportFactory {
+    fun requiresCompatibilityGuidedCapture(
+        capabilityReportPresent: Boolean,
+        systemUiCallbackPresent: Boolean
+    ): Boolean = !capabilityReportPresent || !systemUiCallbackPresent
+
     suspend fun createCompatibilityReport(
         context: Context,
         category: HyperGlowReportCategory,
