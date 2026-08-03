@@ -10,6 +10,7 @@ internal class AodPowerSessionPolicy(
 ) {
     private var session: ProjectionSessionIdentity? = null
     private var leaseUntilElapsedMs = 0L
+    private var keepAliveStartedAtElapsedMs: Long? = null
 
     @Synchronized
     fun resolve(
@@ -26,8 +27,17 @@ internal class AodPowerSessionPolicy(
             leaseUntilElapsedMs = nowElapsedMs + songChangeLeaseMs.coerceAtLeast(0L)
         }
         val leaseActive = nowElapsedMs < leaseUntilElapsedMs
+        val requested = persistentKeepAlive || leaseActive
+        if (!requested) return AodPowerSessionDecision(false, false)
+        val startedAt = keepAliveStartedAtElapsedMs ?: nowElapsedMs.also {
+            keepAliveStartedAtElapsedMs = it
+        }
+        val durationMs = normalizeKeepAwakeDurationMs(state.keepAliveDurationMs)
+        if (durationMs > 0L && nowElapsedMs - startedAt >= durationMs) {
+            return AodPowerSessionDecision(false, false)
+        }
         return AodPowerSessionDecision(
-            keepAlive = persistentKeepAlive || leaseActive,
+            keepAlive = true,
             presentationLeaseActive = leaseActive && !persistentKeepAlive
         )
     }
@@ -36,6 +46,7 @@ internal class AodPowerSessionPolicy(
     fun clear() {
         session = null
         leaseUntilElapsedMs = 0L
+        keepAliveStartedAtElapsedMs = null
     }
 
     companion object {
@@ -47,5 +58,6 @@ internal data class SpicyPowerSessionState(
     val session: ProjectionSessionIdentity,
     val playing: Boolean,
     val aodEnabled: Boolean,
-    val keepAwake: Boolean
+    val keepAwake: Boolean,
+    val keepAliveDurationMs: Long = -1L
 )

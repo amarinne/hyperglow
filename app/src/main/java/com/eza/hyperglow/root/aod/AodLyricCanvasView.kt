@@ -194,7 +194,9 @@ internal data class AodCanvasContent(
     val metadataAnchor: String,
     val metadataSizePercent: Int = 100,
     val adaptiveSectioning: Boolean,
-    val palette: Map<String, String>
+    val palette: Map<String, String>,
+    val secondaryTextBright: Boolean = true,
+    val lyricLineLimit: Int = 3
 )
 
 internal data class AodCanvasLineIdentity(
@@ -792,12 +794,22 @@ internal fun resolvedLineSyncFillMode(lineLevelSync: Boolean, configuredMode: St
     if (!lineLevelSync) configuredMode
     else when (configuredMode) {
         "None" -> "None"
-        "Left to right (main only)" -> "Left to right (main only)"
-        "Left to right",
-        "Left to right (sentence)",
         "Left to right (whole block)" -> "Left to right (whole block)"
+        "Left to right",
+        "Left to right (main only)",
+        "Left to right (sentence)" -> "Left to right (main only)"
         else -> "Top to bottom"
     }
+
+internal fun resolvedLyricLayoutLineLimit(
+    configuredLimit: Int,
+    originalLength: Int,
+    wordCount: Int
+): Int = if (configuredLimit in 1..5) {
+    configuredLimit
+} else {
+    maxOf(originalLength, wordCount, 1)
+}
 
 internal enum class AodCanvasVerticalAlignment { TOP, CENTER }
 
@@ -809,6 +821,8 @@ private fun steadyTextAlpha(factor: Float): Float = if (factor < 0.5f) {
 } else {
     minOf(1f, 0.85f * AOD_DIMMING_BOOST)
 }
+
+internal fun staticSecondaryTextFactor(bright: Boolean): Float = if (bright) 1f else 0.35f
 
 /** Bounded Spicy live-card renderer adapted for Xiaomi AOD. */
 internal class AodLyricCanvasView(
@@ -849,7 +863,9 @@ internal class AodLyricCanvasView(
         metadataAnchor = "top",
         metadataSizePercent = 100,
         adaptiveSectioning = true,
-        palette = emptyMap()
+        palette = emptyMap(),
+        secondaryTextBright = true,
+        lyricLineLimit = 3
     )
     private var resolvedPalette = resolveAodPalette(emptyMap())
     private var alignment = Alignment.START
@@ -1168,70 +1184,65 @@ internal class AodLyricCanvasView(
     private fun drawSharedLineLevelRows(canvas: Canvas, rows: List<PositionedRow>) {
         val original = rows.firstOrNull { it.row.kind == RowKind.ORIGINAL } ?: return
         val progress = lineProgress()
-        when (resolvedLineSyncFillMode(content.lineLevelSync, content.lineSyncFillMode)) {
+        clearBlockSweepShaders()
+        val mode = resolvedLineSyncFillMode(content.lineLevelSync, content.lineSyncFillMode)
+        if (mode == "Left to right (whole block)") {
+            drawWholeBlockSweepRows(canvas, rows, original.baseline, progress)
+            return
+        }
+        drawSecondaryRowsStatic(canvas, rows, bright = content.secondaryTextBright)
+        drawOriginalRubyRows(canvas, original.baseline, bright = true)
+        when (mode) {
             "None" -> {
-                clearBlockSweepShaders()
                 drawUntimedLines(canvas, original.baseline, bright = true, progress)
-                drawSecondaryRowsStatic(canvas, rows, bright = true)
-                drawOriginalRubyRows(canvas, original.baseline, bright = true)
             }
             "Left to right (main only)" -> {
-                clearBlockSweepShaders()
-                drawSecondaryRowsStatic(canvas, rows, bright = true)
-                drawUntimedLines(canvas, original.baseline, bright = false, progress)
-                drawOriginalRubyRows(canvas, original.baseline, bright = false)
-                applyHorizontalSweepShaders(progress, includeSecondary = false)
-                drawUntimedLines(canvas, original.baseline, bright = true, progress)
-                drawOriginalRubyRows(canvas, original.baseline, bright = true)
-                clearBlockSweepShaders()
-            }
-            "Left to right (whole block)" -> {
-                clearBlockSweepShaders()
-                drawUntimedLines(canvas, original.baseline, bright = false, progress)
-                drawSecondaryRowsStatic(canvas, rows, bright = false)
-                drawOriginalRubyRows(canvas, original.baseline, bright = false)
-                applyHorizontalSweepShaders(progress, includeSecondary = true)
-                drawUntimedLines(canvas, original.baseline, bright = true, progress)
-                drawSecondaryRowsStatic(canvas, rows, bright = true)
-                drawOriginalRubyRows(canvas, original.baseline, bright = true)
+                drawContinuousLineFill(canvas, original.baseline, progress)
                 clearBlockSweepShaders()
             }
             else -> {
-                clearBlockSweepShaders()
                 drawUntimedLines(canvas, original.baseline, false, progress)
-                drawSecondaryRowsStatic(canvas, rows, bright = false)
-                drawOriginalRubyRows(canvas, original.baseline, bright = false)
-                var top = Float.MAX_VALUE
-                var bottom = -Float.MAX_VALUE
-                var index = 0
-                while (index < rows.size) {
-                    val row = rows[index]
-                    if (row.row.kind != RowKind.METADATA) {
-                        val rowTop = row.baseline + row.row.paint.fontMetrics.ascent
-                        top = minOf(top, rowTop)
-                        bottom = maxOf(bottom, rowTop + row.row.height)
-                    }
-                    index++
-                }
-                val blockTop = top.coerceAtLeast(paddingTop.toFloat())
-                val blockBottom = bottom.coerceAtMost((height - paddingBottom).toFloat())
+                val blockTop = (original.baseline + original.row.paint.fontMetrics.ascent)
+                    .coerceAtLeast(paddingTop.toFloat())
+                val blockBottom = (blockTop + original.row.height)
+                    .coerceAtMost((height - paddingBottom).toFloat())
                 applyBlockSweepShaders(
                     origin = blockTop,
                     progress = progress,
                     extent = blockBottom - blockTop
                 )
                 drawUntimedLines(canvas, original.baseline, true, progress)
-                drawSecondaryRowsStatic(canvas, rows, bright = true)
-                drawOriginalRubyRows(canvas, original.baseline, bright = true)
                 clearBlockSweepShaders()
             }
         }
     }
 
+    private fun drawWholeBlockSweepRows(
+        canvas: Canvas,
+        rows: List<PositionedRow>,
+        baseline: Float,
+        progress: Float
+    ) {
+        drawSecondaryRowsStatic(canvas, rows, bright = false)
+        drawOriginalRubyRows(canvas, baseline, bright = false)
+        drawUntimedLines(canvas, baseline, bright = false, progress)
+        applyWholeBlockHorizontalSweepShaders(progress)
+        drawSecondaryRowsStatic(
+            canvas,
+            rows,
+            bright = content.secondaryTextBright,
+            keepShader = true
+        )
+        drawOriginalRubyRows(canvas, baseline, bright = true)
+        drawUntimedLines(canvas, baseline, bright = true, progress)
+        clearBlockSweepShaders()
+    }
+
     private fun drawSecondaryRowsStatic(
         canvas: Canvas,
         rows: List<PositionedRow>,
-        bright: Boolean
+        bright: Boolean,
+        keepShader: Boolean = false
     ) {
         var rowIndex = 0
         while (rowIndex < rows.size) {
@@ -1244,10 +1255,12 @@ internal class AodLyricCanvasView(
             }
             setTextAlpha(
                 positioned.row.paint,
-                if (bright) 1f else 0.35f,
+                staticSecondaryTextFactor(bright),
                 1f,
                 resolvedPalette.secondaryText
             )
+            if (!keepShader) positioned.row.paint.shader = null
+            positioned.row.paint.clearShadowLayer()
             var lineIndex = 0
             while (lineIndex < positioned.row.lines.size) {
                 val line = positioned.row.lines[lineIndex]
@@ -1666,6 +1679,34 @@ internal class AodLyricCanvasView(
         clearBlockSweepShaders()
     }
 
+    private fun drawContinuousLineFill(canvas: Canvas, baseline: Float, progress: Float) {
+        val originalLayout = layout.original
+        var precedingRuby = 0f
+        var lineIndex = 0
+        while (lineIndex < originalLayout.lines.size) {
+            val line = originalLayout.lines[lineIndex]
+            val lineBaseline = originalLineBaseline(
+                baseline,
+                lineIndex,
+                originalLayout.lineHeight,
+                precedingRuby,
+                line.rubyHeight,
+                originalLayout.lineGap
+            )
+            val clipSave = clipOriginalLine(canvas, lineBaseline, line.rubyHeight)
+            drawLineFill(
+                canvas,
+                line,
+                lineBaseline,
+                originalLayout.continuousFill(progress, lineIndex),
+                false
+            )
+            if (clipSave != -1) canvas.restoreToCount(clipSave)
+            precedingRuby += line.rubyHeight
+            lineIndex++
+        }
+    }
+
     private fun drawUntimedLines(canvas: Canvas, baseline: Float, bright: Boolean, progress: Float) {
         var precedingRuby = 0f
         var lineIndex = 0
@@ -1850,6 +1891,7 @@ internal class AodLyricCanvasView(
 
     private fun layoutWordLines(words: List<AodCanvasWord>, gap: Float): List<OriginalLine> {
         val available = (width - paddingLeft - paddingRight).coerceAtLeast(1).toFloat()
+        val maxLines = lyricLayoutLineLimit(words.size)
         val offsets = wordOffsets(words)
         val placed = words.mapIndexed { index, word ->
             val wordWidth = originalPaint.measureText(word.text)
@@ -1871,7 +1913,7 @@ internal class AodLyricCanvasView(
                 placed.map(PlacedWord::width),
                 placed.map(PlacedWord::gapAfter),
                 available,
-                MAX_ORIGINAL_LINES
+                maxLines
             ).map { range ->
                 val lineWords = range.map(placed::get)
                 wordLine(lineWords)
@@ -1893,7 +1935,7 @@ internal class AodLyricCanvasView(
         val chunkWidths = chunks.map { chunk ->
             chunk.sumOf { (it.width + it.gapAfter).toDouble() }.toFloat()
         }
-        val lines = balancedChunkRanges(chunkWidths, available, MAX_ORIGINAL_LINES).map { range ->
+        val lines = balancedChunkRanges(chunkWidths, available, maxLines).map { range ->
             val lineWords = range.flatMap { chunks[it] }
             wordLine(lineWords)
         }
@@ -1932,10 +1974,11 @@ internal class AodLyricCanvasView(
         if (content.overflowMode != "Wrap") {
             return listOf(originalLine(text, paint.measureText(text), 0, text.length))
         }
-        val lines = ArrayList<OriginalLine>(MAX_ORIGINAL_LINES)
+        val maxLines = lyricLayoutLineLimit()
+        val lines = ArrayList<OriginalLine>(maxLines)
         var remaining = text
         var charStart = 0
-        while (remaining.isNotEmpty() && lines.size < MAX_ORIGINAL_LINES) {
+        while (remaining.isNotEmpty() && lines.size < maxLines) {
             val count = paint.breakText(remaining, true, available, null).coerceAtLeast(1)
             val line = remaining.take(count)
             lines += originalLine(line, paint.measureText(line), charStart, charStart + line.length)
@@ -1944,6 +1987,13 @@ internal class AodLyricCanvasView(
         }
         return lines
     }
+
+    private fun lyricLayoutLineLimit(wordCount: Int = content.words.size): Int =
+        resolvedLyricLayoutLineLimit(
+            content.lyricLineLimit,
+            content.original.length,
+            wordCount
+        )
 
     private fun transliterationLines(originalLayout: OriginalLayout): List<TextLine>? {
         if (originalLayout.lines.isEmpty() || originalLayout.lines.any { it.words.isEmpty() }) return null
@@ -2213,24 +2263,8 @@ internal class AodLyricCanvasView(
                 row.paint.color = resolvedPalette.metadataText
                 row.paint.alpha = 255
                 canvas.drawText(line.text, line.startX, lineBaseline, row.paint)
-            } else if (row.kind == RowKind.ROMANIZED) {
-                val fullySung = content.animationMode == "Minimal"
-                if (!fullySung && line.timedSegments.isNotEmpty()) {
-                    drawTimedSecondaryLine(canvas, row.paint, line, lineBaseline)
-                } else {
-                    drawSecondaryLine(
-                        canvas,
-                        row.paint,
-                        line.text,
-                        line.startX,
-                        lineBaseline,
-                        line.width,
-                        lineProgress(),
-                        fullySung
-                    )
-                }
             } else {
-                drawSecondaryLine(canvas, row.paint, line.text, line.startX, lineBaseline, line.width, 1f, true)
+                drawSecondaryLine(canvas, row.paint, line.text, line.startX, lineBaseline)
             }
             lineIndex++
         }
@@ -2356,47 +2390,15 @@ internal class AodLyricCanvasView(
 
     private fun applyBlockSweepShaders(origin: Float, progress: Float, extent: Float) {
         applySoftSweep(originalPaint, resolvedPalette.sungText, origin, progress, extent, vertical = true)
-        applySoftSweep(romanizedPaint, resolvedPalette.secondaryText, origin, progress, extent, vertical = true)
-        applySoftSweep(translatedPaint, resolvedPalette.secondaryText, origin, progress, extent, vertical = true)
-        applySoftSweep(rubyPaint, resolvedPalette.secondaryText, origin, progress, extent, vertical = true)
     }
 
-    private fun applyHorizontalSweepShaders(progress: Float, includeSecondary: Boolean) {
+    private fun applyWholeBlockHorizontalSweepShaders(progress: Float) {
         val origin = paddingLeft.toFloat()
         val extent = (width - paddingLeft - paddingRight).coerceAtLeast(0).toFloat()
-        applySoftSweep(
-            originalPaint,
-            resolvedPalette.sungText,
-            origin,
-            progress,
-            extent,
-            vertical = false
-        )
-        applySoftSweep(
-            rubyPaint,
-            resolvedPalette.secondaryText,
-            origin,
-            progress,
-            extent,
-            vertical = false
-        )
-        if (!includeSecondary) return
-        applySoftSweep(
-            romanizedPaint,
-            resolvedPalette.secondaryText,
-            origin,
-            progress,
-            extent,
-            vertical = false
-        )
-        applySoftSweep(
-            translatedPaint,
-            resolvedPalette.secondaryText,
-            origin,
-            progress,
-            extent,
-            vertical = false
-        )
+        applySoftSweep(originalPaint, resolvedPalette.sungText, origin, progress, extent, false)
+        applySoftSweep(romanizedPaint, resolvedPalette.secondaryText, origin, progress, extent, false)
+        applySoftSweep(translatedPaint, resolvedPalette.secondaryText, origin, progress, extent, false)
+        applySoftSweep(rubyPaint, resolvedPalette.secondaryText, origin, progress, extent, false)
     }
 
     private fun clearBlockSweepShaders() {
@@ -2428,62 +2430,17 @@ internal class AodLyricCanvasView(
         paint: Paint,
         text: String,
         x: Float,
-        baseline: Float,
-        width: Float,
-        fillProgress: Float,
-        fullySung: Boolean
+        baseline: Float
     ) {
         setTextAlpha(
             paint,
-            if (fullySung) 1f else 0.35f,
+            staticSecondaryTextFactor(content.secondaryTextBright),
             1f,
             resolvedPalette.secondaryText
         )
         paint.shader = null
+        paint.clearShadowLayer()
         canvas.drawText(text, x, baseline, paint)
-        if (!fullySung) {
-            setTextAlpha(paint, 1f, 1f, resolvedPalette.secondaryText)
-            applySoftSweep(
-                paint,
-                resolvedPalette.secondaryText,
-                origin = x,
-                progress = fillProgress,
-                extent = width,
-                vertical = false
-            )
-            canvas.drawText(text, x, baseline, paint)
-            paint.shader = null
-        }
-    }
-
-    private fun drawTimedSecondaryLine(
-        canvas: Canvas,
-        paint: Paint,
-        line: TextLine,
-        baseline: Float
-    ) {
-        val position = projectedPosition()
-        var x = line.startX
-        line.timedSegments.forEach { segment ->
-            val fill = secondaryTimedProgress(position, segment.startMs, segment.endMs)
-            paint.shader = null
-            setTextAlpha(paint, 0.35f, 1f, resolvedPalette.secondaryText)
-            canvas.drawText(segment.text, x, baseline, paint)
-            if (fill > 0f) {
-                setTextAlpha(paint, 1f, 1f, resolvedPalette.secondaryText)
-                applySoftSweep(
-                    paint,
-                    resolvedPalette.secondaryText,
-                    origin = x,
-                    progress = fill,
-                    extent = segment.width,
-                    vertical = false
-                )
-                canvas.drawText(segment.text, x, baseline, paint)
-                paint.shader = null
-            }
-            x += segment.width + segment.gapAfter
-        }
     }
 
     private fun paint(sizeSp: Float, color: Int, weight: Int) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -2613,7 +2570,6 @@ internal class AodLyricCanvasView(
     private data class TypefaceKey(val family: String, val weight: String)
 
     companion object {
-        private const val MAX_ORIGINAL_LINES = 3
         private const val MAX_SECONDARY_LINES = 2
         private const val ENTER_TRANSITION_MS = 210L
         private const val EXIT_TRANSITION_MS = 130L

@@ -1,11 +1,23 @@
 package com.eza.hyperglow.root.lockscreen
 
+import com.eza.hyperglow.customization.SceneCompiler
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LockscreenSurfaceControllerTest {
+    @Test
+    fun selectedLineLimitExpandsEstimateAndNoLimitUsesSafeAreaCeiling() {
+        val base = SceneCompiler.compile(SceneCompiler.safeDefaultDocument())
+            .profiles.getValue(SceneCompiler.SURFACE_LOCKSCREEN)
+        val threeLines = estimatedLockscreenSceneHeight(base.copy(lyricLineLimit = 3), 1f)
+        val fiveLines = estimatedLockscreenSceneHeight(base.copy(lyricLineLimit = 5), 1f)
+
+        assertTrue(fiveLines > threeLines)
+        assertTrue(estimatedLockscreenSceneHeight(base.copy(lyricLineLimit = 0), 1f).isInfinite())
+    }
+
     @Test
     fun lockscreenKeepAwakeRequiresActiveVisiblePlayback() {
         assertTrue(shouldKeepLockscreenAwake(true, true, false, true, 1f))
@@ -387,6 +399,7 @@ class LockscreenSurfaceControllerTest {
             trackGeneration = 1,
             updatedAtElapsedMs = 1_000,
             visible = true,
+            playbackActive = true,
             lockscreenEnabled = true,
             original = "line"
         )
@@ -430,6 +443,7 @@ class LockscreenSurfaceControllerTest {
     fun lockscreenSnapshotLifetimeFollowsStockMediaPlayerPresence() {
         val live = com.eza.hyperglow.root.projection.LyricSnapshot(
             visible = true,
+            playbackActive = true,
             original = "live"
         )
         val hidden = live.copy(visible = false)
@@ -469,13 +483,50 @@ class LockscreenSurfaceControllerTest {
             speed = 1f,
             original = "line"
         )
-        val hidden = live.copy(visible = false)
-        val first = retainedLockscreenSnapshotAfterUpdate(hidden, live, null, 3_000L)!!
-        val replayed = retainedLockscreenSnapshotAfterUpdate(hidden, live, first, 8_000L)
+        val hidden = live.copy(
+            visible = false,
+            playbackActive = false,
+            pauseRetentionEligible = true,
+            updatedAtElapsedMs = 3_000L
+        )
+        val first = retainedLockscreenSnapshotAfterUpdate(hidden, live, null, 3_000L, 10_000L)!!
+        val replayed = retainedLockscreenSnapshotAfterUpdate(hidden, live, first, 8_000L, 10_000L)
 
         assertEquals(first, replayed)
         assertEquals(6_000L, replayed!!.positionMs)
         assertEquals(0f, replayed.speed)
+        assertEquals(
+            null,
+            retainedLockscreenSnapshotAfterUpdate(hidden, live, null, 13_000L, 10_000L)
+        )
+    }
+
+    @Test
+    fun nonSpotifyAndExpiredPauseSnapshotsDoNotRender() {
+        val live = com.eza.hyperglow.root.projection.LyricSnapshot(
+            visible = true,
+            lockscreenEnabled = true,
+            updatedAtElapsedMs = 1_000L,
+            original = "line"
+        )
+        val paused = live.copy(
+            playbackActive = false,
+            pauseRetentionEligible = true,
+            speed = 0f
+        )
+
+        assertFalse(shouldRenderLockscreenSnapshot(live, true, false, 2_000L))
+        assertTrue(shouldRenderLockscreenSnapshot(paused, true, false, 2_000L))
+        assertEquals(
+            null,
+            retainedLockscreenSnapshotAfterUpdate(
+                paused.copy(visible = false),
+                live.copy(playbackActive = true),
+                null,
+                3_000L,
+                0L
+            )
+        )
     }
 
     @Test

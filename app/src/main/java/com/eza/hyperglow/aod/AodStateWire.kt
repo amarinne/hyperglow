@@ -22,7 +22,7 @@ internal object AodStateWireLimits {
 }
 
 internal object AodStateWireContract {
-    const val PROTOCOL_VERSION = 1
+    const val PROTOCOL_VERSION = 2
     const val KIND_SNAPSHOT = 1
     const val KIND_HIDDEN = 2
     const val KIND_KEEPALIVE = 3
@@ -99,6 +99,7 @@ internal sealed interface AodStateWireMessage {
     val keepAlive: Boolean
     val wakeSignal: Long
     val playbackActive: Boolean
+    val pauseRetentionEligible: Boolean
 
     data class Snapshot(
         override val revision: Long,
@@ -107,6 +108,7 @@ internal sealed interface AodStateWireMessage {
         override val keepAlive: Boolean,
         override val wakeSignal: Long,
         override val playbackActive: Boolean = false,
+        override val pauseRetentionEligible: Boolean = false,
         val value: AodStateWireSnapshot
     ) : AodStateWireMessage
 
@@ -116,7 +118,8 @@ internal sealed interface AodStateWireMessage {
         override val updatedAtElapsedMs: Long,
         override val keepAlive: Boolean,
         override val wakeSignal: Long,
-        override val playbackActive: Boolean = false
+        override val playbackActive: Boolean = false,
+        override val pauseRetentionEligible: Boolean = false
     ) : AodStateWireMessage
 
     data class KeepAlive(
@@ -125,7 +128,8 @@ internal sealed interface AodStateWireMessage {
         override val updatedAtElapsedMs: Long,
         override val keepAlive: Boolean,
         override val wakeSignal: Long,
-        override val playbackActive: Boolean = false
+        override val playbackActive: Boolean = false,
+        override val pauseRetentionEligible: Boolean = false
     ) : AodStateWireMessage
 }
 
@@ -138,7 +142,8 @@ internal data class AodStateWireEnvelope(
     val keepAlive: Boolean,
     val wakeSignal: Long,
     val body: ByteArray?,
-    val playbackActive: Boolean = false
+    val playbackActive: Boolean = false,
+    val pauseRetentionEligible: Boolean = false
 )
 
 internal object AodStateWireCodec {
@@ -158,7 +163,8 @@ internal object AodStateWireCodec {
                     keepAlive = message.keepAlive,
                     wakeSignal = message.wakeSignal,
                     body = body,
-                    playbackActive = message.playbackActive
+                    playbackActive = message.playbackActive,
+                    pauseRetentionEligible = message.pauseRetentionEligible
                 )
             }
             is AodStateWireMessage.Hidden -> AodStateWireEnvelope(
@@ -170,7 +176,8 @@ internal object AodStateWireCodec {
                 keepAlive = message.keepAlive,
                 wakeSignal = message.wakeSignal,
                 body = null,
-                playbackActive = message.playbackActive
+                playbackActive = message.playbackActive,
+                pauseRetentionEligible = message.pauseRetentionEligible
             )
             is AodStateWireMessage.KeepAlive -> AodStateWireEnvelope(
                 protocol = AodStateWireContract.PROTOCOL_VERSION,
@@ -181,7 +188,8 @@ internal object AodStateWireCodec {
                 keepAlive = message.keepAlive,
                 wakeSignal = message.wakeSignal,
                 body = null,
-                playbackActive = message.playbackActive
+                playbackActive = message.playbackActive,
+                pauseRetentionEligible = message.pauseRetentionEligible
             )
         }
     }
@@ -205,6 +213,7 @@ internal object AodStateWireCodec {
                     keepAlive = envelope.keepAlive,
                     wakeSignal = envelope.wakeSignal,
                     playbackActive = envelope.playbackActive,
+                    pauseRetentionEligible = envelope.pauseRetentionEligible,
                     value = snapshot
                 )
             }
@@ -214,7 +223,8 @@ internal object AodStateWireCodec {
                 updatedAtElapsedMs = envelope.updatedAtElapsedMs,
                 keepAlive = envelope.keepAlive,
                 wakeSignal = envelope.wakeSignal,
-                playbackActive = envelope.playbackActive
+                playbackActive = envelope.playbackActive,
+                pauseRetentionEligible = envelope.pauseRetentionEligible
             )
             AodStateWireContract.KIND_KEEPALIVE -> AodStateWireMessage.KeepAlive(
                 revision = envelope.revision,
@@ -222,7 +232,8 @@ internal object AodStateWireCodec {
                 updatedAtElapsedMs = envelope.updatedAtElapsedMs,
                 keepAlive = envelope.keepAlive,
                 wakeSignal = envelope.wakeSignal,
-                playbackActive = envelope.playbackActive
+                playbackActive = envelope.playbackActive,
+                pauseRetentionEligible = envelope.pauseRetentionEligible
             )
             else -> null
         }
@@ -658,6 +669,7 @@ internal object AodStateWireBundleCodec {
         putBoolean(KEY_KEEP_ALIVE, envelope.keepAlive)
         putLong(KEY_WAKE_SIGNAL, envelope.wakeSignal)
         putBoolean(KEY_PLAYBACK_ACTIVE, envelope.playbackActive)
+        putBoolean(KEY_PAUSE_RETENTION_ELIGIBLE, envelope.pauseRetentionEligible)
         envelope.body?.let { putByteArray(KEY_BODY, it) }
     }
 
@@ -676,7 +688,8 @@ internal object AodStateWireBundleCodec {
             } else {
                 null
             },
-            playbackActive = bundle.getBoolean(KEY_PLAYBACK_ACTIVE, false)
+            playbackActive = bundle.getBoolean(KEY_PLAYBACK_ACTIVE, false),
+            pauseRetentionEligible = bundle.getBoolean(KEY_PAUSE_RETENTION_ELIGIBLE, false)
         )
         return AodStateWireCodec.decode(envelope)
     }
@@ -689,5 +702,6 @@ internal object AodStateWireBundleCodec {
     private const val KEY_KEEP_ALIVE = "keepAlive"
     private const val KEY_WAKE_SIGNAL = "wakeSignal"
     private const val KEY_PLAYBACK_ACTIVE = "playbackActive"
+    private const val KEY_PAUSE_RETENTION_ELIGIBLE = "pauseRetentionEligible"
     private const val KEY_BODY = "stateBody"
 }

@@ -175,7 +175,8 @@ internal class SystemUiLyricProjection(
                     updatedAtElapsedMs = message.updatedAtElapsedMs,
                     keepAlive = message.value.keepAlive,
                     wakeSignal = message.value.wakeSignal,
-                    playbackActive = message.value.playbackActive
+                    playbackActive = message.value.playbackActive,
+                    pauseRetentionEligible = message.value.pauseRetentionEligible
                 )
                 if (current.visible) latestVisibleSnapshot = latestSnapshot
                 latestSnapshot?.let(::scheduleExpiry)
@@ -200,7 +201,9 @@ internal class SystemUiLyricProjection(
     @Synchronized
     internal fun expireIfStale(nowElapsedMs: Long): Boolean {
         val snapshot = latestSnapshot ?: return false
-        if (!snapshot.visible || nowElapsedMs - snapshot.updatedAtElapsedMs <= LYRIC_SNAPSHOT_FRESH_MS) {
+        if ((!snapshot.visible && !snapshot.playbackActive) ||
+            nowElapsedMs - snapshot.updatedAtElapsedMs <= LYRIC_SNAPSHOT_FRESH_MS
+        ) {
             return false
         }
         latestSnapshot = null
@@ -280,7 +283,7 @@ internal class SystemUiLyricProjection(
 
     private fun scheduleExpiry(snapshot: LyricSnapshot) {
         expiryScheduler.cancel()
-        if (!snapshot.visible) return
+        if (!snapshot.visible && !snapshot.playbackActive) return
         val expectedRevision = snapshot.revision
         val expectedUpdatedAt = snapshot.updatedAtElapsedMs
         val delay = (expectedUpdatedAt + LYRIC_SNAPSHOT_FRESH_MS -

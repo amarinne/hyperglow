@@ -43,6 +43,28 @@ class AodRenderPreferencesTest {
     }
 
     @Test
+    fun pauseLingerAllowsOnlyClosedSharedDurations() {
+        assertEquals(-1L, normalizePauseLingerMs(-1L))
+        assertEquals(0L, normalizePauseLingerMs(0L))
+        assertEquals(5_000L, normalizePauseLingerMs(5_000L))
+        assertEquals(10_000L, normalizePauseLingerMs(10_000L))
+        assertEquals(30_000L, normalizePauseLingerMs(30_000L))
+        assertEquals(5_000L, normalizePauseLingerMs(1_000L))
+    }
+
+    @Test
+    fun keepAwakeDurationAllowsOnlyOfferedSessionLengths() {
+        assertEquals(-1L, normalizeKeepAwakeDurationMs(-1L))
+        assertEquals(300_000L, normalizeKeepAwakeDurationMs(300_000L))
+        assertEquals(600_000L, normalizeKeepAwakeDurationMs(600_000L))
+        assertEquals(1_800_000L, normalizeKeepAwakeDurationMs(1_800_000L))
+        assertEquals(3_600_000L, normalizeKeepAwakeDurationMs(3_600_000L))
+        assertEquals(7_200_000L, normalizeKeepAwakeDurationMs(7_200_000L))
+        assertEquals(-1L, normalizeKeepAwakeDurationMs(0L))
+        assertEquals(-1L, normalizeKeepAwakeDurationMs(45_000L))
+    }
+
+    @Test
     fun configDefaultsAreConcreteExceptAlignment() {
         val config = AodRenderConfig()
 
@@ -61,9 +83,11 @@ class AodRenderPreferencesTest {
         assertEquals("Off", config.glow)
         assertEquals(true, config.adaptiveSectioning)
         assertFalse(config.keepAwakeUnsynced)
+        assertEquals(-1L, config.keepAwakeDurationMs)
         assertEquals(false, config.experimentalPositionFollowing)
         assertEquals("static_bottom", config.burnInPattern)
         assertEquals(60_000L, config.burnInIntervalMs)
+        assertEquals(5_000L, config.pauseLingerMs)
         assertFalse(config.lockscreenKeepAwake)
         assertFalse(config.raiseToAod)
         assertFalse(config.suppressLockscreenEditorLongPress)

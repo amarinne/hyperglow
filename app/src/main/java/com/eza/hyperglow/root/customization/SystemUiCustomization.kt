@@ -5,6 +5,8 @@ import com.eza.hyperglow.customization.CompiledCustomization
 import com.eza.hyperglow.customization.CompiledSurfaceProfile
 import com.eza.hyperglow.customization.SceneCompiler
 import com.eza.hyperglow.customization.WidgetSpec
+import com.eza.hyperglow.customization.normalizeLyricLineLimit
+import com.eza.hyperglow.aod.normalizePauseLingerMs
 import com.eza.hyperglow.root.projection.LyricSurfaceKind
 import com.eza.hyperglow.root.surface.SurfacePolicyResolver
 import kotlinx.serialization.decodeFromString
@@ -64,6 +66,7 @@ internal object SystemUiCustomizationValidator {
                 revision = 0L,
                 hash = "",
                 sourceId = normalizeIdentifier(configuration.sourceId),
+                pauseLingerMs = normalizePauseLingerMs(configuration.pauseLingerMs),
                 profiles = profiles
             )
         )
@@ -111,6 +114,7 @@ internal object SystemUiCustomizationValidator {
             ),
             alignment = profile.alignment.takeIf { it in ALIGNMENTS } ?: "auto",
             secondaryMode = profile.secondaryMode.takeIf { it in SECONDARY_MODES } ?: "Main only",
+            lyricLineLimit = normalizeLyricLineLimit(profile.lyricLineLimit),
             metadataVisible = profile.metadataVisible && widgets.any { it.type == "metadata" },
             metadataAnchor = if (profile.metadataAnchor == "bottom") "bottom" else "top",
             metadataSizePercent = profile.metadataSizePercent.coerceIn(50, 200),
@@ -173,10 +177,8 @@ internal object SystemUiCustomizationValidator {
     private val FONT_FAMILIES = setOf("noto", "spotify", "apple")
     private val ANIMATIONS = setOf("Minimal", "Gradient")
     private fun normalizeLineSyncFillMode(value: String): String = when (value) {
-        "Left to right" -> "Left to right (whole block)"
         "None",
         "Top to bottom",
-        "Left to right (main only)",
         "Left to right (whole block)" -> value
         else -> "Left to right (main only)"
     }
@@ -256,7 +258,7 @@ internal object CompiledCustomizationBundleCodec {
         putString(KEY_JSON, payload.json)
     }
 
-    private const val PROTOCOL_VERSION = 2
+    private const val PROTOCOL_VERSION = 3
     private const val SHA_256_HEX_LENGTH = 64
     private const val KEY_PROTOCOL = "protocol"
     private const val KEY_USER_ID = "userId"

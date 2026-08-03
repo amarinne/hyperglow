@@ -1,3 +1,5 @@
+import java.net.URI
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -9,6 +11,18 @@ val traceLoggingOverride = providers.gradleProperty("traceLogging").orNull?.let 
         "traceLogging must be true or false"
     }
     value.toBoolean()
+}
+val diagnosticIntakeUrl = providers.gradleProperty("diagnosticIntakeUrl")
+    .orElse("https://reports.eza.dpdns.org/v1/reports")
+val diagnosticIntakeUri = URI(diagnosticIntakeUrl.get())
+require(
+    diagnosticIntakeUri.scheme == "https" &&
+        !diagnosticIntakeUri.host.isNullOrBlank() &&
+        diagnosticIntakeUri.userInfo == null &&
+        diagnosticIntakeUri.query == null &&
+        diagnosticIntakeUri.fragment == null
+) {
+    "diagnosticIntakeUrl must be an HTTPS URL without embedded credentials"
 }
 
 val signingKeystoreFile = providers.environmentVariable("SIGNING_KEYSTORE_FILE").orNull
@@ -30,9 +44,14 @@ android {
         applicationId = "com.eza.hyperglow"
         minSdk = 33
         targetSdk = 37
-        versionCode = 33
-        versionName = "0.3.21"
+        versionCode = 59
+        versionName = "0.3.47"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField(
+            "String",
+            "DIAGNOSTIC_INTAKE_URL",
+            "\"$diagnosticIntakeUri\""
+        )
     }
 
     signingConfigs {

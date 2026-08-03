@@ -123,6 +123,33 @@ class SceneCompilerTest {
     }
 
     @Test
+    fun lyricLineLimitAndSecondaryBrightnessCompileWithSafeFallback() {
+        val compiled = SceneCompiler.compile(
+            CustomizationDocument(
+                profiles = mapOf(
+                    SceneCompiler.SURFACE_AOD to SurfaceProfile(
+                        lyricLineLimit = 0,
+                        secondaryTextBright = false
+                    )
+                )
+            )
+        ).profiles.getValue(SceneCompiler.SURFACE_AOD)
+
+        assertEquals(0, compiled.lyricLineLimit)
+        assertFalse(compiled.secondaryTextBright)
+        assertEquals(
+            DEFAULT_LYRIC_LINE_LIMIT,
+            SceneCompiler.compile(
+                CustomizationDocument(
+                    profiles = mapOf(
+                        SceneCompiler.SURFACE_AOD to SurfaceProfile(lyricLineLimit = 99)
+                    )
+                )
+            ).profiles.getValue(SceneCompiler.SURFACE_AOD).lyricLineLimit
+        )
+    }
+
+    @Test
     fun lineLevelSweepDirectionIsCompiledAndValidated() {
         val compiled = SceneCompiler.compile(
             CustomizationDocument(
@@ -138,6 +165,30 @@ class SceneCompilerTest {
         assertEquals(
             "Left to right (main only)",
             validated.profiles.getValue(SceneCompiler.SURFACE_AOD).lineSyncFillMode
+        )
+        assertEquals(
+            "Left to right (whole block)",
+            SystemUiCustomizationValidator.validate(
+                compiled.copy(
+                    profiles = compiled.profiles + (
+                        SceneCompiler.SURFACE_AOD to compiled.profiles
+                            .getValue(SceneCompiler.SURFACE_AOD)
+                            .copy(lineSyncFillMode = "Left to right (whole block)")
+                        )
+                )
+            )!!.profiles.getValue(SceneCompiler.SURFACE_AOD).lineSyncFillMode
+        )
+        assertEquals(
+            "Left to right (main only)",
+            SystemUiCustomizationValidator.validate(
+                compiled.copy(
+                    profiles = compiled.profiles + (
+                        SceneCompiler.SURFACE_AOD to compiled.profiles
+                            .getValue(SceneCompiler.SURFACE_AOD)
+                            .copy(lineSyncFillMode = "Left to right")
+                        )
+                )
+            )!!.profiles.getValue(SceneCompiler.SURFACE_AOD).lineSyncFillMode
         )
         assertEquals(
             "None",

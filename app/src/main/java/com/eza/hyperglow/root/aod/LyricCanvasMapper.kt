@@ -41,15 +41,17 @@ internal fun LyricSnapshot.toAodCanvasContent(
     textSizeMode = profile?.textSize ?: textSizeMode,
     textSizeCustom = profile?.textSizeCustom ?: textSizeCustom,
     secondaryMode = profile?.secondaryMode ?: secondaryMode,
+    secondaryTextBright = profile?.secondaryTextBright ?: true,
+    lyricLineLimit = profile?.lyricLineLimit ?: 3,
     animationMode = profile?.animation ?: animationMode,
     glowMode = profile?.glow ?: glowMode,
     motionMode = normalizeAodMotion(motionMode),
     lineSyncFillMode = when (profile?.lineSyncFillMode) {
-        "Left to right" -> "Left to right (whole block)"
         "None",
         "Top to bottom",
         "Left to right (main only)",
         "Left to right (whole block)" -> profile.lineSyncFillMode
+        "Left to right" -> "Left to right (main only)"
         else -> lineSyncFillMode
     },
     overflowMode = profile?.overflow ?: overflowMode,

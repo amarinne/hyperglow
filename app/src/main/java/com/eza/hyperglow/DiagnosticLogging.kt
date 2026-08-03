@@ -2,10 +2,12 @@ package com.eza.hyperglow
 
 import android.content.Context
 import com.eza.hyperglow.aod.AodRenderPreferences
+import com.eza.hyperglow.aod.AodStateBridge
 import com.eza.hyperglow.customization.CompiledCustomization
 import com.eza.hyperglow.customization.CustomizationDocument
 import com.eza.hyperglow.customization.CustomizationRepository
 import com.eza.hyperglow.customization.SceneCompiler
+import com.eza.hyperglow.root.projection.currentProcessUserId
 
 internal fun diagnosticLoggingEnabled(available: Boolean, requested: Boolean): Boolean =
     available && requested
@@ -42,12 +44,24 @@ internal object DiagnosticLoggingPreferences {
             .commit()
 }
 
+internal fun setDiagnosticLogging(context: Context, enabled: Boolean): Boolean {
+    if (!DiagnosticLoggingPreferences.write(context, enabled)) return false
+    val effective = DiagnosticLoggingPreferences.read(context)
+    DiagnosticLoggingRuntime.setEnabled(effective)
+    AodStateBridge.publishConfiguration(
+        RuntimeCustomization.loadCompiled(context),
+        currentProcessUserId()
+    )
+    return true
+}
+
 internal object RuntimeCustomization {
     fun loadCompiled(context: Context): CompiledCustomization {
         val preferences = AodRenderPreferences.read(context)
         return withDiagnosticLogging(
             CustomizationRepository.loadCompiled(context),
             DiagnosticLoggingPreferences.read(context),
+            pauseLingerMs = preferences.pauseLingerMs,
             lockscreenKeepAwake = preferences.lockscreenKeepAwake,
             raiseToAod = preferences.raiseToAod,
             suppressLockscreenEditorLongPress = preferences.suppressLockscreenEditorLongPress
@@ -57,12 +71,14 @@ internal object RuntimeCustomization {
     fun compile(
         document: CustomizationDocument,
         diagnosticLogging: Boolean,
+        pauseLingerMs: Long = 5_000L,
         lockscreenKeepAwake: Boolean = false,
         raiseToAod: Boolean = false,
         suppressLockscreenEditorLongPress: Boolean = false
     ): CompiledCustomization = withDiagnosticLogging(
         SceneCompiler.compile(document),
         diagnosticLogging,
+        pauseLingerMs = pauseLingerMs,
         lockscreenKeepAwake = lockscreenKeepAwake,
         raiseToAod = raiseToAod,
         suppressLockscreenEditorLongPress = suppressLockscreenEditorLongPress
@@ -72,6 +88,7 @@ internal object RuntimeCustomization {
         configuration: CompiledCustomization,
         diagnosticLogging: Boolean,
         available: Boolean = BuildConfig.TRACE_LOGGING_AVAILABLE,
+        pauseLingerMs: Long = configuration.pauseLingerMs,
         lockscreenKeepAwake: Boolean = configuration.lockscreenKeepAwake,
         raiseToAod: Boolean = configuration.raiseToAod,
         suppressLockscreenEditorLongPress: Boolean =
@@ -85,6 +102,7 @@ internal object RuntimeCustomization {
                     available,
                     diagnosticLogging
                 ),
+                pauseLingerMs = com.eza.hyperglow.aod.normalizePauseLingerMs(pauseLingerMs),
                 lockscreenKeepAwake = lockscreenKeepAwake,
                 raiseToAod = raiseToAod,
                 suppressLockscreenEditorLongPress = suppressLockscreenEditorLongPress

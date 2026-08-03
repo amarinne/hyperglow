@@ -170,6 +170,8 @@ object CustomizationRepository {
         transition = transition,
         alignment = alignment,
         secondaryMode = secondaryMode,
+        secondaryTextBright = secondaryTextBright,
+        lyricLineLimit = lyricLineLimit,
         metadataVisible = metadataVisible,
         metadataAnchor = metadataAnchor,
         metadataSizePercent = metadataSizePercent,

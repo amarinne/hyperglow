@@ -45,6 +45,49 @@ class AodPowerSessionPolicyTest {
     }
 
     @Test
+    fun finiteDurationBoundsOneContinuousPlayingSession() {
+        val policy = AodPowerSessionPolicy(songChangeLeaseMs = 8_000L)
+        val bounded = first.copy(keepAliveDurationMs = 300_000L)
+
+        assertTrue(policy.resolve(bounded, 1_000L, persistentKeepAlive = true).keepAlive)
+        assertTrue(policy.resolve(bounded, 300_000L, persistentKeepAlive = true).keepAlive)
+        assertFalse(policy.resolve(bounded, 301_000L, persistentKeepAlive = true).keepAlive)
+    }
+
+    @Test
+    fun songChangeDoesNotResetFiniteDuration() {
+        val policy = AodPowerSessionPolicy(songChangeLeaseMs = 8_000L)
+        val bounded = first.copy(keepAliveDurationMs = 300_000L)
+        assertTrue(policy.resolve(bounded, 1_000L, persistentKeepAlive = true).keepAlive)
+
+        val next = bounded.copy(session = ProjectionSessionIdentity("producer", 2, "track:2"))
+        assertFalse(policy.resolve(next, 302_000L, persistentKeepAlive = true).keepAlive)
+        assertFalse(policy.resolve(next, 303_000L, persistentKeepAlive = false).keepAlive)
+    }
+
+    @Test
+    fun nonPlayingEdgeStartsNewFiniteDuration() {
+        val policy = AodPowerSessionPolicy(songChangeLeaseMs = 8_000L)
+        val bounded = first.copy(keepAliveDurationMs = 300_000L)
+        assertTrue(policy.resolve(bounded, 1_000L, persistentKeepAlive = true).keepAlive)
+        assertFalse(policy.resolve(bounded, 302_000L, persistentKeepAlive = true).keepAlive)
+
+        assertFalse(
+            policy.resolve(bounded.copy(playing = false), 303_000L, persistentKeepAlive = true)
+                .keepAlive
+        )
+        assertTrue(policy.resolve(bounded, 304_000L, persistentKeepAlive = true).keepAlive)
+    }
+
+    @Test
+    fun indefiniteDurationKeepsSessionAlive() {
+        val policy = AodPowerSessionPolicy(songChangeLeaseMs = 8_000L)
+
+        assertTrue(policy.resolve(first, 1_000L, persistentKeepAlive = true).keepAlive)
+        assertTrue(policy.resolve(first, 10_800_000L, persistentKeepAlive = true).keepAlive)
+    }
+
+    @Test
     fun disabledMasterPolicyNeverStartsLease() {
         val policy = AodPowerSessionPolicy(songChangeLeaseMs = 8_000L)
 

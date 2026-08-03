@@ -11,6 +11,7 @@ import kotlin.math.abs
 data class AodDisplayState(
     val visible: Boolean,
     val playbackActive: Boolean = false,
+    val pauseRetentionEligible: Boolean = false,
     val userId: Int = 0,
     val trackGeneration: Long = 0L,
     val aodEnabled: Boolean = true,
@@ -124,6 +125,9 @@ object AodStateBridge {
     }
 
     @Synchronized
+    fun hasSystemUiCallback(): Boolean = callbacks.registeredCallbackCount > 0
+
+    @Synchronized
     fun publish(state: AodDisplayState) {
         val publishedState = normalizeAodDisplayState(state)
         if (!shouldRepublish(lastPublished, publishedState)) return
@@ -170,7 +174,8 @@ object AodStateBridge {
             updatedAtElapsedMs = updatedAt,
             keepAlive = current.keepAlive,
             wakeSignal = current.wakeSignal,
-            playbackActive = current.playbackActive
+            playbackActive = current.playbackActive,
+            pauseRetentionEligible = current.pauseRetentionEligible
         )
         val envelope = AodStateWireCodec.encode(keepAlive) ?: return
         broadcast(AodStateWireBundleCodec.toBundle(envelope))
@@ -223,7 +228,8 @@ internal fun encodeNormalizedAodStatePublication(
             updatedAtElapsedMs = updatedAtElapsedMs,
             keepAlive = false,
             wakeSignal = state.wakeSignal,
-            playbackActive = state.playbackActive
+            playbackActive = state.playbackActive,
+            pauseRetentionEligible = state.pauseRetentionEligible
         )
     } else {
         intendedMessage
@@ -287,6 +293,8 @@ internal fun normalizeAodDisplayState(state: AodDisplayState): AodDisplayState {
     }
     return state.copy(
         visible = state.visible && original.isNotEmpty(),
+        pauseRetentionEligible = state.pauseRetentionEligible &&
+            !state.visible && !state.playbackActive,
         userId = state.userId.coerceAtLeast(0),
         trackGeneration = state.trackGeneration.coerceAtLeast(0L),
         burnInPattern = normalizeAodBurnInPattern(state.burnInPattern),
@@ -332,7 +340,8 @@ private fun AodDisplayState.toWireMessage(
         updatedAtElapsedMs = updatedAtElapsedMs,
         keepAlive = keepAlive,
         wakeSignal = wakeSignal,
-        playbackActive = playbackActive
+        playbackActive = playbackActive,
+        pauseRetentionEligible = pauseRetentionEligible
     )
 } else {
     AodStateWireMessage.Snapshot(
@@ -342,6 +351,7 @@ private fun AodDisplayState.toWireMessage(
         keepAlive = keepAlive,
         wakeSignal = wakeSignal,
         playbackActive = playbackActive,
+        pauseRetentionEligible = pauseRetentionEligible,
         value = AodStateWireSnapshot(
             trackGeneration = trackGeneration,
             aodEnabled = aodEnabled,

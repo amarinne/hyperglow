@@ -1,11 +1,15 @@
 package com.eza.hyperglow.ui
 
 import android.content.Intent
+import android.app.LocaleManager
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Bundle
+import android.os.LocaleList
 import android.widget.Toast
+import androidx.annotation.StringRes
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -42,18 +46,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.eza.hyperglow.BuildConfig
+import com.eza.hyperglow.R
 import com.eza.hyperglow.DiagnosticLoggingPreferences
-import com.eza.hyperglow.DiagnosticLoggingRuntime
 import com.eza.hyperglow.RuntimeCustomization
+import com.eza.hyperglow.setDiagnosticLogging
 import com.eza.hyperglow.root.utils.ShellUtils
 import kotlinx.coroutines.launch
 import com.eza.hyperglow.aod.AodRenderPreferences
 import com.eza.hyperglow.aod.AodStateBridge
 import com.eza.hyperglow.aod.XiaomiCapabilityStore
+import com.eza.hyperglow.aod.XiaomiRuntimeSupportState
 import com.eza.hyperglow.customization.CustomizationEditorState
 import com.eza.hyperglow.customization.CustomizationRepository
 import com.eza.hyperglow.customization.SceneCompiler
@@ -69,6 +76,7 @@ import com.eza.hyperglow.root.surface.PlacementRect
 import com.eza.hyperglow.root.surface.ResolvedPlacement
 import com.eza.hyperglow.root.surface.WidgetMeasurement
 import kotlin.math.roundToInt
+import java.util.Locale
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
@@ -130,7 +138,9 @@ class MainActivity : ComponentActivity() {
                     },
                     label = "settingsDestination"
                 ) { surface ->
-                    if (surface != null) {
+                    if (surface == DIAGNOSTICS_DESTINATION) {
+                        DiagnosticsScreen(onBack = { editingSurface = null })
+                    } else if (surface != null) {
                         LyricLayoutScreen(
                             initialSurface = surface,
                             onBack = { editingSurface = null }
@@ -140,6 +150,7 @@ class MainActivity : ComponentActivity() {
                             showRestartResult = ::showRestartResult,
                             selectedTabName = selectedTabName,
                             onSelectTab = { selectedTabName = it },
+                            onOpenDiagnostics = { editingSurface = DIAGNOSTICS_DESTINATION },
                             onOpenLyricLayout = { target -> editingSurface = target }
                         )
                     }
@@ -151,7 +162,10 @@ class MainActivity : ComponentActivity() {
     private fun showRestartResult(succeeded: Boolean) {
         Toast.makeText(
             this,
-            if (succeeded) "System UI restarted" else "Restart failed. Check root permission.",
+            getString(
+                if (succeeded) R.string.toast_systemui_restarted
+                else R.string.toast_systemui_restart_failed
+            ),
             Toast.LENGTH_LONG
         ).show()
     }
@@ -162,6 +176,7 @@ private fun HomeScreen(
     showRestartResult: (Boolean) -> Unit,
     selectedTabName: String,
     onSelectTab: (String) -> Unit,
+    onOpenDiagnostics: () -> Unit,
     onOpenLyricLayout: (String) -> Unit
 ) {
     val context = LocalContext.current
@@ -169,6 +184,9 @@ private fun HomeScreen(
     var showRestartDialog by remember { mutableStateOf(false) }
     var showBurnInPatternDialog by remember { mutableStateOf(false) }
     var showBurnInIntervalDialog by remember { mutableStateOf(false) }
+    var showPauseLingerDialog by remember { mutableStateOf(false) }
+    var showKeepAwakeDurationDialog by remember { mutableStateOf(false) }
+    var showLanguageDialog by remember { mutableStateOf(false) }
     val selectedTab = SettingsTab.entries.firstOrNull { it.name == selectedTabName }
         ?: SettingsTab.OVERVIEW
     val selectedTabIndex = SettingsTab.entries.indexOf(selectedTab)
@@ -195,8 +213,13 @@ private fun HomeScreen(
     }
     val initialConfig = remember { AodRenderPreferences.read(context) }
     val initialDocument = remember { CustomizationRepository.loadDocument(context) }
+    val supportState = capabilityReport.supportState()
+    val aodSupported = capabilityReport.has(XiaomiCapability.AOD_SURFACE)
     val lockscreenSupported = capabilityReport.has(XiaomiCapability.LOCKSCREEN_HOST) &&
         capabilityReport.has(XiaomiCapability.LOCKSCREEN_GEOMETRY)
+    val runtimeProfileAvailable = supportState == XiaomiRuntimeSupportState.VERIFIED_PROFILE ||
+        supportState == XiaomiRuntimeSupportState.VERIFIED_PROFILE_MISSING_SYMBOLS ||
+        supportState == XiaomiRuntimeSupportState.EXPERIMENTAL_ACTIVE
     val positionFollowingSupported = capabilityReport.has(XiaomiCapability.AOD_POSITION_UPDATES)
     val raiseToAodSupported = capabilityReport.has(XiaomiCapability.RAISE_TO_AOD)
     val lockscreenEditorGestureSupported = capabilityReport.has(
@@ -214,20 +237,9 @@ private fun HomeScreen(
                 ?: initialConfig.lockscreenEnabled
         )
     }
-    var aodMetadataVisible by remember {
-        mutableStateOf(
-            initialDocument.profiles[SceneCompiler.SURFACE_AOD]?.metadataVisible
-                ?: (initialConfig.metadataVisible != "hide")
-        )
-    }
-    var lockscreenMetadataVisible by remember {
-        mutableStateOf(
-            initialDocument.profiles[SceneCompiler.SURFACE_LOCKSCREEN]?.metadataVisible
-                ?: (initialConfig.metadataVisible != "hide")
-        )
-    }
     var keepAwake by remember { mutableStateOf(initialConfig.keepAwake) }
     var keepAwakeUnsynced by remember { mutableStateOf(initialConfig.keepAwakeUnsynced) }
+    var keepAwakeDurationMs by remember { mutableStateOf(initialConfig.keepAwakeDurationMs) }
     var lockscreenKeepAwake by remember {
         mutableStateOf(initialConfig.lockscreenKeepAwake)
     }
@@ -240,12 +252,13 @@ private fun HomeScreen(
     }
     var burnInPattern by remember { mutableStateOf(initialConfig.burnInPattern) }
     var burnInIntervalMs by remember { mutableStateOf(initialConfig.burnInIntervalMs) }
+    var pauseLingerMs by remember { mutableStateOf(initialConfig.pauseLingerMs) }
     var diagnosticLogging by remember {
         mutableStateOf(DiagnosticLoggingPreferences.read(context))
     }
 
     Scaffold(
-        topBar = { TopAppBar(title = "HyperGlow") },
+        topBar = { TopAppBar(title = stringResource(R.string.app_name)) },
         bottomBar = {
             FloatingNavigationBar {
                 FloatingNavigationBarItem(
@@ -254,7 +267,7 @@ private fun HomeScreen(
                         scope.launch { pagerState.animateScrollToPage(SettingsTab.OVERVIEW.ordinal) }
                     },
                     icon = MiuixIcons.Regular.Home,
-                    label = "Overview"
+                    label = stringResource(R.string.nav_overview)
                 )
                 FloatingNavigationBarItem(
                     selected = pagerState.currentPage == SettingsTab.CONFIG.ordinal,
@@ -262,7 +275,7 @@ private fun HomeScreen(
                         scope.launch { pagerState.animateScrollToPage(SettingsTab.CONFIG.ordinal) }
                     },
                     icon = MiuixIcons.Regular.Settings,
-                    label = "Settings"
+                    label = stringResource(R.string.nav_settings)
                 )
             }
         }
@@ -281,20 +294,34 @@ private fun HomeScreen(
             ) {
                 when (SettingsTab.entries[page]) {
                 SettingsTab.OVERVIEW -> {
-                    item { SmallTitle(text = "Runtime status") }
+                    item { SmallTitle(text = stringResource(R.string.section_runtime_status)) }
                     item {
                         SettingsCard {
                             BasicComponent(
-                                title = "AOD lyrics",
-                                summary = if (aodEnabled) "Enabled" else "Disabled"
+                                title = stringResource(R.string.label_compatibility),
+                                summary = supportStateLabel(context, supportState)
                             )
                             BasicComponent(
-                                title = "Lock screen lyrics",
-                                summary = when {
-                                    !lockscreenSupported -> "Unavailable on the current System UI profile"
-                                    lockscreenEnabled -> "Enabled"
-                                    else -> "Disabled"
-                                }
+                                title = stringResource(R.string.label_systemui_aod),
+                                summary = "${capabilityReport.systemUiVersion} / ${capabilityReport.aodVersion}"
+                            )
+                            BasicComponent(
+                                title = stringResource(R.string.label_aod_lyrics),
+                                summary = runtimeSurfaceSummary(
+                                    context = context,
+                                    configured = aodEnabled,
+                                    supported = aodSupported,
+                                    surfaceName = context.getString(R.string.surface_aod)
+                                )
+                            )
+                            BasicComponent(
+                                title = stringResource(R.string.label_lockscreen_lyrics),
+                                summary = runtimeSurfaceSummary(
+                                    context = context,
+                                    configured = lockscreenEnabled,
+                                    supported = lockscreenSupported,
+                                    surfaceName = context.getString(R.string.surface_lockscreen)
+                                )
                             )
                             SwitchPreference(
                                 diagnosticLogging,
@@ -303,31 +330,47 @@ private fun HomeScreen(
                                         diagnosticLogging = enabled
                                     }
                                 },
-                                "Diagnostic logging",
+                                stringResource(R.string.label_diagnostic_logging),
                                 summary = if (BuildConfig.TRACE_LOGGING_AVAILABLE) {
-                                    "Detailed logs. May reduce performance."
+                                    stringResource(R.string.summary_diagnostic_logging_available)
                                 } else {
-                                    "Unavailable in this build"
+                                    stringResource(R.string.summary_diagnostic_logging_unavailable)
                                 },
                                 enabled = BuildConfig.TRACE_LOGGING_AVAILABLE
                             )
                             ArrowPreference(
-                                title = "Restart System UI",
+                                title = if (supportState == XiaomiRuntimeSupportState.NO_SYSTEM_UI_REPORT ||
+                                    supportState == XiaomiRuntimeSupportState.UNSUPPORTED_PROFILE ||
+                                    supportState == XiaomiRuntimeSupportState.EXPERIMENTAL_ELIGIBLE
+                                ) {
+                                    stringResource(R.string.action_send_compatibility_report)
+                                } else {
+                                    stringResource(R.string.action_report_problem)
+                                },
+                                summary = if (aodSupported || lockscreenSupported) {
+                                    stringResource(R.string.summary_report_supported)
+                                } else {
+                                    stringResource(R.string.summary_report_unsupported)
+                                },
+                                onClick = onOpenDiagnostics
+                            )
+                            ArrowPreference(
+                                title = stringResource(R.string.action_restart_systemui),
                                 onClick = { showRestartDialog = true }
                             )
                         }
                     }
-                    item { SmallTitle(text = "Spotify integration") }
+                    item { SmallTitle(text = stringResource(R.string.section_spotify_integration)) }
                     item {
                         SettingsCard {
                             ArrowPreference(
-                                title = "Spicy EX releases",
+                                title = stringResource(R.string.action_download_spicy_ex),
                                 onClick = {
                                     openExternalUrl(context, SPICY_EX_GITHUB_URL)
                                 }
                             )
                             ArrowPreference(
-                                title = "Open Spotify",
+                                title = stringResource(R.string.action_open_spotify),
                                 onClick = {
                                     val launchIntent = context.packageManager
                                         .getLaunchIntentForPackage("com.spotify.music")
@@ -336,7 +379,7 @@ private fun HomeScreen(
                                     } else {
                                         Toast.makeText(
                                             context,
-                                            "Spotify is not installed",
+                                            context.getString(R.string.toast_spotify_not_installed),
                                             Toast.LENGTH_LONG
                                         ).show()
                                     }
@@ -344,11 +387,11 @@ private fun HomeScreen(
                             )
                         }
                     }
-                    item { SmallTitle(text = "Project") }
+                    item { SmallTitle(text = stringResource(R.string.section_project)) }
                     item {
                         SettingsCard {
                             ArrowPreference(
-                                title = "Open GitHub",
+                                title = stringResource(R.string.action_hyperglow_github),
                                 onClick = {
                                     openExternalUrl(context, GITHUB_URL)
                                 }
@@ -358,12 +401,26 @@ private fun HomeScreen(
                 }
 
                 SettingsTab.CONFIG -> {
-                    item { SmallTitle(text = "Surfaces") }
+                    item { SmallTitle(text = stringResource(R.string.section_language)) }
+                    item {
+                        SettingsCard {
+                            ArrowPreference(
+                                title = englishInterfaceLanguageLabel(context),
+                                summary = uiLanguageLabel(
+                                    context,
+                                    currentUiLanguage(context)
+                                ),
+                                onClick = { showLanguageDialog = true }
+                            )
+                        }
+                    }
+                    item { SmallTitle(text = stringResource(R.string.section_surfaces)) }
                     item {
                         SettingsCard {
                             SwitchPreference(
                                 aodEnabled,
                                 { enabled ->
+                                    if (!aodSupported) return@SwitchPreference
                                     if (updateCustomizationSurfaceEnabled(
                                             context,
                                             SceneCompiler.SURFACE_AOD,
@@ -373,7 +430,13 @@ private fun HomeScreen(
                                         aodEnabled = enabled
                                     }
                                 },
-                                "Show on AOD"
+                                stringResource(R.string.setting_show_aod),
+                                summary = if (aodSupported) {
+                                    stringResource(R.string.summary_show_aod_supported)
+                                } else {
+                                    stringResource(R.string.summary_show_aod_unsupported)
+                                },
+                                enabled = aodSupported
                             )
                             SwitchPreference(
                                 lockscreenEnabled,
@@ -381,7 +444,7 @@ private fun HomeScreen(
                                     if (!lockscreenSupported) {
                                         Toast.makeText(
                                             context,
-                                            "Lockscreen capability unavailable. Restart System UI to refresh report.",
+                                            context.getString(R.string.toast_lockscreen_unsupported),
                                             Toast.LENGTH_LONG
                                         ).show()
                                         return@SwitchPreference
@@ -395,58 +458,41 @@ private fun HomeScreen(
                                         lockscreenEnabled = enabled
                                     }
                                 },
-                                "Show on lock screen",
+                                stringResource(R.string.setting_show_lockscreen),
                                 summary = if (lockscreenSupported) {
-                                    "Show lyrics while the phone is locked."
+                                    stringResource(R.string.summary_show_lockscreen_supported)
                                 } else {
-                                    "Unavailable on this System UI version."
+                                    stringResource(R.string.summary_unavailable_systemui_version)
                                 },
                                 enabled = lockscreenSupported
                             )
-                            SwitchPreference(
-                                aodMetadataVisible,
-                                { visible ->
-                                    if (updateCustomizationSurfaceMetadata(
-                                            context,
-                                            SceneCompiler.SURFACE_AOD,
-                                            visible
-                                        )
-                                    ) {
-                                        aodMetadataVisible = visible
-                                    }
-                                },
-                                "Show song info on AOD"
-                            )
-                            SwitchPreference(
-                                lockscreenMetadataVisible,
-                                { visible ->
-                                    if (updateCustomizationSurfaceMetadata(
-                                            context,
-                                            SceneCompiler.SURFACE_LOCKSCREEN,
-                                            visible
-                                        )
-                                    ) {
-                                        lockscreenMetadataVisible = visible
-                                    }
-                                },
-                                "Show song info on lock screen"
-                            )
                         }
                     }
-                    item { SmallTitle(text = "Appearance") }
+                    item { SmallTitle(text = stringResource(R.string.section_appearance)) }
                     item {
                         SettingsCard {
                             ArrowPreference(
-                                title = "AOD appearance",
+                                title = stringResource(R.string.title_aod_appearance),
                                 onClick = { onOpenLyricLayout(SceneCompiler.SURFACE_AOD) }
                             )
                             ArrowPreference(
-                                title = "Lock screen appearance",
+                                title = stringResource(R.string.title_lockscreen_appearance),
                                 onClick = { onOpenLyricLayout(SceneCompiler.SURFACE_LOCKSCREEN) }
                             )
                         }
                     }
-                    item { SmallTitle(text = "AOD behavior") }
+                    item { SmallTitle(text = stringResource(R.string.section_playback_behavior)) }
+                    item {
+                        SettingsCard {
+                            ArrowPreference(
+                                title = stringResource(R.string.setting_after_spotify_pauses),
+                                summary = pauseLingerLabel(context, pauseLingerMs),
+                                onClick = { showPauseLingerDialog = true },
+                                enabled = runtimeProfileAvailable && (aodSupported || lockscreenSupported)
+                            )
+                        }
+                    }
+                    item { SmallTitle(text = stringResource(R.string.section_aod_behavior)) }
                     item {
                         SettingsCard {
                             SwitchPreference(
@@ -455,8 +501,20 @@ private fun HomeScreen(
                                     prefs.edit().putBoolean(AodRenderPreferences.KEEP_AWAKE, enabled).apply()
                                     keepAwake = enabled
                                 },
-                                "Keep synced lyrics awake",
-                                summary = "Only while Spotify is playing."
+                                stringResource(R.string.setting_keep_aod_active),
+                                summary =
+                                    if (aodSupported) {
+                                        stringResource(R.string.summary_keep_aod_active)
+                                    } else {
+                                        stringResource(R.string.summary_unavailable_systemui_profile)
+                                    },
+                                enabled = aodSupported
+                            )
+                            ArrowPreference(
+                                title = stringResource(R.string.setting_keep_aod_active_for),
+                                summary = keepAwakeDurationLabel(context, keepAwakeDurationMs),
+                                onClick = { showKeepAwakeDurationDialog = true },
+                                enabled = aodSupported && keepAwake
                             )
                             SwitchPreference(
                                 keepAwakeUnsynced,
@@ -467,52 +525,42 @@ private fun HomeScreen(
                                     ).apply()
                                     keepAwakeUnsynced = enabled
                                 },
-                                "Keep unsynced songs awake",
-                                summary = "Includes loading and songs without timed lyrics.",
-                                enabled = keepAwake
+                                stringResource(R.string.setting_keep_aod_unsynced),
+                                summary = stringResource(R.string.summary_keep_aod_unsynced),
+                                enabled = aodSupported && keepAwake
                             )
-                            SwitchPreference(
-                                positionFollowing,
-                                { enabled ->
-                                    if (!positionFollowingSupported) {
+                            ArrowPreference(
+                                title = stringResource(R.string.setting_aod_clock_image),
+                                summary = if (positionFollowingSupported) {
+                                    aodMovementLabel(context, positionFollowing, burnInPattern)
+                                } else {
+                                    stringResource(R.string.summary_aod_placement_unsupported)
+                                },
+                                onClick = {
+                                    if (positionFollowingSupported) {
+                                        showBurnInPatternDialog = true
+                                    } else {
                                         Toast.makeText(
                                             context,
-                                            "AOD position updates are unavailable on this runtime profile.",
+                                            context.getString(R.string.summary_aod_placement_unsupported),
                                             Toast.LENGTH_LONG
                                         ).show()
-                                        return@SwitchPreference
                                     }
-                                    prefs.edit().putBoolean(
-                                        AodRenderPreferences.EXPERIMENTAL_POSITION_FOLLOWING,
-                                        enabled
-                                    ).apply()
-                                    positionFollowing = enabled
                                 },
-                                "Move stock clock",
-                                summary = if (positionFollowingSupported) {
-                                    "Keeps it away from lyrics."
-                                } else {
-                                    "Unavailable on this AOD version."
-                                },
-                                enabled = positionFollowingSupported
+                                enabled = aodSupported && positionFollowingSupported
                             )
-                            if (positionFollowing) {
+                            if (aodSupported && positionFollowingSupported && positionFollowing &&
+                                !burnInPattern.isStaticClockPlacement()
+                            ) {
                                 ArrowPreference(
-                                    title = "Clock placement",
-                                    summary = burnInPatternLabel(burnInPattern),
-                                    onClick = { showBurnInPatternDialog = true }
-                                )
-                            }
-                            if (positionFollowing && !burnInPattern.isStaticClockPlacement()) {
-                                ArrowPreference(
-                                    title = "Movement interval",
-                                    summary = burnInIntervalLabel(burnInIntervalMs),
+                                    title = stringResource(R.string.setting_movement_interval),
+                                    summary = burnInIntervalLabel(context, burnInIntervalMs),
                                     onClick = { showBurnInIntervalDialog = true }
                                 )
                             }
                         }
                     }
-                    item { SmallTitle(text = "Lock screen behavior") }
+                    item { SmallTitle(text = stringResource(R.string.section_lockscreen_behavior)) }
                     item {
                         SettingsCard {
                             SwitchPreference(
@@ -522,8 +570,9 @@ private fun HomeScreen(
                                         lockscreenKeepAwake = enabled
                                     }
                                 },
-                                "Keep lock screen awake",
-                                summary = "While Spotify is playing and lyrics are visible.",
+                                stringResource(R.string.setting_keep_lockscreen_awake),
+                                summary =
+                                    stringResource(R.string.summary_keep_lockscreen_awake),
                                 enabled = lockscreenSupported && lockscreenEnabled
                             )
                             SwitchPreference(
@@ -533,17 +582,17 @@ private fun HomeScreen(
                                         suppressLockscreenEditorLongPress = enabled
                                     }
                                 },
-                                "Block wallpaper editor gesture",
+                                stringResource(R.string.setting_block_lockscreen_customization),
                                 summary = if (lockscreenEditorGestureSupported) {
-                                    "Disables hold-to-edit on the lock screen."
+                                    stringResource(R.string.summary_block_lockscreen_customization)
                                 } else {
-                                    "Unavailable on this System UI version."
+                                    stringResource(R.string.summary_unavailable_systemui_version)
                                 },
                                 enabled = lockscreenEditorGestureSupported
                             )
                         }
                     }
-                    item { SmallTitle(text = "Wake gestures") }
+                    item { SmallTitle(text = stringResource(R.string.section_wake_gestures)) }
                     item {
                         SettingsCard {
                             SwitchPreference(
@@ -553,11 +602,11 @@ private fun HomeScreen(
                                         raiseToAod = enabled
                                     }
                                 },
-                                "Raise to show AOD",
+                                stringResource(R.string.setting_raise_to_aod),
                                 summary = if (raiseToAodSupported) {
-                                    "Lifting shows AOD instead of the lock screen."
+                                    stringResource(R.string.summary_raise_to_aod)
                                 } else {
-                                    "Unavailable on this System UI version."
+                                    stringResource(R.string.summary_unavailable_systemui_version)
                                 },
                                 enabled = raiseToAodSupported
                             )
@@ -570,22 +619,46 @@ private fun HomeScreen(
         }
     }
 
+    if (showLanguageDialog) {
+        val currentLanguage = currentUiLanguage(context)
+        WindowDialog(
+            title = englishInterfaceLanguageLabel(context),
+            summary = stringResource(R.string.dialog_language_summary),
+            show = true,
+            onDismissRequest = { showLanguageDialog = false }
+        ) {
+            Column {
+                UiLanguage.entries.forEach { language ->
+                    RadioButtonPreference(
+                        uiLanguageLabel(context, language),
+                        currentLanguage == language,
+                        {
+                            showLanguageDialog = false
+                            setUiLanguage(context, language)
+                        }
+                    )
+                }
+            }
+        }
+    }
+
     if (showRestartDialog) {
         WindowDialog(
-            title = "Restart System UI?",
-            summary = "The screen and status bar will briefly restart.",
+            title = stringResource(R.string.dialog_restart_systemui_title),
+            summary =
+                stringResource(R.string.dialog_restart_systemui_summary),
             show = true,
             onDismissRequest = { showRestartDialog = false }
         ) {
             androidx.compose.foundation.layout.Row(modifier = Modifier.fillMaxWidth()) {
                 TextButton(
-                    text = "Cancel",
+                    text = stringResource(R.string.action_cancel),
                     modifier = Modifier.weight(1f),
                     onClick = { showRestartDialog = false }
                 )
                 Spacer(Modifier.width(20.dp))
                 TextButton(
-                    text = "Restart",
+                    text = stringResource(R.string.action_restart),
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.textButtonColorsPrimary(),
                     onClick = {
@@ -599,18 +672,38 @@ private fun HomeScreen(
 
     if (showBurnInPatternDialog) {
         WindowDialog(
-            title = "Clock placement",
-            summary = "While lyrics are shown",
+            title = stringResource(R.string.setting_aod_clock_image),
+            summary =
+                stringResource(R.string.dialog_aod_clock_summary),
             show = true,
             onDismissRequest = { showBurnInPatternDialog = false }
         ) {
             Column {
-                BURN_IN_PATTERNS.forEach { (value, label) ->
+                RadioButtonPreference(
+                    stringResource(R.string.option_follow_xiaomi),
+                    !positionFollowing,
+                    {
+                        prefs.edit().putBoolean(
+                            AodRenderPreferences.EXPERIMENTAL_POSITION_FOLLOWING,
+                            false
+                        ).apply()
+                        positionFollowing = false
+                        showBurnInPatternDialog = false
+                    }
+                )
+                BURN_IN_PATTERNS.forEach { value ->
                     RadioButtonPreference(
-                        label,
-                        burnInPattern == value,
+                        burnInPatternLabel(context, value),
+                        positionFollowing && burnInPattern == value,
                         {
-                            prefs.edit().putString(AodRenderPreferences.BURN_IN_PATTERN, value).apply()
+                            prefs.edit()
+                                .putBoolean(
+                                    AodRenderPreferences.EXPERIMENTAL_POSITION_FOLLOWING,
+                                    true
+                                )
+                                .putString(AodRenderPreferences.BURN_IN_PATTERN, value)
+                                .apply()
+                            positionFollowing = true
                             burnInPattern = value
                             showBurnInPatternDialog = false
                         }
@@ -620,17 +713,61 @@ private fun HomeScreen(
         }
     }
 
+    if (showPauseLingerDialog) {
+        WindowDialog(
+            title = stringResource(R.string.setting_after_spotify_pauses),
+            summary = stringResource(R.string.dialog_pause_summary),
+            show = true,
+            onDismissRequest = { showPauseLingerDialog = false }
+        ) {
+            Column {
+                PAUSE_LINGER_OPTIONS.forEach { value ->
+                    RadioButtonPreference(
+                        pauseLingerLabel(context, value),
+                        pauseLingerMs == value,
+                        {
+                            if (updatePauseLinger(context, value)) pauseLingerMs = value
+                            showPauseLingerDialog = false
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    if (showKeepAwakeDurationDialog) {
+        WindowDialog(
+            title = stringResource(R.string.setting_keep_aod_active_for),
+            summary = stringResource(R.string.dialog_keep_aod_duration_summary),
+            show = true,
+            onDismissRequest = { showKeepAwakeDurationDialog = false }
+        ) {
+            Column {
+                KEEP_AWAKE_DURATIONS.forEach { value ->
+                    RadioButtonPreference(
+                        keepAwakeDurationLabel(context, value),
+                        keepAwakeDurationMs == value,
+                        {
+                            if (updateKeepAwakeDuration(context, value)) keepAwakeDurationMs = value
+                            showKeepAwakeDurationDialog = false
+                        }
+                    )
+                }
+            }
+        }
+    }
+
     if (showBurnInIntervalDialog) {
         WindowDialog(
-            title = "Movement interval",
-            summary = "Shorter intervals move more often",
+            title = stringResource(R.string.setting_movement_interval),
+            summary = stringResource(R.string.dialog_movement_interval_summary),
             show = true,
             onDismissRequest = { showBurnInIntervalDialog = false }
         ) {
             Column {
                 BURN_IN_INTERVALS.forEach { value ->
                     RadioButtonPreference(
-                        burnInIntervalLabel(value),
+                        burnInIntervalLabel(context, value),
                         burnInIntervalMs == value,
                         {
                             prefs.edit().putLong(AodRenderPreferences.BURN_IN_INTERVAL_MS, value).apply()
@@ -645,7 +782,7 @@ private fun HomeScreen(
 }
 
 @Composable
-private fun SettingsCard(content: @Composable () -> Unit) {
+internal fun SettingsCard(content: @Composable () -> Unit) {
     Card(
         modifier = Modifier
             .padding(horizontal = 12.dp)
@@ -663,35 +800,153 @@ private enum class SettingsTab {
     CONFIG
 }
 
+private const val DIAGNOSTICS_DESTINATION = "__diagnostics__"
 private const val GITHUB_URL = "https://github.com/amarinne/hyperglow"
 private const val SPICY_EX_GITHUB_URL = "https://github.com/amarinne/spicy-ex/releases"
+
+private fun currentUiLanguage(context: android.content.Context): UiLanguage {
+    val tags = context.getSystemService(LocaleManager::class.java)
+        ?.applicationLocales
+        ?.toLanguageTags()
+        .orEmpty()
+    return resolveUiLanguage(tags)
+}
+
+private fun setUiLanguage(context: android.content.Context, language: UiLanguage) {
+    context.getSystemService(LocaleManager::class.java)?.applicationLocales = when (language) {
+        UiLanguage.SYSTEM -> LocaleList.getEmptyLocaleList()
+        UiLanguage.ENGLISH -> LocaleList.forLanguageTags("en")
+        UiLanguage.SIMPLIFIED_CHINESE -> LocaleList.forLanguageTags("zh-CN")
+    }
+}
+
+private fun uiLanguageLabel(context: android.content.Context, language: UiLanguage): String =
+    context.getString(
+        when (language) {
+            UiLanguage.SYSTEM -> R.string.language_system_default
+            UiLanguage.ENGLISH -> R.string.language_english
+            UiLanguage.SIMPLIFIED_CHINESE -> R.string.language_simplified_chinese
+        }
+    )
+
+private fun englishInterfaceLanguageLabel(context: android.content.Context): String = runCatching {
+    val configuration = Configuration(context.resources.configuration)
+    configuration.setLocales(LocaleList(Locale.ENGLISH))
+    context.createConfigurationContext(configuration)
+        .getString(R.string.setting_interface_language)
+}.getOrElse {
+    context.getString(R.string.setting_interface_language)
+}
 
 private fun openExternalUrl(context: android.content.Context, url: String) {
     val opened = runCatching {
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
     }.isSuccess
     if (!opened) {
-        Toast.makeText(context, "No app can open this link", Toast.LENGTH_LONG).show()
+        Toast.makeText(context, context.getString(R.string.toast_no_link_handler), Toast.LENGTH_LONG).show()
     }
 }
 
-private fun burnInPatternLabel(value: String): String =
-    BURN_IN_PATTERNS.firstOrNull { it.first == value }?.second ?: "Static clock bottom"
-
-private fun burnInIntervalLabel(value: Long): String = when (value) {
-    30_000L -> "30 seconds"
-    120_000L -> "2 minutes"
-    300_000L -> "5 minutes"
-    else -> "1 minute"
+private fun runtimeSurfaceSummary(
+    context: android.content.Context,
+    configured: Boolean,
+    supported: Boolean,
+    surfaceName: String
+): String = when (resolveRuntimeSurfaceState(configured, supported)) {
+    RuntimeSurfaceState.ENABLED -> context.getString(R.string.runtime_enabled)
+    RuntimeSurfaceState.DISABLED -> context.getString(R.string.runtime_disabled)
+    RuntimeSurfaceState.CONFIGURED_UNAVAILABLE ->
+        context.getString(R.string.runtime_configured_unavailable, surfaceName)
+    RuntimeSurfaceState.UNAVAILABLE -> context.getString(R.string.runtime_unavailable)
 }
 
-private val BURN_IN_PATTERNS = listOf(
-    "static_top" to "Top (fixed)",
-    "static_bottom" to "Bottom (fixed)",
-    "six_zone" to "Six positions",
-    "four_corner" to "Four corners",
-    "vertical_swap" to "Top and bottom"
+private fun supportStateLabel(
+    context: android.content.Context,
+    state: XiaomiRuntimeSupportState
+): String = context.getString(
+    when (state) {
+        XiaomiRuntimeSupportState.NO_SYSTEM_UI_REPORT -> R.string.status_no_systemui_report
+        XiaomiRuntimeSupportState.VERIFIED_PROFILE -> R.string.status_verified_profile
+        XiaomiRuntimeSupportState.VERIFIED_PROFILE_MISSING_SYMBOLS ->
+            R.string.status_verified_profile_missing_symbols
+        XiaomiRuntimeSupportState.UNSUPPORTED_PROFILE -> R.string.status_unsupported_profile
+        XiaomiRuntimeSupportState.EXPERIMENTAL_ELIGIBLE -> R.string.status_experimental_eligible
+        XiaomiRuntimeSupportState.EXPERIMENTAL_ACTIVE -> R.string.status_experimental_active
+    }
 )
+
+private fun burnInPatternLabel(context: android.content.Context, value: String): String =
+    context.getString(
+        when (value) {
+            "static_top" -> R.string.pattern_keep_top
+            "six_zone" -> R.string.pattern_six_positions
+            "four_corner" -> R.string.pattern_four_corners
+            "vertical_swap" -> R.string.pattern_top_bottom
+            else -> R.string.pattern_keep_bottom
+        }
+    )
+
+private fun aodMovementLabel(
+    context: android.content.Context,
+    positionFollowing: Boolean,
+    pattern: String
+): String = if (positionFollowing) {
+    burnInPatternLabel(context, pattern)
+} else {
+    context.getString(R.string.option_follow_xiaomi)
+}
+
+private fun burnInIntervalLabel(context: android.content.Context, value: Long): String =
+    context.getString(
+        when (value) {
+            30_000L -> R.string.duration_30_seconds
+            120_000L -> R.string.duration_2_minutes
+            300_000L -> R.string.duration_5_minutes
+            else -> R.string.duration_1_minute
+        }
+    )
+
+private fun pauseLingerLabel(context: android.content.Context, value: Long): String =
+    context.getString(
+        when (value) {
+            0L -> R.string.duration_clear_immediately
+            10_000L -> R.string.duration_10_seconds
+            30_000L -> R.string.duration_30_seconds
+            -1L -> R.string.duration_keep_indefinitely
+            else -> R.string.duration_5_seconds
+        }
+    )
+
+private val BURN_IN_PATTERNS = listOf(
+    "static_top",
+    "static_bottom",
+    "six_zone",
+    "four_corner",
+    "vertical_swap"
+)
+
+private fun keepAwakeDurationLabel(context: android.content.Context, value: Long): String =
+    context.getString(
+        when (value) {
+            300_000L -> R.string.duration_5_minutes
+            600_000L -> R.string.duration_10_minutes
+            1_800_000L -> R.string.duration_30_minutes
+            3_600_000L -> R.string.duration_1_hour
+            7_200_000L -> R.string.duration_2_hours
+            else -> R.string.duration_indefinitely
+        }
+    )
+
+private val KEEP_AWAKE_DURATIONS = listOf(
+    300_000L,
+    600_000L,
+    1_800_000L,
+    3_600_000L,
+    7_200_000L,
+    -1L
+)
+
+private val PAUSE_LINGER_OPTIONS = listOf(0L, 5_000L, 10_000L, 30_000L, -1L)
 
 private val BURN_IN_INTERVALS = listOf(30_000L, 60_000L, 120_000L, 300_000L)
 
@@ -717,9 +972,11 @@ private fun LyricLayoutScreen(
         val raw = runCatching {
             context.contentResolver.openInputStream(uri)?.use { input ->
                 val bytes = input.readNBytes(SceneCompiler.MAX_CONFIG_BYTES + 1)
-                if (bytes.size > SceneCompiler.MAX_CONFIG_BYTES) error("Profile exceeds 64 KiB")
+                if (bytes.size > SceneCompiler.MAX_CONFIG_BYTES) {
+                    error("Appearance file too large")
+                }
                 bytes.toString(Charsets.UTF_8)
-            } ?: error("Cannot open profile")
+            } ?: error("Appearance file unavailable")
         }.getOrNull()
         val imported = raw != null && CustomizationRepository.importDocument(context, raw)
         if (imported) {
@@ -729,7 +986,11 @@ private fun LyricLayoutScreen(
         }
         Toast.makeText(
             context,
-            if (imported) "Profile imported" else "Profile rejected",
+            if (imported) {
+                context.getString(R.string.toast_appearance_imported)
+            } else {
+                context.getString(R.string.toast_appearance_invalid)
+            },
             Toast.LENGTH_LONG
         ).show()
     }
@@ -740,11 +1001,14 @@ private fun LyricLayoutScreen(
         val written = runCatching {
             context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use {
                 it.write(CustomizationRepository.exportDocument(context))
-            } ?: error("Cannot create profile")
+            } ?: error("Appearance file unavailable")
         }.isSuccess
         Toast.makeText(
             context,
-            if (written) "Profile exported" else "Export failed",
+            context.getString(
+                if (written) R.string.toast_appearance_exported
+                else R.string.toast_appearance_export_failed
+            ),
             Toast.LENGTH_LONG
         ).show()
     }
@@ -753,7 +1017,11 @@ private fun LyricLayoutScreen(
 
     fun saveEditor(next: CustomizationEditorState): Boolean {
         if (!CustomizationRepository.saveDocument(context, next.document)) {
-            Toast.makeText(context, "Profile save failed", Toast.LENGTH_LONG).show()
+            Toast.makeText(
+                context,
+                context.getString(R.string.toast_appearance_save_failed),
+                Toast.LENGTH_LONG
+            ).show()
             return false
         }
         val document = CustomizationRepository.loadDocument(context)
@@ -776,12 +1044,12 @@ private fun LyricLayoutScreen(
     }
 
     fun openChoice(
-        title: String,
+        kind: AodChoiceKind,
         values: List<String>,
         current: String,
         onSelect: (String) -> Unit
     ) {
-        activeChoice = AodChoice(title, values, current, onSelect)
+        activeChoice = AodChoice(kind, values, current, onSelect)
     }
 
     val selectedProfile = editorState.document.profiles[editorState.selectedSurface] ?: SurfaceProfile()
@@ -790,9 +1058,9 @@ private fun LyricLayoutScreen(
         topBar = {
             TopAppBar(
                 title = if (editorState.selectedSurface == SceneCompiler.SURFACE_AOD) {
-                    "AOD appearance"
+                    stringResource(R.string.title_aod_appearance)
                 } else {
-                    "Lock screen appearance"
+                    stringResource(R.string.title_lockscreen_appearance)
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -808,12 +1076,12 @@ private fun LyricLayoutScreen(
                 bottom = innerPadding.calculateBottomPadding() + 20.dp
             )
         ) {
-            item { SmallTitle(text = "Placement") }
+            item { SmallTitle(text = stringResource(R.string.section_placement)) }
             item {
                 SettingsCard {
-                    AodChoiceRow("Position", selectedProfile.anchor) {
+                    AodChoiceRow(AodChoiceKind.POSITION, selectedProfile.anchor) {
                         openChoice(
-                            "Position",
+                            AodChoiceKind.POSITION,
                             listOf(
                                 "below_stock_clock",
                                 "screen_center",
@@ -824,76 +1092,101 @@ private fun LyricLayoutScreen(
                             selectedProfile.anchor
                         ) { value -> updateSelected { it.copy(anchor = value) } }
                     }
-                    AodChoiceRow("Width", "${(selectedProfile.widthFraction * 100).roundToInt()}%") {
+                    AodChoiceRow(AodChoiceKind.WIDTH, selectedProfile.widthFraction.toString()) {
                         openChoice(
-                            "Width",
+                            AodChoiceKind.WIDTH,
                             listOf("0.7", "0.88", "1.0"),
                             selectedProfile.widthFraction.toString()
                         ) { value -> updateSelected { it.copy(widthFraction = value.toFloat()) } }
                     }
                     if (selectedProfile.anchor == "custom_vertical_bias") {
-                        AodChoiceRow("Vertical position", selectedProfile.verticalBias.toString()) {
+                        AodChoiceRow(AodChoiceKind.VERTICAL_POSITION, selectedProfile.verticalBias.toString()) {
                             openChoice(
-                                "Vertical position",
+                                AodChoiceKind.VERTICAL_POSITION,
                                 listOf("0.25", "0.5", "0.75"),
                                 selectedProfile.verticalBias.toString()
                             ) { value -> updateSelected { it.copy(verticalBias = value.toFloat()) } }
                         }
                     }
-                    AodChoiceRow("Overlap handling", selectedProfile.collisionPolicy) {
+                    AodChoiceRow(AodChoiceKind.OVERLAP, selectedProfile.collisionPolicy) {
                         openChoice(
-                            "Overlap handling",
+                            AodChoiceKind.OVERLAP,
                             listOf("avoid", "behind_system", "hide_optional", "hide_scene"),
                             selectedProfile.collisionPolicy
                         ) { value -> updateSelected { it.copy(collisionPolicy = value) } }
                     }
                 }
             }
-            item { SmallTitle(text = "Text and language") }
+            item { SmallTitle(text = stringResource(R.string.section_text_language)) }
             item {
                 SettingsCard {
-                    AodChoiceRow("Alignment", selectedProfile.alignment) {
+                    AodChoiceRow(AodChoiceKind.ALIGNMENT, selectedProfile.alignment) {
                         openChoice(
-                            "Alignment",
+                            AodChoiceKind.ALIGNMENT,
                             listOf("auto", "start", "center", "end"),
                             selectedProfile.alignment
                         ) { value -> updateSelected { it.copy(alignment = value) } }
                     }
-                    AodChoiceRow("Secondary text", selectedProfile.secondaryMode) {
+                    AodChoiceRow(AodChoiceKind.SECONDARY_TEXT, selectedProfile.secondaryMode) {
                         openChoice(
-                            "Secondary text",
+                            AodChoiceKind.SECONDARY_TEXT,
                             listOf("Main only", "Transliteration", "Translation", "Both"),
                             selectedProfile.secondaryMode
                         ) { value -> updateSelected { it.copy(secondaryMode = value) } }
                     }
+                    if (selectedProfile.secondaryMode != "Main only") {
+                        SwitchPreference(
+                            selectedProfile.secondaryTextBright,
+                            { bright -> updateSelected { it.copy(secondaryTextBright = bright) } },
+                            stringResource(R.string.setting_bright_secondary_text),
+                            summary = stringResource(R.string.summary_bright_secondary_text)
+                        )
+                    }
                     SwitchPreference(
                         selectedProfile.rubyVisible,
                         { visible -> updateSelected { it.copy(rubyVisible = visible) } },
-                        "Show furigana"
+                        stringResource(R.string.setting_show_furigana),
+                        summary = stringResource(R.string.summary_show_furigana)
                     )
-                    AodChoiceRow("Long lines", selectedProfile.overflow) {
+                    AodChoiceRow(AodChoiceKind.LONG_LINES, selectedProfile.overflow) {
                         openChoice(
-                            "Long lines",
+                            AodChoiceKind.LONG_LINES,
                             listOf("Wrap", "Clip"),
                             selectedProfile.overflow
                         ) { value -> updateSelected { it.copy(overflow = value) } }
                     }
+                    if (selectedProfile.overflow == "Wrap") {
+                        AodChoiceRow(AodChoiceKind.LYRIC_LINES, selectedProfile.lyricLineLimit.toString()) {
+                            openChoice(
+                                AodChoiceKind.LYRIC_LINES,
+                                listOf("1", "2", "3", "4", "5", "0"),
+                                selectedProfile.lyricLineLimit.toString()
+                            ) { value ->
+                                updateSelected { it.copy(lyricLineLimit = value.toInt()) }
+                            }
+                        }
+                    }
                     SwitchPreference(
                         selectedProfile.adaptiveSectioning,
                         { enabled -> updateSelected { it.copy(adaptiveSectioning = enabled) } },
-                        "Phrase-aware wrapping",
-                        summary = "Avoid splitting words and phrases."
+                        stringResource(R.string.setting_keep_phrases_together),
+                        summary = stringResource(R.string.summary_keep_phrases_together)
+                    )
+                    SwitchPreference(
+                        selectedProfile.metadataVisible,
+                        { visible -> updateSelected { withMetadataVisible(it, visible) } },
+                        stringResource(R.string.setting_show_song_info)
                     )
                     if (selectedProfile.metadataVisible) {
-                        AodChoiceRow("Song info position", selectedProfile.metadataAnchor) {
+                        AodChoiceRow(AodChoiceKind.SONG_INFO_POSITION, selectedProfile.metadataAnchor) {
                             openChoice(
-                                "Song info position",
+                                AodChoiceKind.SONG_INFO_POSITION,
                                 listOf("top", "bottom"),
                                 selectedProfile.metadataAnchor
                             ) { value -> updateSelected { it.copy(metadataAnchor = value) } }
                         }
                         TextSizePreference(
-                            title = "Song info size",
+                            title = stringResource(R.string.setting_song_info_size),
                             percent = selectedProfile.metadataSizePercent.coerceIn(50, 200),
                             onDecrease = {
                                 updateSelected {
@@ -913,15 +1206,15 @@ private fun LyricLayoutScreen(
                             }
                         )
                     }
-                    AodChoiceRow("Text weight", selectedProfile.weight) {
+                    AodChoiceRow(AodChoiceKind.TEXT_WEIGHT, selectedProfile.weight) {
                         openChoice(
-                            "Text weight",
+                            AodChoiceKind.TEXT_WEIGHT,
                             listOf("Regular", "Medium", "Bold"),
                             selectedProfile.weight
                         ) { value -> updateSelected { it.copy(weight = value) } }
                     }
                     TextSizePreference(
-                        title = "Lyric size",
+                        title = stringResource(R.string.setting_lyric_size),
                         percent = effectiveTextSizePercent(selectedProfile),
                         onDecrease = {
                             updateSelected {
@@ -940,33 +1233,33 @@ private fun LyricLayoutScreen(
                             }
                         }
                     )
-                    AodChoiceRow("Font", selectedProfile.fontFamily) {
+                    AodChoiceRow(AodChoiceKind.FONT, selectedProfile.fontFamily) {
                         openChoice(
-                            "Font",
+                            AodChoiceKind.FONT,
                             listOf("noto", "spotify", "apple"),
                             selectedProfile.fontFamily
                         ) { value -> updateSelected { it.copy(fontFamily = value) } }
                     }
                 }
             }
-            item { SmallTitle(text = "Effects") }
+            item { SmallTitle(text = stringResource(R.string.section_effects)) }
             item {
                 SettingsCard {
-                    AodChoiceRow("Word animation", selectedProfile.animation) {
+                    AodChoiceRow(AodChoiceKind.WORD_ANIMATION, selectedProfile.animation) {
                         openChoice(
-                            "Word animation",
+                            AodChoiceKind.WORD_ANIMATION,
                             listOf("Minimal", "Gradient"),
                             selectedProfile.animation
                         ) { value -> updateSelected { it.copy(animation = value) } }
                     }
-                    AodChoiceRow("Glow", selectedProfile.glow) {
-                        openChoice("Glow", listOf("Off", "On"), selectedProfile.glow) { value ->
+                    AodChoiceRow(AodChoiceKind.GLOW, selectedProfile.glow) {
+                        openChoice(AodChoiceKind.GLOW, listOf("Off", "On"), selectedProfile.glow) { value ->
                             updateSelected { it.copy(glow = value) }
                         }
                     }
-                    AodChoiceRow("Line progress effect", selectedProfile.lineSyncFillMode) {
+                    AodChoiceRow(AodChoiceKind.LINE_PROGRESS, selectedProfile.lineSyncFillMode) {
                         openChoice(
-                            "Line progress effect",
+                            AodChoiceKind.LINE_PROGRESS,
                             listOf(
                                 "None",
                                 "Top to bottom",
@@ -976,19 +1269,19 @@ private fun LyricLayoutScreen(
                             selectedProfile.lineSyncFillMode
                         ) { value -> updateSelected { it.copy(lineSyncFillMode = value) } }
                     }
-                    AodChoiceRow("Brightness", palettePresetName(selectedProfile.palette)) {
+                    AodChoiceRow(AodChoiceKind.TEXT_BRIGHTNESS, palettePresetName(selectedProfile.palette)) {
                         openChoice(
-                            "Brightness",
+                            AodChoiceKind.TEXT_BRIGHTNESS,
                             listOf("default", "dimmed"),
                             palettePresetName(selectedProfile.palette)
                         ) { value -> updateSelected { it.copy(palette = palettePreset(value)) } }
                     }
                     AodChoiceRow(
-                        "Line transition",
+                        AodChoiceKind.TRANSITION_SPEED,
                         selectedProfile.transition.durationMs.toString()
                     ) {
                         openChoice(
-                            "Line transition",
+                            AodChoiceKind.TRANSITION_SPEED,
                             listOf("200", "320", "500"),
                             selectedProfile.transition.durationMs.toString()
                         ) { value ->
@@ -1000,7 +1293,7 @@ private fun LyricLayoutScreen(
                 }
             }
             if (editorState.selectedSurface == SceneCompiler.SURFACE_LOCKSCREEN) {
-                item { SmallTitle(text = "Lock screen card") }
+                item { SmallTitle(text = stringResource(R.string.section_lockscreen_card)) }
                 item {
                     SettingsCard {
                         SwitchPreference(
@@ -1010,7 +1303,9 @@ private fun LyricLayoutScreen(
                                     it.copy(backgroundStyle = if (enabled) "card" else "none")
                                 }
                             },
-                            "Card background"
+                            stringResource(R.string.setting_show_lyric_card),
+                            summary =
+                                stringResource(R.string.summary_show_lyric_card)
                         )
                         val progressEnabled = selectedProfile.widgets.any { it.type == "media_progress" }
                         SwitchPreference(
@@ -1029,25 +1324,26 @@ private fun LyricLayoutScreen(
                                     profile.copy(widgets = widgets)
                                 }
                             },
-                            "Playback progress"
+                            stringResource(R.string.setting_show_playback_progress),
+                            summary = stringResource(R.string.summary_show_playback_progress)
                         )
                     }
                 }
             }
-            item { SmallTitle(text = "Backup") }
+            item { SmallTitle(text = stringResource(R.string.section_both_surfaces)) }
             item {
                 Card(modifier = Modifier.padding(12.dp).fillMaxWidth()) {
                     Column {
                         ArrowPreference(
-                            title = "Import settings",
+                            title = stringResource(R.string.action_import_appearance),
                             onClick = { importLauncher.launch(arrayOf("application/json", "text/plain")) }
                         )
                         ArrowPreference(
-                            title = "Export settings",
+                            title = stringResource(R.string.action_export_appearance),
                             onClick = { exportLauncher.launch("hyperglow-profile.json") }
                         )
                         ArrowPreference(
-                            title = "Reset appearance",
+                            title = stringResource(R.string.action_reset_surfaces),
                             onClick = { showResetDialog = true }
                         )
                     }
@@ -1058,14 +1354,14 @@ private fun LyricLayoutScreen(
 
     activeChoice?.let { selected ->
         WindowDialog(
-            title = selected.title,
+            title = stringResource(selected.kind.titleRes),
             show = true,
             onDismissRequest = { activeChoice = null }
         ) {
             Column {
                 selected.values.forEach { value ->
                     RadioButtonPreference(
-                        choiceDisplayLabel(selected.title, value),
+                        choiceDisplayLabel(context, selected.kind, value),
                         selected.current == value,
                         {
                             selected.onSelect(value)
@@ -1079,20 +1375,21 @@ private fun LyricLayoutScreen(
 
     if (showResetDialog) {
         WindowDialog(
-            title = "Reset appearance?",
-            summary = "Restore built-in AOD and lock screen settings.",
+            title = stringResource(R.string.dialog_reset_title),
+            summary =
+                stringResource(R.string.dialog_reset_summary),
             show = true,
             onDismissRequest = { showResetDialog = false }
         ) {
             androidx.compose.foundation.layout.Row(modifier = Modifier.fillMaxWidth()) {
                 TextButton(
-                    text = "Cancel",
+                    text = stringResource(R.string.action_cancel),
                     modifier = Modifier.weight(1f),
                     onClick = { showResetDialog = false }
                 )
                 Spacer(Modifier.width(20.dp))
                 TextButton(
-                    text = "Restore",
+                    text = stringResource(R.string.action_restore),
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.textButtonColorsPrimary(),
                     onClick = {
@@ -1108,7 +1405,10 @@ private fun LyricLayoutScreen(
                         }
                         Toast.makeText(
                             context,
-                            if (reset) "Defaults restored" else "Restore failed",
+                            context.getString(
+                                if (reset) R.string.toast_settings_restored
+                                else R.string.toast_settings_restore_failed
+                            ),
                             Toast.LENGTH_LONG
                         ).show()
                     }
@@ -1199,10 +1499,11 @@ private fun previewSnapshot(scenario: String): LyricSnapshot = LyricSnapshot(
 )
 
 @Composable
-private fun AodChoiceRow(title: String, value: String, onClick: () -> Unit) {
+private fun AodChoiceRow(kind: AodChoiceKind, value: String, onClick: () -> Unit) {
+    val context = LocalContext.current
     ArrowPreference(
-        title = title,
-        summary = choiceDisplayLabel(title, value),
+        title = stringResource(kind.titleRes),
+        summary = choiceDisplayLabel(context, kind, value),
         onClick = onClick
     )
 }
@@ -1259,59 +1560,113 @@ private fun effectiveTextSizePercent(profile: SurfaceProfile): Int = when (profi
     else -> 100
 }
 
-private fun choiceDisplayLabel(title: String, value: String): String = when (title) {
-    "Position" -> when (value) {
-        "below_stock_clock" -> "Below clock"
-        "screen_center" -> "Screen center"
-        "screen_top_safe" -> "Top safe area"
-        "screen_bottom_safe" -> "Bottom safe area"
-        "custom_vertical_bias" -> "Custom vertical position"
-        else -> value
+private fun choiceDisplayLabel(
+    context: android.content.Context,
+    kind: AodChoiceKind,
+    value: String
+): String = when (kind) {
+    AodChoiceKind.POSITION -> context.getString(when (value) {
+        "below_stock_clock" -> R.string.option_below_clock
+        "screen_center" -> R.string.option_screen_center
+        "screen_top_safe" -> R.string.option_top_safe_area
+        "screen_bottom_safe" -> R.string.option_bottom_safe_area
+        "custom_vertical_bias" -> R.string.option_custom_vertical_position
+        else -> R.string.option_below_clock
+    })
+    AodChoiceKind.WIDTH ->
+        value.toFloatOrNull()?.let { "${(it * 100).roundToInt()}%" } ?: value
+    AodChoiceKind.VERTICAL_POSITION -> context.getString(when (value) {
+        "0.25" -> R.string.option_upper
+        "0.5", "0.50" -> R.string.option_center
+        "0.75" -> R.string.option_lower
+        else -> R.string.option_center
+    })
+    AodChoiceKind.OVERLAP -> context.getString(when (value) {
+        "avoid" -> R.string.option_avoid_system_content
+        "behind_system" -> R.string.option_allow_overlap
+        "hide_optional" -> R.string.option_hide_extra_text
+        "hide_scene" -> R.string.option_hide_lyrics_blocked
+        else -> R.string.option_avoid_system_content
+    })
+    AodChoiceKind.ALIGNMENT -> context.getString(when (value) {
+        "auto" -> R.string.option_automatic
+        "start" -> R.string.option_start
+        "center" -> R.string.option_center
+        "end" -> R.string.option_end
+        else -> R.string.option_automatic
+    })
+    AodChoiceKind.SONG_INFO_POSITION -> context.getString(
+        if (value == "bottom") R.string.option_bottom else R.string.option_top
+    )
+    AodChoiceKind.LYRIC_LINES -> if (value == "0") {
+        context.getString(R.string.option_no_limit)
+    } else {
+        value
     }
-    "Width" -> value.toFloatOrNull()?.let { "${(it * 100).roundToInt()}%" } ?: value
-    "Vertical position" -> when (value) {
-        "0.25" -> "Upper"
-        "0.5", "0.50" -> "Center"
-        "0.75" -> "Lower"
-        else -> value
-    }
-    "Overlap handling" -> when (value) {
-        "avoid" -> "Avoid system content"
-        "behind_system" -> "Allow overlap"
-        "hide_optional" -> "Hide extra text first"
-        "hide_scene" -> "Hide lyrics if blocked"
-        else -> value
-    }
-    "Alignment" -> when (value) {
-        "auto" -> "Automatic"
-        "start" -> "Start"
-        "center" -> "Center"
-        "end" -> "End"
-        else -> value
-    }
-    "Song info position" -> if (value == "bottom") "Bottom" else "Top"
-    "Font" -> when (value) {
-        "noto" -> "Noto Sans"
-        "spotify" -> "Spotify Mix"
-        "apple" -> "SF Pro Display"
-        else -> value
-    }
-    "Brightness" -> if (value == "dimmed") "Dimmed" else "Default"
-    "Line progress effect" -> when (value) {
-        "Left to right (main only)" -> "Left to right (lyrics)"
-        "Left to right (whole block)" -> "Left to right (all text)"
-        else -> value
-    }
-    "Line transition" -> when (value) {
-        "200" -> "Fast"
-        "500" -> "Slow"
-        else -> "Normal"
-    }
-    else -> value.replaceFirstChar { it.uppercase() }
+    AodChoiceKind.FONT -> context.getString(when (value) {
+        "noto" -> R.string.option_noto_sans
+        "spotify" -> R.string.option_spotify_mix
+        "apple" -> R.string.option_sf_pro_display
+        else -> R.string.option_noto_sans
+    })
+    AodChoiceKind.TEXT_BRIGHTNESS -> context.getString(
+        if (value == "dimmed") R.string.option_dimmed else R.string.option_default
+    )
+    AodChoiceKind.LINE_PROGRESS -> context.getString(when (value) {
+        "None" -> R.string.option_none
+        "Top to bottom" -> R.string.option_top_to_bottom
+        "Left to right (main only)" -> R.string.option_left_to_right
+        "Left to right (whole block)" -> R.string.option_left_to_right_all
+        else -> R.string.option_none
+    })
+    AodChoiceKind.TRANSITION_SPEED -> context.getString(when (value) {
+        "200" -> R.string.option_fast
+        "500" -> R.string.option_slow
+        else -> R.string.option_normal
+    })
+    AodChoiceKind.SECONDARY_TEXT -> context.getString(when (value) {
+        "Transliteration" -> R.string.option_transliteration
+        "Translation" -> R.string.option_translation
+        "Both" -> R.string.option_both
+        else -> R.string.option_main_only
+    })
+    AodChoiceKind.LONG_LINES -> context.getString(
+        if (value == "Clip") R.string.option_clip else R.string.option_wrap
+    )
+    AodChoiceKind.TEXT_WEIGHT -> context.getString(when (value) {
+        "Regular" -> R.string.option_regular
+        "Bold" -> R.string.option_bold
+        else -> R.string.option_medium
+    })
+    AodChoiceKind.WORD_ANIMATION -> context.getString(
+        if (value == "Minimal") R.string.option_minimal else R.string.option_gradient
+    )
+    AodChoiceKind.GLOW -> context.getString(
+        if (value == "On") R.string.option_on else R.string.option_off
+    )
+}
+
+private enum class AodChoiceKind(@param:StringRes val titleRes: Int) {
+    POSITION(R.string.choice_position),
+    WIDTH(R.string.choice_width),
+    VERTICAL_POSITION(R.string.choice_vertical_position),
+    OVERLAP(R.string.choice_overlap_handling),
+    ALIGNMENT(R.string.choice_alignment),
+    SECONDARY_TEXT(R.string.choice_secondary_text),
+    LONG_LINES(R.string.choice_long_lines),
+    LYRIC_LINES(R.string.choice_lyric_lines),
+    SONG_INFO_POSITION(R.string.choice_song_info_position),
+    TEXT_WEIGHT(R.string.choice_text_weight),
+    FONT(R.string.choice_font),
+    WORD_ANIMATION(R.string.choice_word_animation),
+    GLOW(R.string.choice_glow),
+    LINE_PROGRESS(R.string.choice_line_progress_effect),
+    TEXT_BRIGHTNESS(R.string.choice_text_brightness),
+    TRANSITION_SPEED(R.string.choice_scene_transition_speed)
 }
 
 private data class AodChoice(
-    val title: String,
+    val kind: AodChoiceKind,
     val values: List<String>,
     val current: String,
     val onSelect: (String) -> Unit
@@ -1325,24 +1680,6 @@ private fun updateCustomizationSurfaceEnabled(
     val document = CustomizationRepository.loadDocument(context)
     val profiles = document.profiles.toMutableMap()
     profiles[surface] = (profiles[surface] ?: SurfaceProfile()).copy(enabled = enabled)
-    if (!CustomizationRepository.saveDocument(context, document.copy(profiles = profiles))) {
-        return false
-    }
-    syncCustomizationRuntime(context, CustomizationRepository.loadDocument(context))
-    return true
-}
-
-private fun updateCustomizationSurfaceMetadata(
-    context: android.content.Context,
-    surface: String,
-    visible: Boolean
-): Boolean {
-    val document = CustomizationRepository.loadDocument(context)
-    val profiles = document.profiles.toMutableMap()
-    profiles[surface] = withMetadataVisible(
-        profiles[surface] ?: SurfaceProfile(),
-        visible
-    )
     if (!CustomizationRepository.saveDocument(context, document.copy(profiles = profiles))) {
         return false
     }
@@ -1457,16 +1794,25 @@ private fun publishRuntimeConfiguration(context: android.content.Context) {
     )
 }
 
+private fun updateKeepAwakeDuration(context: android.content.Context, value: Long): Boolean {
+    val saved = context.getSharedPreferences(AodRenderPreferences.PREFS, 0).edit()
+        .putLong(AodRenderPreferences.KEEP_AWAKE_DURATION_MS, value)
+        .commit()
+    if (!saved) return false
+    publishRuntimeConfiguration(context)
+    return true
+}
+
+private fun updatePauseLinger(context: android.content.Context, value: Long): Boolean {
+    val saved = context.getSharedPreferences(AodRenderPreferences.PREFS, 0).edit()
+        .putLong(AodRenderPreferences.PAUSE_LINGER_MS, value)
+        .commit()
+    if (!saved) return false
+    publishRuntimeConfiguration(context)
+    return true
+}
+
 private fun updateDiagnosticLogging(
     context: android.content.Context,
     enabled: Boolean
-): Boolean {
-    if (!DiagnosticLoggingPreferences.write(context, enabled)) return false
-    val effective = DiagnosticLoggingPreferences.read(context)
-    DiagnosticLoggingRuntime.setEnabled(effective)
-    AodStateBridge.publishConfiguration(
-        RuntimeCustomization.loadCompiled(context),
-        currentProcessUserId()
-    )
-    return true
-}
+): Boolean = setDiagnosticLogging(context, enabled)

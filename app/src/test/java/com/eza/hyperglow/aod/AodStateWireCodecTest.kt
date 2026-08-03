@@ -38,6 +38,16 @@ class AodStateWireCodecTest {
             ?.copy(body = byteArrayOf(1, 2, 3))
 
         assertEquals(keepAlive, keepAliveEnvelope?.let(AodStateWireCodec::decode))
+
+        val paused = AodStateWireMessage.Hidden(
+            revision = 8L,
+            userId = 10,
+            updatedAtElapsedMs = 901L,
+            keepAlive = false,
+            wakeSignal = 0L,
+            pauseRetentionEligible = true
+        )
+        assertEquals(paused, AodStateWireCodec.encode(paused)?.let(AodStateWireCodec::decode))
     }
 
     @Test

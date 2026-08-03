@@ -21,9 +21,11 @@ data class AodRenderConfig(
     val adaptiveSectioning: Boolean = true,
     val keepAwake: Boolean = true,
     val keepAwakeUnsynced: Boolean = false,
+    val keepAwakeDurationMs: Long = -1L,
     val experimentalPositionFollowing: Boolean = false,
     val burnInPattern: String = "static_bottom",
     val burnInIntervalMs: Long = 60_000L,
+    val pauseLingerMs: Long = 5_000L,
     val lockscreenKeepAwake: Boolean = false,
     val raiseToAod: Boolean = false,
     val suppressLockscreenEditorLongPress: Boolean = false
@@ -100,6 +102,16 @@ internal fun normalizeAodBurnInInterval(value: Long): Long = when {
     else -> 300_000L
 }
 
+internal fun normalizeKeepAwakeDurationMs(value: Long): Long = when (value) {
+    300_000L, 600_000L, 1_800_000L, 3_600_000L, 7_200_000L -> value
+    else -> -1L
+}
+
+internal fun normalizePauseLingerMs(value: Long): Long = when (value) {
+    -1L, 0L, 5_000L, 10_000L, 30_000L -> value
+    else -> 5_000L
+}
+
 object AodRenderPreferences {
     const val PREFS = "aod_render"
     const val AOD_ENABLED = "aod_enabled"
@@ -119,9 +131,11 @@ object AodRenderPreferences {
     const val ADAPTIVE_SECTIONING = "adaptive_sectioning"
     const val KEEP_AWAKE = "keep_awake"
     const val KEEP_AWAKE_UNSYNCED = "keep_awake_unsynced"
+    const val KEEP_AWAKE_DURATION_MS = "keep_awake_duration_ms"
     const val EXPERIMENTAL_POSITION_FOLLOWING = "experimental_position_following"
     const val BURN_IN_PATTERN = "burn_in_pattern"
     const val BURN_IN_INTERVAL_MS = "burn_in_interval_ms"
+    const val PAUSE_LINGER_MS = "pause_linger_ms"
     const val LOCKSCREEN_KEEP_AWAKE = "lockscreen_keep_awake"
     const val RAISE_TO_AOD = "raise_to_aod"
     const val SUPPRESS_LOCKSCREEN_EDITOR_LONG_PRESS = "suppress_lockscreen_editor_long_press"
@@ -156,9 +170,11 @@ object AodRenderPreferences {
             prefs.getBoolean(ADAPTIVE_SECTIONING, true),
             prefs.getBoolean(KEEP_AWAKE, true),
             prefs.getBoolean(KEEP_AWAKE_UNSYNCED, false),
+            normalizeKeepAwakeDurationMs(prefs.getLong(KEEP_AWAKE_DURATION_MS, -1L)),
             prefs.getBoolean(EXPERIMENTAL_POSITION_FOLLOWING, false),
             normalizeAodBurnInPattern(prefs.getString(BURN_IN_PATTERN, "static_bottom")),
             normalizeAodBurnInInterval(prefs.getLong(BURN_IN_INTERVAL_MS, 60_000L)),
+            normalizePauseLingerMs(prefs.getLong(PAUSE_LINGER_MS, 5_000L)),
             prefs.getBoolean(LOCKSCREEN_KEEP_AWAKE, false),
             prefs.getBoolean(RAISE_TO_AOD, false),
             prefs.getBoolean(SUPPRESS_LOCKSCREEN_EDITOR_LONG_PRESS, false)

@@ -103,6 +103,9 @@ object AodProjectionEngine {
     private var transitionKeepAlive: Job? = null
     private var fallbackSession: FallbackRefreshSession? = null
     private var releaseJob: Job? = null
+    private var pauseConfirmJob: Job? = null
+    private var pendingPauseSession: ProjectionSessionIdentity? = null
+    private var confirmedPauseSession: ProjectionSessionIdentity? = null
     private var sessionKey = ""
     private var lastKeepAliveAt = 0L
     private var lastCustomizationPublishAt = 0L
@@ -111,6 +114,7 @@ object AodProjectionEngine {
     private val publicationGuard = ProjectionPublicationGuard()
     private val releaseGate = ProjectionReleaseGate()
     private val powerSessionPolicy = AodPowerSessionPolicy()
+    private val metadataIntroPolicy = SongMetadataIntroPolicy()
 
     @Synchronized
     fun start(context: Context) {
@@ -135,15 +139,31 @@ object AodProjectionEngine {
         val publicationToken = publicationGuard.begin(state)
         if (state == null) {
             stopScheduler()
+            cancelPauseConfirmation()
             scheduleRelease()
             SpicyBridgeDocumentStore.clear()
             return
         }
         cancelRelease()
-        if (!SpicyBridgeStore.isCurrentActive(state) || !state.playing) {
+        if (!SpicyBridgeStore.isCurrentActive(state)) {
+            cancelPauseConfirmation()
             releaseNow(playbackActive = false)
             return
         }
+        if (!state.playing) {
+            val session = ProjectionSessionIdentity.from(state)
+            if (!shouldOpenPauseGrace(session, confirmedPauseSession)) {
+                cancelPendingPauseConfirmation()
+                releaseNow(playbackActive = false, pauseRetentionEligible = true)
+            } else if (isPlayingTransportGap(state)) {
+                cancelPendingPauseConfirmation()
+                releaseNow(playbackActive = true)
+            } else {
+                schedulePauseConfirmation(session)
+            }
+            return
+        }
+        cancelPauseConfirmation()
         if (shouldShowPlaybackFallback(state.status, state.playing)) {
             stopScheduler()
             project(state, publicationToken = requireNotNull(publicationToken))
@@ -200,7 +220,12 @@ object AodProjectionEngine {
                     !canRefreshFallback(expected, current)
                 ) break
                 val publicationToken = publicationGuard.current(current) ?: break
-                project(current, SystemClock.elapsedRealtime(), publicationToken)
+                val now = SystemClock.elapsedRealtime()
+                project(current, now, publicationToken)
+                if (keepAliveDue(lastKeepAliveAt, now)) {
+                    AodStateBridge.refreshVisibleState()
+                    lastKeepAliveAt = now
+                }
             }
         }
     }
@@ -210,6 +235,54 @@ object AodProjectionEngine {
         transitionKeepAlive?.cancel()
         transitionKeepAlive = null
         fallbackSession = null
+    }
+
+    /**
+     * A non-playing edge is provisional. Spotify reports the old generation as not playing about a
+     * second before the next track arrives, so an immediate pause classification releases AOD
+     * lifetime and replays Xiaomi's hide in the middle of a song change. The edge is published as a
+     * still-playing transport gap first; only a producer that is still non-playing on the same
+     * session after the bounded window becomes real pause retention.
+     */
+    @Synchronized
+    private fun schedulePauseConfirmation(session: ProjectionSessionIdentity) {
+        if (pauseConfirmJob?.isActive == true && pendingPauseSession == session) return
+        cancelPendingPauseConfirmation()
+        pendingPauseSession = session
+        releaseNow(playbackActive = true)
+        pauseConfirmJob = scope.launch {
+            delay(PAUSE_CONFIRM_MS)
+            confirmPause(session)
+        }
+    }
+
+    @Synchronized
+    private fun confirmPause(session: ProjectionSessionIdentity) {
+        if (pendingPauseSession != session) return
+        pauseConfirmJob = null
+        pendingPauseSession = null
+        val current = SpicyBridgeStore.state.value
+        if (!shouldCommitPauseRetention(
+                pendingSession = session,
+                current = current,
+                currentActive = current != null && SpicyBridgeStore.isCurrentActive(current)
+            )
+        ) return
+        confirmedPauseSession = session
+        releaseNow(playbackActive = false, pauseRetentionEligible = true)
+    }
+
+    @Synchronized
+    private fun cancelPendingPauseConfirmation() {
+        pauseConfirmJob?.cancel()
+        pauseConfirmJob = null
+        pendingPauseSession = null
+    }
+
+    @Synchronized
+    private fun cancelPauseConfirmation() {
+        cancelPendingPauseConfirmation()
+        confirmedPauseSession = null
     }
 
     @Synchronized
@@ -239,16 +312,20 @@ object AodProjectionEngine {
     }
 
     @Synchronized
-    private fun releaseNow(playbackActive: Boolean = false) {
+    private fun releaseNow(
+        playbackActive: Boolean = false,
+        pauseRetentionEligible: Boolean = false
+    ) {
         cancelRelease()
         publicationGuard.invalidate()
         stopStatusKeepAlive()
         stopScheduler()
-        powerSessionPolicy.clear()
+        if (!playbackActive) powerSessionPolicy.clear()
         AodStateBridge.publish(
             AodDisplayState(
                 visible = false,
                 playbackActive = playbackActive,
+                pauseRetentionEligible = pauseRetentionEligible,
                 userId = currentProcessUserId()
             )
         )
@@ -268,15 +345,46 @@ object AodProjectionEngine {
         val noLyrics = state.status == "no_lyrics"
         val hasTimedLyrics = !noLyrics && timedDocument?.let(::hasActualLyricTiming) == true
         val row = timedDocument?.primaryRowAt(position).takeUnless { noLyrics }
-        val metadata = if (noLyrics) "" else listOf(state.title, state.artist)
+        val metadata = listOf(state.title, state.artist)
             .filter { it.isNotBlank() }
             .joinToString(" · ")
-        val fallback = playbackFallback(state.status, state.line, metadata)
-        val original = if (unsynced || noLyrics) "♪" else (row?.text ?: fallback).orEmpty()
-        val romanized = if (unsynced || noLyrics) "" else
-            (row?.romanized ?: state.romanizedLine.takeIf { document == null }).orEmpty()
-        val translated = if (unsynced || noLyrics) "" else (row?.translated
-            ?: state.translatedLine.takeIf { it.isNotBlank() }).orEmpty()
+        val fallbackLine = state.line.takeIf {
+            !unsynced && !noLyrics && document == null && state.status == "ready" && it.isNotBlank()
+        }
+        val lyricState = when {
+            unsynced || noLyrics -> SongIntroLyricState.NONE
+            row != null || fallbackLine != null -> SongIntroLyricState.ACTIVE
+            timedDocument != null -> SongIntroLyricState.INTERLUDE
+            else -> SongIntroLyricState.UNKNOWN
+        }
+        val nextLyricStartMs = timedDocument?.rows?.asSequence()
+            ?.map { it.startMs }
+            ?.filter { it > position }
+            ?.minOrNull()
+        val showLargeMetadata = metadataIntroPolicy.shouldShowLargeMetadata(
+            SongMetadataIntroInput(
+                session = ProjectionSessionIdentity.from(state),
+                metadataAvailable = metadata.isNotBlank(),
+                lyricState = lyricState,
+                positionMs = position,
+                nextLyricStartMs = nextLyricStartMs,
+                speed = state.speed,
+                nowElapsedMs = now
+            )
+        )
+        val presentedRow = row.takeUnless { showLargeMetadata }
+        val original = when {
+            showLargeMetadata -> metadata
+            unsynced || noLyrics -> "♪"
+            presentedRow != null -> presentedRow.text
+            timedDocument != null || state.status == "loading" -> "♪"
+            fallbackLine != null -> fallbackLine
+            else -> "♪"
+        }
+        val romanized = if (showLargeMetadata || unsynced || noLyrics) "" else
+            (presentedRow?.romanized ?: state.romanizedLine.takeIf { document == null }).orEmpty()
+        val translated = if (showLargeMetadata || unsynced || noLyrics) "" else
+            (presentedRow?.translated ?: state.translatedLine.takeIf { it.isNotBlank() }).orEmpty()
         val prefs = appContext?.let(AodRenderPreferences::read) ?: AodRenderConfig()
         val compiled = appContext?.let(CustomizationRepository::loadCompiled)
         val aodProfile = compiled?.profiles?.get(SceneCompiler.SURFACE_AOD)
@@ -295,7 +403,8 @@ object AodProjectionEngine {
                 session = ProjectionSessionIdentity.from(state),
                 playing = state.playing,
                 aodEnabled = aodEnabled,
-                keepAwake = prefs.keepAwake
+                keepAwake = prefs.keepAwake,
+                keepAliveDurationMs = prefs.keepAwakeDurationMs
             ),
             nowElapsedMs = now,
             persistentKeepAlive = persistentKeepAlive
@@ -317,16 +426,16 @@ object AodProjectionEngine {
             romanized = romanized,
             translated = translated,
             metadata = metadata,
-            alignedRight = row?.alignedRight == true,
-            lineLevelSync = document != null && row != null &&
-                isEffectiveLineLevelSync(document.type, row.words.size),
-            lineStartMs = row?.startMs ?: 0L,
-            lineEndMs = row?.fillEndMs ?: 0L,
+            alignedRight = presentedRow?.alignedRight == true,
+            lineLevelSync = document != null && presentedRow != null &&
+                isEffectiveLineLevelSync(document.type, presentedRow.words.size),
+            lineStartMs = presentedRow?.startMs ?: 0L,
+            lineEndMs = presentedRow?.fillEndMs ?: 0L,
             durationMs = state.durationMs,
             positionMs = position,
             sampledAtElapsedMs = now,
             speed = state.speed,
-            words = row?.words.orEmpty().map {
+            words = presentedRow?.words.orEmpty().map {
                 AodDisplayWord(
                     it.text,
                     it.romanized,
@@ -337,8 +446,8 @@ object AodProjectionEngine {
                     it.sourceEnd
                 )
             },
-            ruby = row?.ruby.orEmpty().map { AodDisplayRuby(it.start, it.end, it.reading) },
-            layoutGroups = row?.layoutGroups.orEmpty().map {
+            ruby = presentedRow?.ruby.orEmpty().map { AodDisplayRuby(it.start, it.end, it.reading) },
+            layoutGroups = presentedRow?.layoutGroups.orEmpty().map {
                 AodDisplayLayoutGroup(it.start, it.end, it.kind, it.keepTogether, it.confidence)
             },
             weight = prefs.weight,
@@ -352,8 +461,7 @@ object AodProjectionEngine {
             transitionMode = if (noLyrics) "None" else state.liveCardTransition,
             fontFamily = prefs.fontFamily,
             alignmentMode = prefs.alignment,
-            metadataVisible = !noLyrics &&
-                (aodProfile?.metadataVisible ?: (prefs.metadataVisible != "hide")),
+            metadataVisible = aodProfile?.metadataVisible ?: (prefs.metadataVisible != "hide"),
             metadataAnchor = prefs.metadataAnchor,
             adaptiveSectioning = prefs.adaptiveSectioning
         )
@@ -415,6 +523,32 @@ object AodProjectionEngine {
     fun shouldShowPlaybackFallback(status: String, playing: Boolean): Boolean =
         playing && (status == "loading" || status == "no_lyrics")
 
+    internal fun isPlayingTransportGap(state: SpicyBridgeState): Boolean =
+        !state.playing && state.status == "loading"
+
+    internal fun pauseConfirmWindowMs(): Long = PAUSE_CONFIRM_MS
+
+    /**
+     * The still-playing grace opens once per session. A producer that keeps publishing while paused
+     * must not reopen it through either a confirmation window or a `loading` transport gap,
+     * otherwise a real pause flaps between keepalive and retention for as long as it lasts.
+     */
+    internal fun shouldOpenPauseGrace(
+        session: ProjectionSessionIdentity,
+        confirmedSession: ProjectionSessionIdentity?
+    ): Boolean = confirmedSession != session
+
+    /**
+     * True only when the producer is still non-playing on the same session after the confirmation
+     * window. A resumed producer or a new session means the non-playing edge was a song change.
+     */
+    internal fun shouldCommitPauseRetention(
+        pendingSession: ProjectionSessionIdentity,
+        current: SpicyBridgeState?,
+        currentActive: Boolean
+    ): Boolean = current != null && currentActive && !current.playing &&
+        ProjectionSessionIdentity.from(current) == pendingSession
+
     fun staticPlaybackPlaceholder(status: String): String? =
         "♪".takeIf { status == "no_lyrics" }
 
@@ -460,5 +594,6 @@ object AodProjectionEngine {
     private const val KEEP_ALIVE_INTERVAL_MS = 4_000L
     private const val FALLBACK_REFRESH_INTERVAL_MS = 1_000L
     private const val TRANSITION_GRACE_MS = 1_500L
+    internal const val PAUSE_CONFIRM_MS = 1_500L
     private const val CUSTOMIZATION_REFRESH_MS = 1_000L
 }

@@ -17,15 +17,15 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
     private var surfaceAttached = false
     private var aodEnabled = false
     private var keepAliveRequested = false
-    private var timedGraceEligible = false
-    private var timedGraceActive = false
+    private var graceEligible = false
+    private var graceActive = false
     private var lastWakeSignal = Long.MIN_VALUE
-    private val timedGraceExpiry = Runnable {
-        if (!timedGraceActive) return@Runnable
-        timedGraceActive = false
-        timedGraceEligible = false
+    private val graceExpiry = Runnable {
+        if (!graceActive) return@Runnable
+        graceActive = false
+        graceEligible = false
         keepAliveRequested = false
-        HookLogger.i(TAG, "Timed AOD power grace expired")
+        HookLogger.i(TAG, "AOD power grace expired")
         updateLifetimeGuard()
     }
 
@@ -44,37 +44,40 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
     override fun onLyricSnapshot(snapshot: LyricSnapshot) {
         if (snapshot.visible) {
             aodEnabled = snapshot.aodEnabled
-            keepAliveRequested = snapshot.aodEnabled && snapshot.keepAlive
-            timedGraceEligible = hasPersistentTimedAodPower(snapshot)
-            cancelTimedGrace()
-        } else if (shouldStartTimedAodPowerGrace(
+            keepAliveRequested = snapshot.aodEnabled && snapshot.playbackActive && snapshot.keepAlive
+            graceEligible = hasPersistentAodPowerIntent(snapshot)
+            cancelGrace()
+        } else if (shouldStartAodPowerGrace(
                 aodEnabled = aodEnabled,
                 playbackActive = snapshot.playbackActive,
                 keepAliveRequested = keepAliveRequested,
-                timedGraceEligible = timedGraceEligible
+                graceEligible = graceEligible
             )
         ) {
-            startTimedGrace()
+            startGrace()
         } else {
-            cancelTimedGrace()
+            cancelGrace()
             keepAliveRequested = false
-            timedGraceEligible = false
+            graceEligible = false
         }
         updateLifetimeGuard()
-        dispatchWake(snapshot.wakeSignal, snapshot.aodEnabled && snapshot.visible)
+        dispatchWake(
+            snapshot.wakeSignal,
+            snapshot.aodEnabled && snapshot.visible && snapshot.playbackActive
+        )
     }
 
     override fun onLyricKeepAlive(signal: LyricKeepAliveSignal) {
         if (!signal.playbackActive) {
-            cancelTimedGrace()
+            cancelGrace()
             keepAliveRequested = false
-            timedGraceEligible = false
+            graceEligible = false
         } else if (signal.keepAlive) {
             keepAliveRequested = aodEnabled
-            cancelTimedGrace()
-        } else if (!timedGraceActive) {
+            cancelGrace()
+        } else if (!graceActive) {
             keepAliveRequested = false
-            timedGraceEligible = false
+            graceEligible = false
         }
         updateLifetimeGuard()
         dispatchWake(
@@ -89,9 +92,9 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
     override fun onLyricProjectionStale() = clear()
 
     private fun clear() {
-        cancelTimedGrace()
+        cancelGrace()
         keepAliveRequested = false
-        timedGraceEligible = false
+        graceEligible = false
         aodEnabled = false
         lastWakeSignal = Long.MIN_VALUE
         updateLifetimeGuard()
@@ -120,34 +123,36 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
         )
     }
 
-    private fun startTimedGrace() {
-        if (timedGraceActive) return
-        timedGraceActive = true
-        mainHandler.removeCallbacks(timedGraceExpiry)
-        mainHandler.postDelayed(timedGraceExpiry, PAUSED_AOD_KEEP_ALIVE_MS)
-        HookLogger.i(TAG, "Timed AOD power grace started")
+    private fun startGrace() {
+        if (graceActive) return
+        graceActive = true
+        mainHandler.removeCallbacks(graceExpiry)
+        mainHandler.postDelayed(graceExpiry, PAUSED_AOD_KEEP_ALIVE_MS)
+        HookLogger.i(TAG, "AOD power grace started")
     }
 
-    private fun cancelTimedGrace() {
-        timedGraceActive = false
-        mainHandler.removeCallbacks(timedGraceExpiry)
+    private fun cancelGrace() {
+        graceActive = false
+        mainHandler.removeCallbacks(graceExpiry)
     }
 
     private const val TAG = "AodPowerCoordinator"
 }
 
-internal fun hasPersistentTimedAodPower(snapshot: LyricSnapshot): Boolean =
-    snapshot.keepAlive && (
-        snapshot.lineEndMs > snapshot.lineStartMs ||
-            snapshot.words.any { it.endMs > it.startMs }
-        )
+/**
+ * Grace eligibility follows validated keepalive intent, not lyric timing. `Keep unsynced songs
+ * active` produces persistent keepalive without timed rows, and those sessions need the same
+ * protection from transient producer gaps at a song boundary.
+ */
+internal fun hasPersistentAodPowerIntent(snapshot: LyricSnapshot): Boolean =
+    snapshot.playbackActive && snapshot.keepAlive
 
-internal fun shouldStartTimedAodPowerGrace(
+internal fun shouldStartAodPowerGrace(
     aodEnabled: Boolean,
     playbackActive: Boolean,
     keepAliveRequested: Boolean,
-    timedGraceEligible: Boolean
-): Boolean = aodEnabled && playbackActive && keepAliveRequested && timedGraceEligible
+    graceEligible: Boolean
+): Boolean = aodEnabled && playbackActive && keepAliveRequested && graceEligible
 
 internal fun shouldRetryDetachedAodWake(
     surfaceAttached: Boolean,

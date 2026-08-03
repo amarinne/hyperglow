@@ -74,6 +74,26 @@ class DiagnosticLoggingTest {
     }
 
     @Test
+    fun sharedPauseLingerNormalizesAndChangesRuntimeIdentity() {
+        val base = SceneCompiler.compile(SceneCompiler.safeDefaultDocument())
+        val immediate = RuntimeCustomization.withDiagnosticLogging(
+            base,
+            diagnosticLogging = false,
+            pauseLingerMs = 0L
+        )
+        val invalid = RuntimeCustomization.withDiagnosticLogging(
+            base,
+            diagnosticLogging = false,
+            pauseLingerMs = 123L
+        )
+
+        assertEquals(0L, immediate.pauseLingerMs)
+        assertEquals(5_000L, invalid.pauseLingerMs)
+        assertNotEquals(immediate.hash, invalid.hash)
+        assertEquals(base.profiles, immediate.profiles)
+    }
+
+    @Test
     fun raiseToAodChangesRuntimeIdentityIndependentlyOfLyrics() {
         val base = SceneCompiler.compile(SceneCompiler.safeDefaultDocument())
         val enabled = RuntimeCustomization.withDiagnosticLogging(

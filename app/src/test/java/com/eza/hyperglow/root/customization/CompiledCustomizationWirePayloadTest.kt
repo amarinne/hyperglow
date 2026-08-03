@@ -15,6 +15,7 @@ class CompiledCustomizationWirePayloadTest {
             SceneCompiler.compile(SceneCompiler.safeDefaultDocument()),
             diagnosticLogging = true,
             available = true,
+            pauseLingerMs = 30_000L,
             raiseToAod = true,
             suppressLockscreenEditorLongPress = true
         )
@@ -36,6 +37,13 @@ class CompiledCustomizationWirePayloadTest {
                 payload,
                 expectedUserId = 10
             )?.raiseToAod == true
+        )
+        assertEquals(
+            30_000L,
+            CompiledCustomizationBundleCodec.fromWirePayload(
+                payload,
+                expectedUserId = 10
+            )?.pauseLingerMs
         )
         assertTrue(
             CompiledCustomizationBundleCodec.fromWirePayload(

@@ -41,10 +41,14 @@ class XiaomiCapabilityResolverTest {
         val capabilities = resolveXiaomiCapabilities(
             XiaomiSymbolSnapshot(
                 aodSurface = true,
+                aodHostContainer = true,
                 aodPositionUpdates = true,
+                aodPositionTarget = true,
                 aodLifetimeGuard = true,
                 aodWakeBroker = true,
                 lockscreenHost = true,
+                lockscreenController = true,
+                lockscreenHostContainer = true,
                 lockscreenGeometry = true,
                 linkageDirection = true,
                 linkageGeometry = false,
@@ -74,10 +78,14 @@ class XiaomiCapabilityResolverTest {
         val capabilities = resolveXiaomiCapabilities(
             XiaomiSymbolSnapshot(
                 aodSurface = true,
+                aodHostContainer = true,
                 aodPositionUpdates = true,
+                aodPositionTarget = true,
                 aodLifetimeGuard = true,
                 aodWakeBroker = true,
                 lockscreenHost = true,
+                lockscreenController = true,
+                lockscreenHostContainer = true,
                 lockscreenGeometry = true,
                 linkageDirection = true,
                 raiseToAod = true,
@@ -93,6 +101,43 @@ class XiaomiCapabilityResolverTest {
         assertFalse(XiaomiCapability.LOCKSCREEN_HOST in capabilities)
         assertFalse(XiaomiCapability.RAISE_TO_AOD in capabilities)
         assertFalse(XiaomiCapability.LOCKSCREEN_EDITOR_GESTURE in capabilities)
+    }
+
+    @Test
+    fun unverifiedSurfaceSymbolsAreReportableButRemainFailClosed() {
+        val symbols = XiaomiSymbolSnapshot(
+            aodSurface = true,
+            aodHostContainer = true
+        )
+        val capabilities = resolveXiaomiCapabilities(
+            symbols,
+            verifiedRuntimeProfile = false
+        )
+
+        assertEquals(emptySet<XiaomiCapability>(), capabilities)
+        assertEquals(
+            XiaomiProfileState.EXPERIMENTAL_ELIGIBLE,
+            resolveXiaomiProfileState(
+                symbols,
+                verifiedRuntimeProfile = false,
+                capabilities = capabilities
+            )
+        )
+        assertTrue(symbols.rawProbes().getValue(XiaomiSymbolProbe.AOD_HOST_CONTAINER))
+    }
+
+    @Test
+    fun verifiedProfileMissingRequiredSeamReportsMissingSymbols() {
+        val symbols = XiaomiSymbolSnapshot(
+            aodSurface = true,
+            aodHostContainer = false
+        )
+        val capabilities = resolveXiaomiCapabilities(symbols)
+
+        assertEquals(
+            XiaomiProfileState.VERIFIED_PROFILE_MISSING_SYMBOLS,
+            resolveXiaomiProfileState(symbols, true, capabilities)
+        )
     }
 
     @Test

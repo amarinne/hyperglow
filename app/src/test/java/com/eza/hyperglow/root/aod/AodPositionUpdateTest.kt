@@ -97,6 +97,16 @@ class AodPositionUpdateTest {
         assertFalse(shouldRenderAodSnapshot(true, true, false, true, false))
         assertFalse(shouldRenderAodSnapshot(true, true, true, false, false))
         assertFalse(shouldRenderAodSnapshot(true, true, true, true, true))
+        assertFalse(
+            shouldRenderAodSnapshot(
+                true,
+                true,
+                true,
+                true,
+                false,
+                spotifyAuthorized = false
+            )
+        )
     }
 
     @Test

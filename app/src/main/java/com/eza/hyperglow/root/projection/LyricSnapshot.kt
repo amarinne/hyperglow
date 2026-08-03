@@ -4,6 +4,7 @@ import com.eza.hyperglow.aod.AodStateWireLimits
 import com.eza.hyperglow.aod.AodStateWireMessage
 import com.eza.hyperglow.aod.normalizeAodBurnInInterval
 import com.eza.hyperglow.aod.normalizeAodBurnInPattern
+import com.eza.hyperglow.aod.normalizePauseLingerMs
 
 internal data class LyricWord(
     val text: String,
@@ -32,6 +33,7 @@ internal data class LyricSnapshot(
     val updatedAtElapsedMs: Long = 0L,
     val visible: Boolean = false,
     val playbackActive: Boolean = false,
+    val pauseRetentionEligible: Boolean = false,
     val aodEnabled: Boolean = true,
     val lockscreenEnabled: Boolean = false,
     val seamlessTransitionEnabled: Boolean = true,
@@ -146,6 +148,7 @@ internal data class LyricKeepAliveSignal(
     val keepAlive: Boolean,
     val wakeSignal: Long,
     val playbackActive: Boolean = false,
+    val pauseRetentionEligible: Boolean = false,
     val userId: Int = 0
 )
 
@@ -169,6 +172,20 @@ internal fun LyricSnapshot.freezeAt(
         speed = 0f
     )
 }
+
+internal fun pauseLingerRemainingMs(
+    pausedAtElapsedMs: Long,
+    configuredDurationMs: Long,
+    nowElapsedMs: Long
+): Long? {
+    val durationMs = normalizePauseLingerMs(configuredDurationMs)
+    if (durationMs < 0L) return Long.MAX_VALUE
+    val elapsedMs = (nowElapsedMs - pausedAtElapsedMs).coerceAtLeast(0L)
+    return (durationMs - elapsedMs).takeIf { it > 0L }
+}
+
+internal fun LyricSnapshot.isAuthorizedForPresentation(): Boolean =
+    playbackActive || pauseRetentionEligible && speed == 0f
 
 internal sealed interface LyricProjectionMessage {
     val revision: Long
@@ -262,6 +279,7 @@ internal fun AodStateWireMessage.toLyricProjectionMessage(): LyricProjectionMess
             updatedAtElapsedMs = updatedAtElapsedMs,
             visible = true,
             playbackActive = playbackActive,
+            pauseRetentionEligible = false,
             aodEnabled = value.aodEnabled,
             lockscreenEnabled = value.lockscreenEnabled,
             seamlessTransitionEnabled = value.seamlessTransitionEnabled,
@@ -329,6 +347,7 @@ internal fun AodStateWireMessage.toLyricProjectionMessage(): LyricProjectionMess
             updatedAtElapsedMs = updatedAtElapsedMs,
             visible = false,
             playbackActive = playbackActive,
+            pauseRetentionEligible = pauseRetentionEligible && !playbackActive,
             keepAlive = keepAlive,
             wakeSignal = wakeSignal
         )
@@ -340,6 +359,7 @@ internal fun AodStateWireMessage.toLyricProjectionMessage(): LyricProjectionMess
             keepAlive = keepAlive,
             wakeSignal = wakeSignal,
             playbackActive = playbackActive,
+            pauseRetentionEligible = false,
             userId = userId
         )
     )

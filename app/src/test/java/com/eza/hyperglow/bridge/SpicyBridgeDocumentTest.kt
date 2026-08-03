@@ -1,6 +1,7 @@
 package com.eza.hyperglow.bridge
 
 import com.eza.hyperglow.aod.AodProjectionEngine
+import com.eza.hyperglow.aod.ProjectionSessionIdentity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -71,6 +72,67 @@ class SpicyBridgeDocumentTest {
         assertEquals(false, AodProjectionEngine.shouldShowPlaybackFallback("ready", true))
         assertEquals("♪", AodProjectionEngine.staticPlaybackPlaceholder("no_lyrics"))
         assertEquals(null, AodProjectionEngine.staticPlaybackPlaceholder("loading"))
+    }
+
+    @Test
+    fun nonplayingLoadingEdgeIsTransportGapButReadyPauseIsRealPause() {
+        assertTrue(
+            AodProjectionEngine.isPlayingTransportGap(
+                state(3_000, status = "loading").copy(playing = false)
+            )
+        )
+        assertFalse(
+            AodProjectionEngine.isPlayingTransportGap(
+                state(3_000, status = "ready").copy(playing = false)
+            )
+        )
+        assertFalse(AodProjectionEngine.isPlayingTransportGap(state(3_000, status = "loading")))
+    }
+
+    @Test
+    fun songChangeNonPlayingEdgeNeverCommitsPauseRetention() {
+        val playing = state(3_000, status = "ready", generation = 40)
+        val ending = playing.copy(playing = false)
+        val pending = ProjectionSessionIdentity.from(ending)
+
+        assertTrue(AodProjectionEngine.pauseConfirmWindowMs() >= 1_500L)
+        assertTrue(
+            AodProjectionEngine.shouldCommitPauseRetention(pending, ending, currentActive = true)
+        )
+        assertFalse(
+            AodProjectionEngine.shouldCommitPauseRetention(pending, playing, currentActive = true)
+        )
+        assertFalse(
+            AodProjectionEngine.shouldCommitPauseRetention(
+                pending,
+                ending.copy(generation = 41, status = "loading", playing = true),
+                currentActive = true
+            )
+        )
+        assertFalse(
+            AodProjectionEngine.shouldCommitPauseRetention(pending, ending, currentActive = false)
+        )
+        assertFalse(AodProjectionEngine.shouldCommitPauseRetention(pending, null, currentActive = true))
+    }
+
+    @Test
+    fun confirmedPauseDoesNotReopenStillPlayingGrace() {
+        val paused = state(3_000, status = "ready", generation = 40).copy(playing = false)
+        val session = ProjectionSessionIdentity.from(paused)
+        val nextSong = ProjectionSessionIdentity.from(paused.copy(generation = 41))
+
+        assertTrue(AodProjectionEngine.shouldOpenPauseGrace(session, null))
+        assertFalse(AodProjectionEngine.shouldOpenPauseGrace(session, session))
+        assertTrue(AodProjectionEngine.shouldOpenPauseGrace(nextSong, session))
+        assertFalse(
+            AodProjectionEngine.shouldOpenPauseGrace(
+                ProjectionSessionIdentity.from(paused.copy(status = "loading")),
+                session
+            )
+        )
+        assertTrue(
+            AodProjectionEngine.isPlayingTransportGap(paused.copy(status = "loading"))
+        )
     }
 
     @Test

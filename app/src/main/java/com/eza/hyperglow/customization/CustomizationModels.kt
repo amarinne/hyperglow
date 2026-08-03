@@ -23,6 +23,8 @@ data class SurfaceProfile(
     val transition: TransitionPreset = TransitionPreset(),
     val alignment: String = "auto",
     val secondaryMode: String = "Main only",
+    val secondaryTextBright: Boolean = true,
+    val lyricLineLimit: Int = DEFAULT_LYRIC_LINE_LIMIT,
     val metadataVisible: Boolean = false,
     val metadataAnchor: String = "top",
     val metadataSizePercent: Int = 100,
@@ -63,6 +65,7 @@ data class CompiledCustomization(
     val sourceId: String,
     val linkSurfaces: Boolean,
     val profiles: Map<String, CompiledSurfaceProfile>,
+    val pauseLingerMs: Long = 5_000L,
     val diagnosticLogging: Boolean = false,
     val lockscreenKeepAwake: Boolean = false,
     val raiseToAod: Boolean = false,
@@ -96,7 +99,17 @@ data class CompiledSurfaceProfile(
     val palette: Map<String, String>,
     val backgroundStyle: String = "none",
     val metadataSizePercent: Int = 100,
-    val rubyVisible: Boolean = true
+    val rubyVisible: Boolean = true,
+    val secondaryTextBright: Boolean = true,
+    val lyricLineLimit: Int = DEFAULT_LYRIC_LINE_LIMIT
 )
 
 const val CURRENT_CUSTOMIZATION_VERSION = 1
+const val DEFAULT_LYRIC_LINE_LIMIT = 3
+const val NO_LYRIC_LINE_LIMIT = 0
+
+internal fun normalizeLyricLineLimit(value: Int): Int = when (value) {
+    NO_LYRIC_LINE_LIMIT,
+    in 1..5 -> value
+    else -> DEFAULT_LYRIC_LINE_LIMIT
+}

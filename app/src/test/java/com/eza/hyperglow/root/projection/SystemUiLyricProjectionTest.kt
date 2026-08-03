@@ -354,6 +354,34 @@ class SystemUiLyricProjectionTest {
     }
 
     @Test
+    fun playingTransportGapExpiresButRealPauseUsesSurfaceLingerPolicy() {
+        val harness = Harness()
+        val subscriber = RecordingSubscriber(LyricSurfaceKind.AOD)
+        harness.projection.attach(subscriber, null)
+        harness.projection.accept(
+            LyricProjectionMessage.Snapshot(
+                snapshot(1, 10).copy(visible = false, playbackActive = true, original = "")
+            )
+        )
+
+        assertTrue(harness.projection.expireIfStale(5_011L))
+
+        harness.projection.accept(
+            LyricProjectionMessage.Snapshot(
+                snapshot(2, 20).copy(
+                    visible = false,
+                    playbackActive = false,
+                    pauseRetentionEligible = true,
+                    original = ""
+                )
+            )
+        )
+
+        assertFalse(harness.projection.expireIfStale(Long.MAX_VALUE))
+        assertTrue(harness.projection.cachedSnapshot()?.pauseRetentionEligible == true)
+    }
+
+    @Test
     fun userChangeClearsAndRebindsSingleClient() {
         val harness = Harness()
         val subscriber = RecordingSubscriber(LyricSurfaceKind.AOD)

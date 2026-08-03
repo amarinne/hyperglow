@@ -24,21 +24,24 @@ class AodLifetimePolicyTest {
     }
 
     @Test
-    fun timedPowerSessionSurvivesTransientHiddenEdgeAndRetriesDetachedWake() {
+    fun keepAlivePowerSessionSurvivesTransientHiddenEdgeAndRetriesDetachedWake() {
         val timed = LyricSnapshot(
             visible = true,
+            playbackActive = true,
             keepAlive = true,
             lineStartMs = 1_000L,
             lineEndMs = 4_000L,
             original = "line"
         )
-        val untimedLease = timed.copy(lineStartMs = 0L, lineEndMs = 0L)
+        val untimedKeepAlive = timed.copy(lineStartMs = 0L, lineEndMs = 0L)
 
-        assertTrue(hasPersistentTimedAodPower(timed))
-        assertFalse(hasPersistentTimedAodPower(untimedLease))
-        assertTrue(shouldStartTimedAodPowerGrace(true, true, true, true))
-        assertFalse(shouldStartTimedAodPowerGrace(true, false, true, true))
-        assertFalse(shouldStartTimedAodPowerGrace(true, true, true, false))
+        assertTrue(hasPersistentAodPowerIntent(timed))
+        assertTrue(hasPersistentAodPowerIntent(untimedKeepAlive))
+        assertFalse(hasPersistentAodPowerIntent(untimedKeepAlive.copy(keepAlive = false)))
+        assertFalse(hasPersistentAodPowerIntent(untimedKeepAlive.copy(playbackActive = false)))
+        assertTrue(shouldStartAodPowerGrace(true, true, true, true))
+        assertFalse(shouldStartAodPowerGrace(true, false, true, true))
+        assertFalse(shouldStartAodPowerGrace(true, true, true, false))
         assertTrue(shouldRetryDetachedAodWake(false, true))
         assertFalse(shouldRetryDetachedAodWake(true, true))
         assertFalse(shouldRetryDetachedAodWake(false, false))
@@ -55,6 +58,7 @@ class AodLifetimePolicyTest {
     fun pausedAodSnapshotStaysVisibleButReleasesKeepAliveImmediately() {
         val live = LyricSnapshot(
             visible = true,
+            playbackActive = true,
             keepAlive = true,
             positionFollowingEnabled = true,
             durationMs = 20_000L,
@@ -63,22 +67,73 @@ class AodLifetimePolicyTest {
             speed = 1f,
             original = "line"
         )
-        val hidden = live.copy(visible = false, playbackActive = false, keepAlive = false)
-        val retained = retainedAodSnapshotAfterUpdate(hidden, live, null, true, 3_000L)!!
+        val hidden = live.copy(
+            visible = false,
+            playbackActive = false,
+            pauseRetentionEligible = true,
+            updatedAtElapsedMs = 3_000L,
+            keepAlive = false
+        )
+        val retained = retainedAodSnapshotAfterUpdate(hidden, live, null, true, 3_000L, 30_000L)!!
 
         assertTrue(retained.visible)
         assertFalse(retained.keepAlive)
         assertTrue(retained.positionFollowingEnabled)
         assertEquals(6_000L, retained.positionMs)
         assertEquals(0f, retained.speed)
-        assertEquals(retained, retainedAodSnapshotAfterUpdate(hidden, null, retained, true, 8_000L))
-        assertFalse(retainedAodSnapshotAfterUpdate(hidden, null, retained, true, 32_999L)!!.keepAlive)
-        val expired = retainedAodSnapshotAfterUpdate(hidden, null, retained, true, 33_000L)!!
-        assertTrue(expired.visible)
-        assertFalse(expired.keepAlive)
-        assertTrue(expired.positionFollowingEnabled)
-        assertEquals(0f, expired.speed)
-        assertEquals(null, retainedAodSnapshotAfterUpdate(hidden, live, retained, false, 8_000L))
+        assertEquals(
+            retained,
+            retainedAodSnapshotAfterUpdate(hidden, null, retained, true, 8_000L, 30_000L)
+        )
+        assertEquals(
+            null,
+            retainedAodSnapshotAfterUpdate(hidden, null, retained, true, 33_000L, 30_000L)
+        )
+        assertEquals(
+            null,
+            retainedAodSnapshotAfterUpdate(hidden, live, retained, false, 8_000L, 30_000L)
+        )
+    }
+
+    @Test
+    fun sharedPauseLingerSupportsImmediateBoundedAndIndefiniteModes() {
+        val live = LyricSnapshot(
+            visible = true,
+            playbackActive = true,
+            durationMs = 20_000L,
+            positionMs = 4_000L,
+            sampledAtElapsedMs = 1_000L,
+            speed = 1f,
+            original = "line"
+        )
+        val paused = live.copy(
+            visible = false,
+            playbackActive = false,
+            pauseRetentionEligible = true,
+            updatedAtElapsedMs = 3_000L
+        )
+
+        assertEquals(null, retainedAodSnapshotAfterUpdate(paused, live, null, true, 3_000L, 0L))
+        listOf(5_000L, 10_000L, 30_000L).forEach { duration ->
+            val retained = retainedAodSnapshotAfterUpdate(
+                paused, live, null, true, 3_000L, duration
+            )!!
+            assertTrue(retainedAodSnapshotAfterUpdate(
+                paused, null, retained, true, 3_000L + duration - 1L, duration
+            ) != null)
+            assertEquals(null, retainedAodSnapshotAfterUpdate(
+                paused, null, retained, true, 3_000L + duration, duration
+            ))
+        }
+        val indefinite = retainedAodSnapshotAfterUpdate(paused, live, null, true, 3_000L, -1L)!!
+        assertEquals(
+            indefinite,
+            retainedAodSnapshotAfterUpdate(paused, null, indefinite, true, Long.MAX_VALUE, -1L)
+        )
+        assertEquals(
+            null,
+            retainedAodSnapshotAfterUpdate(paused, live, null, true, 8_000L, 5_000L)
+        )
     }
 
     @Test

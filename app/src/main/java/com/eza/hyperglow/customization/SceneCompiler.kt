@@ -143,6 +143,8 @@ object SceneCompiler {
             ),
             alignment = profile.alignment.takeIf { it in ALIGNMENTS } ?: "auto",
             secondaryMode = profile.secondaryMode.takeIf { it in SECONDARY_MODES } ?: "Main only",
+            secondaryTextBright = profile.secondaryTextBright,
+            lyricLineLimit = normalizeLyricLineLimit(profile.lyricLineLimit),
             metadataVisible = profile.metadataVisible &&
                 supportedWidgets.any { it.type == "metadata" },
             metadataAnchor = if (profile.metadataAnchor == "bottom") "bottom" else "top",
@@ -232,10 +234,8 @@ object SceneCompiler {
     private val FONT_FAMILIES = setOf("noto", "spotify", "apple")
     private val ANIMATIONS = setOf("Minimal", "Gradient")
     private fun normalizeLineSyncFillMode(value: String): String = when (value) {
-        "Left to right" -> "Left to right (whole block)"
         "None",
         "Top to bottom",
-        "Left to right (main only)",
         "Left to right (whole block)" -> value
         else -> "Left to right (main only)"
     }

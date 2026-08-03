@@ -52,6 +52,13 @@ class AodStateBridgeTest {
     }
 
     @Test
+    fun pausedHiddenThenTerminalHiddenRepublishes() {
+        val paused = AodDisplayState(visible = false, pauseRetentionEligible = true)
+
+        assertTrue(shouldRepublish(paused, paused.copy(pauseRetentionEligible = false)))
+    }
+
+    @Test
     fun utf16TruncationNeverSplitsEmojiSurrogatePair() {
         val source = "x".repeat(AodStateWireLimits.MAX_LYRIC_CHARS - 1) + "😀"
 

@@ -108,7 +108,7 @@ class AodCanvasLayoutTest {
     @Test
     fun lineLevelSyncHonorsConfiguredSweepDirection() {
         assertEquals(
-            "Left to right (whole block)",
+            "Left to right (main only)",
             resolvedLineSyncFillMode(true, "Left to right (sentence)")
         )
         assertEquals(
@@ -119,6 +119,10 @@ class AodCanvasLayoutTest {
         assertEquals(
             "Top to bottom",
             resolvedLineSyncFillMode(true, "Top to bottom")
+        )
+        assertEquals(
+            "Left to right (whole block)",
+            resolvedLineSyncFillMode(true, "Left to right (whole block)")
         )
     }
 
@@ -207,7 +211,7 @@ class AodCanvasLayoutTest {
     }
 
     @Test
-    fun legacyLeftToRightProfileMigratesToSimultaneousWholeBlockSweep() {
+    fun legacyLeftToRightProfileMigratesToMainLyricSweep() {
         val profile = SceneCompiler.compile(
             CustomizationDocument(
                 profiles = mapOf(
@@ -218,7 +222,31 @@ class AodCanvasLayoutTest {
             )
         ).profiles.getValue(SceneCompiler.SURFACE_AOD)
 
-        assertEquals("Left to right (whole block)", profile.lineSyncFillMode)
+        assertEquals("Left to right (main only)", profile.lineSyncFillMode)
+    }
+
+    @Test
+    fun lyricLineLimitSupportsOneThroughFiveAndUnboundedLayout() {
+        assertEquals(1, resolvedLyricLayoutLineLimit(1, originalLength = 50, wordCount = 10))
+        assertEquals(5, resolvedLyricLayoutLineLimit(5, originalLength = 50, wordCount = 10))
+        assertEquals(50, resolvedLyricLayoutLineLimit(0, originalLength = 50, wordCount = 10))
+    }
+
+    @Test
+    fun secondaryTextBrightnessIsStaticAndProfileControlled() {
+        val profile = SceneCompiler.compile(
+            CustomizationDocument(
+                profiles = mapOf(
+                    SceneCompiler.SURFACE_AOD to SurfaceProfile(secondaryTextBright = false)
+                )
+            )
+        ).profiles.getValue(SceneCompiler.SURFACE_AOD)
+        val content = LyricSnapshot(romanized = "reading")
+            .toAodCanvasContent(profile)
+
+        assertFalse(content.secondaryTextBright)
+        assertEquals(1f, staticSecondaryTextFactor(true), 0.0001f)
+        assertEquals(0.35f, staticSecondaryTextFactor(false), 0.0001f)
     }
 
     @Test
