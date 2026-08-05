@@ -354,7 +354,7 @@ class SceneCompilerTest {
         assertEquals(100, compiled.cardAlpha)
         assertEquals(DEFAULT_CARD_COLOR, compiled.cardColor)
         assertEquals(
-            DEFAULT_CARD_ALPHA,
+            0,
             SceneCompiler.compile(
                 CustomizationDocument(
                     profiles = mapOf(
