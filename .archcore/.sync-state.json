@@ -11,6 +11,26 @@
       "source": "lyricon-integration/lyricon-lyrics-source-plan.plan.md",
       "target": "lyricon-integration/lyricon-lyrics-source-prd.prd.md",
       "type": "implements"
+    },
+    {
+      "source": "lyricon-integration/lyric-producer-contract.spec.md",
+      "target": "lyricon-integration/lyric-producer-abstraction.adr.md",
+      "type": "implements"
+    },
+    {
+      "source": "lyricon-integration/lyricon-lyrics-source-plan.plan.md",
+      "target": "lyricon-integration/lyric-producer-contract.spec.md",
+      "type": "implements"
+    },
+    {
+      "source": "lyricon-integration/lyric-producer-abstraction.adr.md",
+      "target": "lyricon-integration/lyricon-as-lyrics-source.idea.md",
+      "type": "related"
+    },
+    {
+      "source": "lyricon-integration/lyric-producer-abstraction.adr.md",
+      "target": "lyricon-integration/lyricon-lyrics-source-prd.prd.md",
+      "type": "related"
     }
   ]
 }
