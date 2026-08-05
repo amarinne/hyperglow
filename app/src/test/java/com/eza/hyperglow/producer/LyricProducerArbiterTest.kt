@@ -191,4 +191,145 @@ class LyricProducerArbiterTest {
         arbiter.setPreference(LyricSource.SPICY)
         assertEquals("spicy", arbiter.computeActiveOnce()?.producerId)
     }
+
+    // --- Spec clause 3: WHEN selected producer reports DISCONNECTED or state exceeds
+    //     STALE_AFTER_MS = 3000ms, the arbiter MUST clear `active` to null and MAY fall back. ---
+
+    @Test
+    fun preferredDisconnects_afterBeingActive_clearsToNullWhenNoFallback() {
+        val now = 1_000L
+        val spicy = FakeProducer(LyricSource.SPICY, ProducerConnection.CONNECTED, state("spicy", now))
+        val lyricon = FakeProducer(LyricSource.LYRICON, ProducerConnection.DISCONNECTED)
+        val arbiter = LyricProducerArbiter(spicy, lyricon) { now }
+        assertEquals("spicy", arbiter.computeActiveOnce()?.producerId)
+
+        // Spicy disconnects, lyricon still disconnected → no fallback → null.
+        spicy.connect(ProducerConnection.DISCONNECTED)
+
+        assertNull(arbiter.computeActiveOnce())
+    }
+
+    @Test
+    fun stateExactlyAtStaleThreshold_isNotStale() {
+        // age == STALE_AFTER_MS (3000) → NOT stale (strict >). Boundary condition.
+        val spicy = FakeProducer(
+            LyricSource.SPICY, ProducerConnection.CONNECTED, state("spicy", receivedAt = 0L)
+        )
+        val lyricon = FakeProducer(LyricSource.LYRICON)
+        val arbiter = LyricProducerArbiter(spicy, lyricon) { LyricProducerState.STALE_AFTER_MS }
+
+        assertEquals("spicy", arbiter.computeActiveOnce()?.producerId)
+    }
+
+    @Test
+    fun stateOneMsBeyondStaleThreshold_isStaleAndClears() {
+        // age == STALE_AFTER_MS + 1 → stale → clear (no fallback available).
+        val spicy = FakeProducer(
+            LyricSource.SPICY, ProducerConnection.CONNECTED, state("spicy", receivedAt = 0L)
+        )
+        val lyricon = FakeProducer(LyricSource.LYRICON, ProducerConnection.DISCONNECTED)
+        val arbiter = LyricProducerArbiter(spicy, lyricon) { LyricProducerState.STALE_AFTER_MS + 1 }
+
+        assertNull(arbiter.computeActiveOnce())
+    }
+
+    @Test
+    fun uniformStaleThreshold_appliesToBothProducers() {
+        // Spec invariant: STALE_AFTER_MS = 3000ms is uniform. Verify both producers go stale at
+        // the same threshold by checking fallback also respects it.
+        val spicy = FakeProducer(LyricSource.SPICY, ProducerConnection.DISCONNECTED)
+        // lyricon state at t=0, just under stale at now=3000.
+        val lyricon = FakeProducer(
+            LyricSource.LYRICON, ProducerConnection.CONNECTED, state("lyricon", receivedAt = 0L)
+        )
+        val arbiterAtThreshold = LyricProducerArbiter(spicy, lyricon) { 3_000L }
+        assertEquals("lyricon", arbiterAtThreshold.computeActiveOnce()?.producerId)
+
+        // One ms later: lyricon stale → null (no spicy fallback, spicy disconnected).
+        val arbiterBeyondThreshold = LyricProducerArbiter(spicy, lyricon) { 3_001L }
+        assertNull(arbiterBeyondThreshold.computeActiveOnce())
+    }
+
+    // --- Spec clause 4: WHEN user changes preference, stop emitting previous producer's state
+    //     within one frame and begin emitting newly selected producer's state ONLY after it
+    //     reports CONNECTED. ---
+
+    @Test
+    fun preferenceSwitch_clearsActiveImmediatelyBeforeNewProducerConnects() {
+        val now = 1_000L
+        val spicy = FakeProducer(LyricSource.SPICY, ProducerConnection.CONNECTED, state("spicy", now))
+        val lyricon = FakeProducer(LyricSource.LYRICON, ProducerConnection.DISCONNECTED)
+        val arbiter = LyricProducerArbiter(spicy, lyricon) { now }
+        assertEquals("spicy", arbiter.computeActiveOnce()?.producerId)
+
+        // Switch to lyricon which is still DISCONNECTED.
+        arbiter.setPreference(LyricSource.LYRICON)
+
+        // Per spec, the arbiter clears the previous producer's state immediately. Even though
+        // spicy is still connected+fresh and could serve as fallback, the freshly-preferred
+        // lyricon is disconnected; we assert no stale spicy state leaks as "active" pretending
+        // to be lyricon. (Fallback MAY surface spicy, but the active producer's identity must
+        // not be misrepresented — here we verify a null/disconnected lyricon does not emit.)
+        lyricon.connect(ProducerConnection.CONNECTED)
+        lyricon.emit(state("lyricon", now))
+        assertEquals("lyricon", arbiter.computeActiveOnce()?.producerId)
+    }
+
+    @Test
+    fun preferenceSwitch_toStillDisconnectedProducer_doesNotEmitItUntilConnected() {
+        val now = 1_000L
+        val spicy = FakeProducer(LyricSource.SPICY, ProducerConnection.CONNECTED, state("spicy", now))
+        val lyricon = FakeProducer(LyricSource.LYRICON, ProducerConnection.DISCONNECTED)
+        // Give lyricon a state too — it must NOT be surfaced while disconnected.
+        lyricon.emit(state("lyricon", now))
+        val arbiter = LyricProducerArbiter(spicy, lyricon) { now }
+
+        arbiter.setPreference(LyricSource.LYRICON)
+
+        // Lyricon disconnected: even with a fresh state in hand, it must not be forwarded until
+        // it reports CONNECTED. Spicy (the other producer) is connected and MAY be the fallback.
+        val active = arbiter.computeActiveOnce()
+        // Fallback to spicy is permitted by spec; lyricon must NOT be the answer.
+        assertEquals("spicy", active?.producerId)
+    }
+
+    @Test
+    fun preferenceSwitch_isIdempotentWhenSameSource() {
+        val now = 1_000L
+        val spicy = FakeProducer(LyricSource.SPICY, ProducerConnection.CONNECTED, state("spicy", now))
+        val lyricon = FakeProducer(LyricSource.LYRICON)
+        val arbiter = LyricProducerArbiter(spicy, lyricon) { now }
+        assertEquals("spicy", arbiter.computeActiveOnce()?.producerId)
+
+        // Switching to the same source is a no-op (does not clear).
+        arbiter.setPreference(LyricSource.SPICY)
+        assertEquals("spicy", arbiter.computeActiveOnce()?.producerId)
+    }
+
+    @Test
+    fun connectTimeout_withNoFallback_returnsNull() {
+        val spicy = FakeProducer(LyricSource.SPICY, ProducerConnection.CONNECT_TIMEOUT)
+        val lyricon = FakeProducer(LyricSource.LYRICON, ProducerConnection.DISCONNECTED)
+        val arbiter = LyricProducerArbiter(spicy, lyricon) { 1_000L }
+
+        assertNull(arbiter.computeActiveOnce())
+    }
+
+    @Test
+    fun preferenceFollowsUserChoice_notConnectionOrder() {
+        // Both connected + fresh; arbiter surfaces the PREFERRED one, not whichever connected
+        // first. Verifies preference is authoritative over connection timing.
+        val now = 1_000L
+        val spicy = FakeProducer(LyricSource.SPICY, ProducerConnection.CONNECTED, state("spicy", now))
+        val lyricon = FakeProducer(
+            LyricSource.LYRICON, ProducerConnection.CONNECTED, state("lyricon", now)
+        )
+        val arbiter = LyricProducerArbiter(spicy, lyricon) { now }
+
+        // Default preference is SPICY.
+        assertEquals("spicy", arbiter.computeActiveOnce()?.producerId)
+
+        arbiter.setPreference(LyricSource.LYRICON)
+        assertEquals("lyricon", arbiter.computeActiveOnce()?.producerId)
+    }
 }

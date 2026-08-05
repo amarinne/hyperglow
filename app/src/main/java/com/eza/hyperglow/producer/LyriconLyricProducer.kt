@@ -60,7 +60,7 @@ class LyriconLyricProducer : LyricProducer {
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
-    private val connectionListener = object : ConnectionListener {
+    internal val connectionListener = object : ConnectionListener {
         override fun onConnected(s: LyriconSubscriber) {
             AppLog.i("LyriconLyricProducer", "connected")
             mutableConnection.value = ProducerConnection.CONNECTED
@@ -84,7 +84,7 @@ class LyriconLyricProducer : LyricProducer {
         }
     }
 
-    private val playerListener = object : ActivePlayerListener {
+    internal val playerListener = object : ActivePlayerListener {
         override fun onActiveProviderChanged(providerInfo: ProviderInfo?) {
             AppLog.i("LyriconLyricProducer", "provider=${providerInfo?.packageName}")
             if (providerInfo == null) {

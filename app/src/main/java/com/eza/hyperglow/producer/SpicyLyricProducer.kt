@@ -2,7 +2,6 @@ package com.eza.hyperglow.producer
 
 import android.content.Context
 import com.eza.hyperglow.AppLog
-import com.eza.hyperglow.bridge.SpicyBridgeRenderModes
 import com.eza.hyperglow.bridge.SpicyBridgeState
 import com.eza.hyperglow.bridge.SpicyBridgeStore
 import com.eza.hyperglow.bridge.SpicyBridgeWord
@@ -69,7 +68,7 @@ class SpicyLyricProducer : LyricProducer {
         AppLog.i("SpicyLyricProducer", "stop (no-op)")
     }
 
-    private fun toProducerState(spicy: SpicyBridgeState): LyricProducerState = LyricProducerState(
+    internal fun toProducerState(spicy: SpicyBridgeState): LyricProducerState = LyricProducerState(
         producerId = spicy.producerId,
         generation = spicy.generation,
         sequence = spicy.sequence,
@@ -93,20 +92,21 @@ class SpicyLyricProducer : LyricProducer {
         // per-word timing lives in SpicyBridgeDocumentStore and is consumed by the projection
         // engine directly. Null here means "line-level" per the LyricProducerState contract.
         words = null,
-        renderModes = spicy.renderModes.toProducerRenderModes()
-    )
-
-    private fun SpicyBridgeRenderModes.toProducerRenderModes() = ProducerRenderModes(
-        weight = weight,
-        textSize = textSize,
-        textSizeCustom = textSizeCustom,
-        secondary = secondary,
-        animation = animation,
-        glow = glow,
-        lineSyncFill = lineSyncFill,
-        overflow = overflow,
-        transition = transition,
-        font = font
+        // SpicyBridgeState carries render modes as individual liveCard* fields (no renderModes
+        // property). Map them 1:1 into ProducerRenderModes. The spotify:track: constraint stays
+        // enforced inside SpicyBridgeStateReducer (never reaches this boundary).
+        renderModes = ProducerRenderModes(
+            weight = spicy.liveCardWeight,
+            textSize = spicy.liveCardTextSize,
+            textSizeCustom = spicy.liveCardTextSizeCustom,
+            secondary = spicy.liveCardSecondaryMode,
+            animation = spicy.liveCardAnimation,
+            glow = spicy.liveCardGlow,
+            lineSyncFill = spicy.liveCardLineSyncFill,
+            overflow = spicy.liveCardOverflow,
+            transition = spicy.liveCardTransition,
+            font = spicy.lyricsFont
+        )
     )
 
     @Suppress("unused")
