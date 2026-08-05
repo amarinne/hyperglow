@@ -472,9 +472,11 @@ internal object XiaomiCapabilityResolver {
     private const val FULL_AOD_MANAGER = "com.miui.interfaces.keyguard.IMiuiFullAodManager"
     private const val VIDEO_DEPTH_SURFACE_HOLDER = "com.miui.keyguard.VideoDepthSurfaceHolder"
     private const val VERIFIED_SYSTEM_UI_VERSION_CODE = 202501210L
-    private const val VERIFIED_AOD_VERSION_CODE = 22327001L
+    // 已验证的 AOD versionCode 集合。22327001 是原始验证版本;22313001 经符号探测确认
+    // 结构一致(所有 16 个 probe 全部命中),纳入白名单让 verified profile 解锁。
+    private val VERIFIED_AOD_VERSION_CODES = setOf(22327001L, 22313001L)
 
     internal fun isVerifiedRuntimeProfile(systemUiVersion: String, aodVersion: String): Boolean =
         systemUiVersion.endsWith("($VERIFIED_SYSTEM_UI_VERSION_CODE)") &&
-            aodVersion.endsWith("($VERIFIED_AOD_VERSION_CODE)")
+            VERIFIED_AOD_VERSION_CODES.any { code -> aodVersion.endsWith("($code)") }
 }

@@ -155,4 +155,30 @@ class XiaomiCapabilityResolverTest {
             )
         )
     }
+
+    @Test
+    fun aodVersionCode22313001IsAcceptedAsVerified() {
+        // 用户设备实测:AOD vc=22313001,所有 16 个符号 probe 全部命中,
+        // 结构与验证版 22327001 一致 —— 纳入白名单后应判为 verified。
+        assertTrue(
+            XiaomiCapabilityResolver.isVerifiedRuntimeProfile(
+                "20250121.0(202501210)",
+                "DEV-2313.0.0.1-11211901(22313001)"
+            )
+        )
+        // SystemUI vc 不匹配仍拒绝。
+        assertFalse(
+            XiaomiCapabilityResolver.isVerifiedRuntimeProfile(
+                "unknown(999999999)",
+                "DEV-2313.0.0.1-11211901(22313001)"
+            )
+        )
+        // AOD vc 不在白名单仍拒绝。
+        assertFalse(
+            XiaomiCapabilityResolver.isVerifiedRuntimeProfile(
+                "20250121.0(202501210)",
+                "DEV-9999.0.0.1(99999999)"
+            )
+        )
+    }
 }

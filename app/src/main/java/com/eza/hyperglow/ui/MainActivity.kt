@@ -73,6 +73,7 @@ import com.eza.hyperglow.producer.LyricSource
 import com.eza.hyperglow.producer.ProducerConnection
 import com.eza.hyperglow.root.aod.metadataWidgetHeightDp
 import com.eza.hyperglow.root.capability.XiaomiCapability
+import com.eza.hyperglow.root.capability.XiaomiProfileState
 import com.eza.hyperglow.root.projection.LyricRuby
 import com.eza.hyperglow.root.projection.LyricSnapshot
 import com.eza.hyperglow.root.projection.currentProcessUserId
@@ -220,18 +221,25 @@ private fun HomeScreen(
     }
     val initialConfig = remember { AodRenderPreferences.read(context) }
     val initialDocument = remember { CustomizationRepository.loadDocument(context) }
-    val supportState = capabilityReport.supportState()
-    val aodSupported = capabilityReport.has(XiaomiCapability.AOD_SURFACE)
-    val lockscreenSupported = capabilityReport.has(XiaomiCapability.LOCKSCREEN_HOST) &&
-        capabilityReport.has(XiaomiCapability.LOCKSCREEN_GEOMETRY)
+    var experimentalMode by remember { mutableStateOf(initialConfig.experimentalMode) }
+    // App-side overlay: hook 端上报的 report 保持原样,UI 把用户开关叠加到
+    // experimentalModeEnabled 上,据此推导 supportState / has()。开关切换即时生效,
+    // 无需等 hook 重新上报。
+    val effectiveReport = capabilityReport.copy(experimentalModeEnabled = experimentalMode)
+    val supportState = effectiveReport.supportState()
+    val aodSupported = effectiveReport.has(XiaomiCapability.AOD_SURFACE)
+    val lockscreenSupported = effectiveReport.has(XiaomiCapability.LOCKSCREEN_HOST) &&
+        effectiveReport.has(XiaomiCapability.LOCKSCREEN_GEOMETRY)
     val runtimeProfileAvailable = supportState == XiaomiRuntimeSupportState.VERIFIED_PROFILE ||
         supportState == XiaomiRuntimeSupportState.VERIFIED_PROFILE_MISSING_SYMBOLS ||
         supportState == XiaomiRuntimeSupportState.EXPERIMENTAL_ACTIVE
-    val positionFollowingSupported = capabilityReport.has(XiaomiCapability.AOD_POSITION_UPDATES)
-    val raiseToAodSupported = capabilityReport.has(XiaomiCapability.RAISE_TO_AOD)
-    val lockscreenEditorGestureSupported = capabilityReport.has(
+    val positionFollowingSupported = effectiveReport.has(XiaomiCapability.AOD_POSITION_UPDATES)
+    val raiseToAodSupported = effectiveReport.has(XiaomiCapability.RAISE_TO_AOD)
+    val lockscreenEditorGestureSupported = effectiveReport.has(
         XiaomiCapability.LOCKSCREEN_EDITOR_GESTURE
     )
+    val experimentalEligible = effectiveReport.profileState ==
+        XiaomiProfileState.EXPERIMENTAL_ELIGIBLE
     var aodEnabled by remember {
         mutableStateOf(
             initialDocument.profiles[SceneCompiler.SURFACE_AOD]?.enabled
@@ -370,6 +378,22 @@ private fun HomeScreen(
                                 title = stringResource(R.string.action_restart_systemui),
                                 onClick = { showRestartDialog = true }
                             )
+                            if (experimentalEligible) {
+                                SwitchPreference(
+                                    experimentalMode,
+                                    { enabled ->
+                                        if (updateExperimentalMode(context, enabled)) {
+                                            experimentalMode = enabled
+                                        }
+                                    },
+                                    stringResource(R.string.setting_experimental_mode),
+                                    summary = if (experimentalMode) {
+                                        stringResource(R.string.summary_experimental_mode_on)
+                                    } else {
+                                        stringResource(R.string.summary_experimental_mode)
+                                    }
+                                )
+                            }
                         }
                     }
                     item { SmallTitle(text = stringResource(R.string.section_spotify_integration)) }
@@ -1798,6 +1822,18 @@ private fun updateLockscreenEditorLongPress(
 ): Boolean {
     val saved = context.getSharedPreferences(AodRenderPreferences.PREFS, 0).edit()
         .putBoolean(AodRenderPreferences.SUPPRESS_LOCKSCREEN_EDITOR_LONG_PRESS, enabled)
+        .commit()
+    if (!saved) return false
+    publishRuntimeConfiguration(context)
+    return true
+}
+
+private fun updateExperimentalMode(
+    context: android.content.Context,
+    enabled: Boolean
+): Boolean {
+    val saved = context.getSharedPreferences(AodRenderPreferences.PREFS, 0).edit()
+        .putBoolean(AodRenderPreferences.EXPERIMENTAL_MODE, enabled)
         .commit()
     if (!saved) return false
     publishRuntimeConfiguration(context)

@@ -29,7 +29,17 @@ data class AodRenderConfig(
     val pauseLingerMs: Long = 5_000L,
     val lockscreenKeepAwake: Boolean = false,
     val raiseToAod: Boolean = false,
-    val suppressLockscreenEditorLongPress: Boolean = false
+    val suppressLockscreenEditorLongPress: Boolean = false,
+    /**
+     * 用户手动开启的实验模式。当 SystemUI 版本不在 verified 白名单(profileState=
+     * EXPERIMENTAL_ELIGIBLE)但符号探测显示 surface 可用时,开启此项让 app 端本地把
+     * supportState 视为 EXPERIMENTAL_ACTIVE,从而放开 AOD/锁屏 surface 配置。
+     *
+     * 仅影响 app 端 UI 是否允许配置;实际渲染依赖 hook 端已 try/catch 安装的 surface
+     * hook(符号在则装上,符号不在则跳过)。风险:未验证版本上符号签名可能不一致,
+     * hook 装上但行为异常 —— 由用户自行承担。
+     */
+    val experimentalMode: Boolean = false
 )
 
 internal fun normalizeAodAlignment(value: String?): String = when (value) {
@@ -141,6 +151,7 @@ object AodRenderPreferences {
     const val RAISE_TO_AOD = "raise_to_aod"
     const val SUPPRESS_LOCKSCREEN_EDITOR_LONG_PRESS = "suppress_lockscreen_editor_long_press"
     const val LYRIC_SOURCE = "lyric_source"
+    const val EXPERIMENTAL_MODE = "experimental_mode"
 
     private var preferences: SharedPreferences? = null
     private var cachedConfig: AodRenderConfig? = null
@@ -179,7 +190,8 @@ object AodRenderPreferences {
             normalizePauseLingerMs(prefs.getLong(PAUSE_LINGER_MS, 5_000L)),
             prefs.getBoolean(LOCKSCREEN_KEEP_AWAKE, false),
             prefs.getBoolean(RAISE_TO_AOD, false),
-            prefs.getBoolean(SUPPRESS_LOCKSCREEN_EDITOR_LONG_PRESS, false)
+            prefs.getBoolean(SUPPRESS_LOCKSCREEN_EDITOR_LONG_PRESS, false),
+            prefs.getBoolean(EXPERIMENTAL_MODE, false)
         ).also { cachedConfig = it }
     }
 

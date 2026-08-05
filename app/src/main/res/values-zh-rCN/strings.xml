@@ -29,6 +29,9 @@
     <string name="summary_report_supported">捕获经过筛选的诊断信息，或发送兼容性元数据。</string>
     <string name="summary_report_unsupported">为此不受支持的配置发送兼容性报告。</string>
     <string name="action_restart_systemui">重启系统界面</string>
+    <string name="setting_experimental_mode">实验模式</string>
+    <string name="summary_experimental_mode">此系统界面版本未经验证，但所需符号已检测到。开启后将解锁 AOD 与锁屏配置，风险自负 —— 未验证版本上的 surface hook 行为可能异常。</string>
+    <string name="summary_experimental_mode_on">已通过实验模式解锁未验证配置。Surface 行为不作保证。</string>
 
     <string name="section_lyric_source">歌词源</string>
     <string name="lyric_source_spicy">Spicy EX</string>

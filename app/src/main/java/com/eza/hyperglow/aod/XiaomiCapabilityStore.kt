@@ -26,12 +26,25 @@ internal data class StoredXiaomiCapabilityReport(
     val profileState: XiaomiProfileState = XiaomiProfileState.UNSUPPORTED_PROFILE,
     val experimentalModeActive: Boolean = false,
     val rawProbes: Map<String, Boolean> = emptyMap(),
-    val summary: String = "No SystemUI capability report yet"
+    val summary: String = "No SystemUI capability report yet",
+    /**
+     * 用户在 app 端开启的实验模式开关(来自 [AodRenderPreferences.EXPERIMENTAL_MODE])。
+     * 仅用于 app 端本地覆写:当 hook 端上报 `EXPERIMENTAL_ELIGIBLE` 且此项为 true 时,
+     * [supportState] 返回 `EXPERIMENTAL_ACTIVE`、[has] 基于 rawProbes 推导 surface
+     * capability,从而放开 UI 配置。不改变 hook 端上报的原始数据。
+     */
+    val experimentalModeEnabled: Boolean = false
 ) {
     val hasReport: Boolean
         get() = protocolVersion in 1..XiaomiCapabilityBundleCodec.CURRENT_PROTOCOL
 
-    fun has(capability: XiaomiCapability): Boolean = hasReport && capability.name in capabilities
+    fun has(capability: XiaomiCapability): Boolean {
+        if (!hasReport) return false
+        if (capability.name in capabilities) return true
+        // 实验模式:hook 端未上报 capability(因 verifiedRuntimeProfile=false 全砍),
+        // 但 rawProbes 显示对应符号已探测到 —— 本地推导认为可用。
+        return experimentalModeEnabled && capability in experimentalCapabilitiesFromProbes()
+    }
 
     fun supportState(): XiaomiRuntimeSupportState = when {
         !hasReport -> XiaomiRuntimeSupportState.NO_SYSTEM_UI_REPORT
@@ -40,10 +53,44 @@ internal data class StoredXiaomiCapabilityReport(
         profileState == XiaomiProfileState.VERIFIED_PROFILE_MISSING_SYMBOLS ->
             XiaomiRuntimeSupportState.VERIFIED_PROFILE_MISSING_SYMBOLS
         profileState == XiaomiProfileState.EXPERIMENTAL_ELIGIBLE ->
-            XiaomiRuntimeSupportState.EXPERIMENTAL_ELIGIBLE
+            if (experimentalModeEnabled) XiaomiRuntimeSupportState.EXPERIMENTAL_ACTIVE
+            else XiaomiRuntimeSupportState.EXPERIMENTAL_ELIGIBLE
         profileState == XiaomiProfileState.EXPERIMENTAL_ACTIVE ->
             XiaomiRuntimeSupportState.EXPERIMENTAL_ACTIVE
         else -> XiaomiRuntimeSupportState.UNSUPPORTED_PROFILE
+    }
+
+    /**
+     * 基于 rawProbes 推导实验模式下可用的 capability。镜像 [XiaomiCapabilityResolver]
+     * 的 probe→capability 逻辑,但只覆盖 surface 相关(够 UI 放开配置用)。
+     */
+    private fun experimentalCapabilitiesFromProbes(): Set<XiaomiCapability> {
+        if (!experimentalModeEnabled) return emptySet()
+        val caps = mutableSetOf<XiaomiCapability>()
+        val aodSurfaceEligible = rawProbes["AOD_SURFACE_LIFECYCLE"] == true &&
+            rawProbes["AOD_HOST_CONTAINER"] == true
+        if (aodSurfaceEligible) {
+            caps += XiaomiCapability.AOD_SURFACE
+            if (rawProbes["AOD_POSITION_UPDATE"] == true) caps += XiaomiCapability.AOD_POSITION_UPDATES
+            if (rawProbes["AOD_LIFETIME_POLICY"] == true) caps += XiaomiCapability.AOD_LIFETIME_GUARD
+            if (rawProbes["AOD_WAKE_SEAM"] == true) caps += XiaomiCapability.AOD_WAKE_BROKER
+            if (rawProbes["FULL_AOD"] == true) caps += XiaomiCapability.FULL_AOD
+        }
+        val lockscreenHostEligible = rawProbes["LOCKSCREEN_SECTION_LIFECYCLE"] == true &&
+            rawProbes["LOCKSCREEN_CONTROLLER"] == true &&
+            rawProbes["LOCKSCREEN_HOST_CONTAINER"] == true
+        if (lockscreenHostEligible) {
+            caps += XiaomiCapability.LOCKSCREEN_HOST
+            if (rawProbes["LOCKSCREEN_CLOCK_GEOMETRY"] == true) caps += XiaomiCapability.LOCKSCREEN_GEOMETRY
+            if (rawProbes["LINKAGE_DIRECTION"] == true) caps += XiaomiCapability.LINKAGE_DIRECTION
+            if (rawProbes["LOCKSCREEN_CLOCK_GEOMETRY"] == true &&
+                rawProbes["LINKAGE_DIRECTION"] == true &&
+                rawProbes["LINKAGE_GEOMETRY"] == true) caps += XiaomiCapability.LINKAGE_GEOMETRY
+            if (rawProbes["LOCKSCREEN_EDITOR_GESTURE"] == true) caps += XiaomiCapability.LOCKSCREEN_EDITOR_GESTURE
+            if (rawProbes["VIDEO_DEPTH"] == true) caps += XiaomiCapability.VIDEO_DEPTH
+        }
+        if (rawProbes["RAISE_TO_AOD"] == true) caps += XiaomiCapability.RAISE_TO_AOD
+        return caps
     }
 }
 

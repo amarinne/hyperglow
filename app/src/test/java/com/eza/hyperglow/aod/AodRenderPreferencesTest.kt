@@ -91,5 +91,6 @@ class AodRenderPreferencesTest {
         assertFalse(config.lockscreenKeepAwake)
         assertFalse(config.raiseToAod)
         assertFalse(config.suppressLockscreenEditorLongPress)
+        assertFalse(config.experimentalMode)
     }
 }
