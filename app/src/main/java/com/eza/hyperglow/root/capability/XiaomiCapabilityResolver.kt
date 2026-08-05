@@ -93,46 +93,52 @@ internal data class XiaomiSymbolSnapshot(
 
 internal fun resolveXiaomiCapabilities(
     symbols: XiaomiSymbolSnapshot,
-    verifiedRuntimeProfile: Boolean = true
-): Set<XiaomiCapability> =
-    EnumSet.noneOf(XiaomiCapability::class.java).apply {
+    verifiedRuntimeProfile: Boolean = true,
+    experimentalMode: Boolean = false
+): Set<XiaomiCapability> {
+    // 实验模式:用户在 app 端开启后,即便 verifiedRuntimeProfile=false 也按符号探测结果
+    // 放开 capability。hook 端 surface hook 本就基于符号安装,此处 capability 检查只是
+    // 双保险;符号在即放行,让 AOD surface/位置更新/保活等链路在未验证版本上也能跑。
+    val effective = verifiedRuntimeProfile || experimentalMode
+    return EnumSet.noneOf(XiaomiCapability::class.java).apply {
         val aodSurfaceEligible = symbols.aodSurface && symbols.aodHostContainer
         val lockscreenHostEligible = symbols.lockscreenHost && symbols.lockscreenController &&
             symbols.lockscreenHostContainer
         val lockscreenGeometryEligible = lockscreenHostEligible && symbols.lockscreenGeometry
-        if (verifiedRuntimeProfile && aodSurfaceEligible) add(XiaomiCapability.AOD_SURFACE)
-        if (verifiedRuntimeProfile && aodSurfaceEligible && symbols.aodPositionUpdates) {
+        if (effective && aodSurfaceEligible) add(XiaomiCapability.AOD_SURFACE)
+        if (effective && aodSurfaceEligible && symbols.aodPositionUpdates) {
             add(XiaomiCapability.AOD_POSITION_UPDATES)
         }
-        if (verifiedRuntimeProfile && aodSurfaceEligible && symbols.aodLifetimeGuard) {
+        if (effective && aodSurfaceEligible && symbols.aodLifetimeGuard) {
             add(XiaomiCapability.AOD_LIFETIME_GUARD)
         }
-        if (verifiedRuntimeProfile && symbols.aodWakeBroker) {
+        if (effective && symbols.aodWakeBroker) {
             add(XiaomiCapability.AOD_WAKE_BROKER)
         }
-        if (verifiedRuntimeProfile && lockscreenHostEligible) add(XiaomiCapability.LOCKSCREEN_HOST)
-        if (verifiedRuntimeProfile && lockscreenGeometryEligible) {
+        if (effective && lockscreenHostEligible) add(XiaomiCapability.LOCKSCREEN_HOST)
+        if (effective && lockscreenGeometryEligible) {
             add(XiaomiCapability.LOCKSCREEN_GEOMETRY)
         }
-        if (verifiedRuntimeProfile && lockscreenHostEligible && symbols.linkageDirection) {
+        if (effective && lockscreenHostEligible && symbols.linkageDirection) {
             add(XiaomiCapability.LINKAGE_DIRECTION)
         }
-        if (verifiedRuntimeProfile && lockscreenGeometryEligible &&
+        if (effective && lockscreenGeometryEligible &&
             symbols.linkageDirection && symbols.linkageGeometry
         ) {
             add(XiaomiCapability.LINKAGE_GEOMETRY)
         }
-        if (verifiedRuntimeProfile && symbols.raiseToAod) add(XiaomiCapability.RAISE_TO_AOD)
-        if (verifiedRuntimeProfile && symbols.lockscreenEditorGesture) {
+        if (effective && symbols.raiseToAod) add(XiaomiCapability.RAISE_TO_AOD)
+        if (effective && symbols.lockscreenEditorGesture) {
             add(XiaomiCapability.LOCKSCREEN_EDITOR_GESTURE)
         }
-        if (verifiedRuntimeProfile && aodSurfaceEligible && symbols.fullAod) {
+        if (effective && aodSurfaceEligible && symbols.fullAod) {
             add(XiaomiCapability.FULL_AOD)
         }
-        if (verifiedRuntimeProfile && lockscreenHostEligible && symbols.videoDepth) {
+        if (effective && lockscreenHostEligible && symbols.videoDepth) {
             add(XiaomiCapability.VIDEO_DEPTH)
         }
     }
+}
 
 internal fun resolveXiaomiProfileState(
     symbols: XiaomiSymbolSnapshot,
@@ -206,6 +212,21 @@ internal object XiaomiCapabilityResolver {
     private var systemUiVersion = "unknown"
     private var aodVersion = "unknown"
     private var lastSummary = ""
+    /**
+     * App 端通过 WirePayload.experimentalMode 推送过来的实验模式开关。开启后,即便
+     * verifiedRuntimeProfile=false,[snapshot] 也会按符号探测结果放开 capability,
+     * 让 hook 端 surface/位置更新/保活等链路在 EXPERIMENTAL_ELIGIBLE profile 上能跑。
+     */
+    @Volatile
+    private var experimentalMode: Boolean = false
+
+    @Synchronized
+    fun setExperimentalMode(enabled: Boolean) {
+        if (experimentalMode == enabled) return
+        experimentalMode = enabled
+        HookLogger.i(TAG, "experimental_mode set to $enabled")
+        logIfChanged()
+    }
 
     @Synchronized
     fun observeDefaultLoader(classLoader: ClassLoader) {
@@ -365,7 +386,12 @@ internal object XiaomiCapabilityResolver {
             videoDepth = defaultSymbols.videoDepth
         )
         val verifiedRuntimeProfile = isVerifiedRuntimeProfile(systemUiVersion, aodVersion)
-        val capabilities = resolveXiaomiCapabilities(symbols, verifiedRuntimeProfile)
+        val experimental = experimentalMode
+        val capabilities = resolveXiaomiCapabilities(
+            symbols = symbols,
+            verifiedRuntimeProfile = verifiedRuntimeProfile,
+            experimentalMode = experimental
+        )
         return XiaomiCapabilityReport(
             protocolVersion = 2,
             reportedAtUtcMillis = System.currentTimeMillis(),
@@ -377,9 +403,10 @@ internal object XiaomiCapabilityResolver {
             profileState = resolveXiaomiProfileState(
                 symbols = symbols,
                 verifiedRuntimeProfile = verifiedRuntimeProfile,
-                capabilities = capabilities
+                capabilities = capabilities,
+                experimentalModeActive = experimental && !verifiedRuntimeProfile
             ),
-            experimentalModeActive = false,
+            experimentalModeActive = experimental && !verifiedRuntimeProfile,
             rawProbes = symbols.rawProbes()
         )
     }

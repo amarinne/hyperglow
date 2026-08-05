@@ -1843,7 +1843,8 @@ private fun updateExperimentalMode(
 private fun publishRuntimeConfiguration(context: android.content.Context) {
     AodStateBridge.publishConfiguration(
         RuntimeCustomization.loadCompiled(context),
-        currentProcessUserId()
+        currentProcessUserId(),
+        experimentalMode = AodRenderPreferences.read(context).experimentalMode
     )
 }
 

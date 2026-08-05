@@ -144,9 +144,13 @@ object AodStateBridge {
     }
 
     @Synchronized
-    fun publishConfiguration(configuration: CompiledCustomization, userId: Int) {
+    fun publishConfiguration(
+        configuration: CompiledCustomization,
+        userId: Int,
+        experimentalMode: Boolean = false
+    ) {
         if (configuration.hash == lastConfigurationHash) return
-        val bundle = CompiledCustomizationBundleCodec.toBundle(configuration, userId)
+        val bundle = CompiledCustomizationBundleCodec.toBundle(configuration, userId, experimentalMode)
         lastConfigurationHash = configuration.hash
         latestConfiguration = bundle
         val count = callbacks.beginBroadcast()

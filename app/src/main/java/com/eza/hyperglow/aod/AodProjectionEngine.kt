@@ -393,7 +393,8 @@ object AodProjectionEngine {
         lastCustomizationPublishAt = now
         AodStateBridge.publishConfiguration(
             RuntimeCustomization.loadCompiled(context),
-            currentProcessUserId()
+            currentProcessUserId(),
+            experimentalMode = AodRenderPreferences.read(context).experimentalMode
         )
     }
 

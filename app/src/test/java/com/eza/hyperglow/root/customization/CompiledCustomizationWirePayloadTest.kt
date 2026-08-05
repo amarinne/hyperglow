@@ -96,4 +96,20 @@ class CompiledCustomizationWirePayloadTest {
             )
         )
     }
+
+    @Test
+    fun experimentalModeFlagRoundTripsThroughWirePayload() {
+        val configuration = SceneCompiler.compile(SceneCompiler.safeDefaultDocument())
+        val payload = CompiledCustomizationBundleCodec.toWirePayload(
+            configuration,
+            userId = 0,
+            experimentalMode = true
+        )
+        assertTrue(payload.experimentalMode)
+        // flag 不影响 payload 合法性
+        assertTrue(CompiledCustomizationBundleCodec.isValidWirePayload(payload))
+        // 默认值为 false(老 app 端不带此字段时回退)
+        val defaultPayload = CompiledCustomizationBundleCodec.toWirePayload(configuration)
+        assertFalse(defaultPayload.experimentalMode)
+    }
 }

@@ -11,6 +11,7 @@ import com.eza.hyperglow.aod.AodStateWireMessage
 import com.eza.hyperglow.customization.CompiledCustomization
 import com.eza.hyperglow.root.aod.AodLyricClient
 import com.eza.hyperglow.root.HookLogger
+import com.eza.hyperglow.root.capability.XiaomiCapabilityResolver
 import com.eza.hyperglow.root.lockscreen.RaiseToAodController
 import com.eza.hyperglow.root.lockscreen.LockscreenEditorGestureController
 import com.eza.hyperglow.root.customization.CompiledCustomizationBundleCodec
@@ -243,6 +244,10 @@ internal class SystemUiLyricProjection(
     }
 
     private fun handleConfiguration(configuration: WirePayload) {
+        // 实验模式开关由 app 端随 customization payload 推送;hook 端据此让
+        // XiaomiCapabilityResolver 在 EXPERIMENTAL_ELIGIBLE profile 上按符号探测
+        // 放开 capability,否则 surface/位置更新/保活链路全被 hasCapability 卡死。
+        XiaomiCapabilityResolver.setExperimentalMode(configuration.experimentalMode)
         val parsed = CompiledCustomizationBundleCodec.fromWirePayload(
             configuration,
             expectedUserId
@@ -265,6 +270,7 @@ internal class SystemUiLyricProjection(
         setDiagnosticLogging(false)
         setRaiseToAod(false)
         setSuppressLockscreenEditorLongPress(false)
+        XiaomiCapabilityResolver.setExperimentalMode(false)
         expiryScheduler.cancel()
         latestSnapshot = null
         latestVisibleSnapshot = null

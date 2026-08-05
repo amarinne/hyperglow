@@ -181,4 +181,59 @@ class XiaomiCapabilityResolverTest {
             )
         )
     }
+
+    @Test
+    fun experimentalModeUnlocksCapabilitiesFromProbesOnUnverifiedProfile() {
+        // 与 unknownPackageProfileRejectsMutatingAodCapabilities 同样的符号探测结果,
+        // 但 experimentalMode=true 时应放开 surface 相关 capability(镜像 hook 端逻辑)。
+        val capabilities = resolveXiaomiCapabilities(
+            XiaomiSymbolSnapshot(
+                aodSurface = true,
+                aodHostContainer = true,
+                aodPositionUpdates = true,
+                aodPositionTarget = true,
+                aodLifetimeGuard = true,
+                aodWakeBroker = true,
+                lockscreenHost = true,
+                lockscreenController = true,
+                lockscreenHostContainer = true,
+                lockscreenGeometry = true,
+                linkageDirection = true,
+                raiseToAod = true,
+                lockscreenEditorGesture = true
+            ),
+            verifiedRuntimeProfile = false,
+            experimentalMode = true
+        )
+
+        assertTrue(XiaomiCapability.AOD_SURFACE in capabilities)
+        assertTrue(XiaomiCapability.AOD_POSITION_UPDATES in capabilities)
+        assertTrue(XiaomiCapability.AOD_LIFETIME_GUARD in capabilities)
+        assertTrue(XiaomiCapability.AOD_WAKE_BROKER in capabilities)
+        assertTrue(XiaomiCapability.LOCKSCREEN_HOST in capabilities)
+        assertTrue(XiaomiCapability.RAISE_TO_AOD in capabilities)
+        assertTrue(XiaomiCapability.LOCKSCREEN_EDITOR_GESTURE in capabilities)
+    }
+
+    @Test
+    fun experimentalModeFailClosedWhenSurfaceSeamMissing() {
+        // surface seam 缺失时,AOD_SURFACE 及其依赖项不应放开;
+        // 但 AOD_WAKE_BROKER 只依赖 aodWakeBroker 符号,实验模式下应放开。
+        val capabilities = resolveXiaomiCapabilities(
+            XiaomiSymbolSnapshot(
+                aodSurface = false,
+                aodHostContainer = true,
+                aodPositionUpdates = true,
+                aodLifetimeGuard = true,
+                aodWakeBroker = true
+            ),
+            verifiedRuntimeProfile = false,
+            experimentalMode = true
+        )
+
+        assertFalse(XiaomiCapability.AOD_SURFACE in capabilities)
+        assertFalse(XiaomiCapability.AOD_POSITION_UPDATES in capabilities)
+        assertFalse(XiaomiCapability.AOD_LIFETIME_GUARD in capabilities)
+        assertTrue(XiaomiCapability.AOD_WAKE_BROKER in capabilities)
+    }
 }

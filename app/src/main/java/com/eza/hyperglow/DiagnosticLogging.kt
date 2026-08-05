@@ -50,7 +50,8 @@ internal fun setDiagnosticLogging(context: Context, enabled: Boolean): Boolean {
     DiagnosticLoggingRuntime.setEnabled(effective)
     AodStateBridge.publishConfiguration(
         RuntimeCustomization.loadCompiled(context),
-        currentProcessUserId()
+        currentProcessUserId(),
+        experimentalMode = AodRenderPreferences.read(context).experimentalMode
     )
     return true
 }
