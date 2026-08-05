@@ -9,6 +9,7 @@ import com.eza.hyperglow.bridge.SpicyBridgeState
 import com.eza.hyperglow.bridge.SpicyBridgeStore
 import com.eza.hyperglow.customization.CustomizationRepository
 import com.eza.hyperglow.customization.SceneCompiler
+import com.eza.hyperglow.producer.LyricProducerState
 import com.eza.hyperglow.root.projection.currentProcessUserId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,6 +33,13 @@ internal data class ProjectionSessionIdentity(
 ) {
     companion object {
         fun from(state: SpicyBridgeState) = ProjectionSessionIdentity(
+            producerId = state.producerId,
+            generation = state.generation,
+            trackUri = state.trackUri
+        )
+
+        /** [LyricProducerState] 适配——[AodStateProjector] 与 Phase 3 引擎切换后使用。 */
+        fun from(state: LyricProducerState) = ProjectionSessionIdentity(
             producerId = state.producerId,
             generation = state.generation,
             trackUri = state.trackUri
@@ -494,12 +502,15 @@ object AodProjectionEngine {
         lastKeepAliveAt = 0L
     }
 
-    fun projectedPosition(state: SpicyBridgeState, now: Long): Long {
-        val projected = if (state.playing) {
-            state.positionMs + ((now - state.sampledAtElapsedMs).coerceAtLeast(0L) * state.speed).toLong()
-        } else state.positionMs
-        return projected.coerceIn(0L, state.durationMs)
-    }
+    fun projectedPosition(state: SpicyBridgeState, now: Long): Long =
+        projectedPosition(
+            positionMs = state.positionMs,
+            sampledAtElapsedMs = state.sampledAtElapsedMs,
+            speed = state.speed,
+            playing = state.playing,
+            durationMs = state.durationMs,
+            now = now
+        )
 
     fun keepAliveDue(lastAt: Long, now: Long): Boolean =
         lastAt <= 0L || now - lastAt >= KEEP_ALIVE_INTERVAL_MS
