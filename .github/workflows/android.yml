@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   packages: read
 
 jobs:
@@ -43,3 +43,18 @@ jobs:
           name: hyperglow-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+      - name: Publish debug APK to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          APK=$(find app/build/outputs/apk/debug -name '*.apk' | head -1)
+          TAG="debug-${GITHUB_SHA::7}"
+          gh release create "$TAG" "$APK" \
+            --target "$GITHUB_SHA" \
+            --title "HyperGlow debug ${GITHUB_SHA::7}" \
+            --notes "Automated debug build from commit ${GITHUB_SHA}.
+
+          This is an unverified debug build for testing the experimental-mode toggle and AOD version whitelist changes. Not for production use." \
+            --prerelease
