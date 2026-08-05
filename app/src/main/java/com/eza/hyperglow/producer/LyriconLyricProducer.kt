@@ -106,7 +106,7 @@ class LyriconLyricProducer(
 
     internal val playerListener = object : ActivePlayerListener {
         override fun onActiveProviderChanged(providerInfo: ProviderInfo?) {
-            AppLog.i("LyriconLyricProducer", "provider=${providerInfo?.packageName}")
+            AppLog.i("LyriconLyricProducer", "provider=${providerInfo?.providerPackageName}")
             if (providerInfo == null) {
                 // No active player: clear state, let arbiter fall back / go idle.
                 currentSong = null
