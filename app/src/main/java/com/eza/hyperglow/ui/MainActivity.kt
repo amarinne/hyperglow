@@ -6,6 +6,7 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.LocaleList
 import android.widget.Toast
@@ -43,6 +44,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -65,6 +67,10 @@ import com.eza.hyperglow.customization.CustomizationEditorState
 import com.eza.hyperglow.customization.CustomizationRepository
 import com.eza.hyperglow.customization.SceneCompiler
 import com.eza.hyperglow.customization.SurfaceProfile
+import com.eza.hyperglow.producer.LyricProducerState
+import com.eza.hyperglow.producer.LyricProducers
+import com.eza.hyperglow.producer.LyricSource
+import com.eza.hyperglow.producer.ProducerConnection
 import com.eza.hyperglow.root.aod.metadataWidgetHeightDp
 import com.eza.hyperglow.root.capability.XiaomiCapability
 import com.eza.hyperglow.root.projection.LyricRuby
@@ -187,6 +193,7 @@ private fun HomeScreen(
     var showPauseLingerDialog by remember { mutableStateOf(false) }
     var showKeepAwakeDurationDialog by remember { mutableStateOf(false) }
     var showLanguageDialog by remember { mutableStateOf(false) }
+    var showSourceDialog by remember { mutableStateOf(false) }
     val selectedTab = SettingsTab.entries.firstOrNull { it.name == selectedTabName }
         ?: SettingsTab.OVERVIEW
     val selectedTabIndex = SettingsTab.entries.indexOf(selectedTab)
@@ -294,6 +301,11 @@ private fun HomeScreen(
             ) {
                 when (SettingsTab.entries[page]) {
                 SettingsTab.OVERVIEW -> {
+                    item { SmallTitle(text = stringResource(R.string.section_live_status)) }
+                    item { LiveStatusSection() }
+                    item { SmallTitle(text = stringResource(R.string.section_lyric_source)) }
+                    item { LyricSourceSection(onOpenSourceDialog = { showSourceDialog = true }) }
+                    item { LyriconSetupHint() }
                     item { SmallTitle(text = stringResource(R.string.section_runtime_status)) }
                     item {
                         SettingsCard {
@@ -642,6 +654,10 @@ private fun HomeScreen(
         }
     }
 
+    if (showSourceDialog) {
+        LyricSourcePickerDialog(onDismiss = { showSourceDialog = false })
+    }
+
     if (showRestartDialog) {
         WindowDialog(
             title = stringResource(R.string.dialog_restart_systemui_title),
@@ -786,6 +802,7 @@ internal fun SettingsCard(content: @Composable () -> Unit) {
     Card(
         modifier = Modifier
             .padding(horizontal = 12.dp)
+            .padding(bottom = 8.dp)
             .fillMaxWidth()
     ) {
         Column { content() }
@@ -1816,3 +1833,195 @@ private fun updateDiagnosticLogging(
     context: android.content.Context,
     enabled: Boolean
 ): Boolean = setDiagnosticLogging(context, enabled)
+
+// --- Phase 3 UI: lyric source + live status + Lyricon setup hint ---
+
+/**
+ * Collects the arbiter's [active] state in a Compose-stable way. Returns null before the
+ * arbiter is started (e.g. in previews) — `collectAsState` is still invoked unconditionally
+ * so Compose's remember-slot invariants hold.
+ */
+@Composable
+private fun collectActiveState(): androidx.compose.runtime.State<LyricProducerState?> {
+    val arbiter = LyricProducers.arbiterOrNull()
+    val flow = remember(arbiter) {
+        arbiter?.active
+            ?: kotlinx.coroutines.flow.MutableStateFlow<LyricProducerState?>(null)
+    }
+    return flow.collectAsState()
+}
+
+@Composable
+private fun collectPreference(): androidx.compose.runtime.State<LyricSource> {
+    val arbiter = LyricProducers.arbiterOrNull()
+    val flow = remember(arbiter) {
+        arbiter?.preference
+            ?: kotlinx.coroutines.flow.MutableStateFlow(LyricSource.SPICY)
+    }
+    return flow.collectAsState()
+}
+
+@Composable
+private fun collectConnection(source: LyricSource): androidx.compose.runtime.State<ProducerConnection> {
+    val arbiter = LyricProducers.arbiterOrNull()
+    val flow = remember(arbiter, source) {
+        arbiter?.connection(source)
+            ?: kotlinx.coroutines.flow.MutableStateFlow(ProducerConnection.DISCONNECTED)
+    }
+    return flow.collectAsState()
+}
+
+/**
+ * Live status card: surfaces the track the active source is currently reporting, plus the
+ * projection state (showing / paused / idle), so the user can tell at a glance whether
+ * HyperGlow is actively projecting lyrics.
+ */
+@Composable
+private fun LiveStatusSection() {
+    val context = LocalContext.current
+    val activeState by collectActiveState()
+    val preference by collectPreference()
+    val active = activeState
+    SettingsCard {
+        BasicComponent(
+            title = stringResource(R.string.label_now_playing),
+            summary = active?.let { nowPlayingSummary(context, it, preference) }
+                ?: context.getString(R.string.summary_no_track)
+        )
+        BasicComponent(
+            title = stringResource(R.string.label_projection_state),
+            summary = projectionStateSummary(context, active)
+        )
+    }
+}
+
+/**
+ * Lyric source card: shows the selected source and its connection state, with a tap target
+ * to switch between Spicy EX and Lyricon.
+ */
+@Composable
+private fun LyricSourceSection(onOpenSourceDialog: () -> Unit) {
+    val context = LocalContext.current
+    val preference by collectPreference()
+    val lyriconConnection by collectConnection(LyricSource.LYRICON)
+    val activeConnection = if (preference == LyricSource.LYRICON) lyriconConnection
+        else ProducerConnection.CONNECTED
+    SettingsCard {
+        ArrowPreference(
+            title = stringResource(R.string.label_active_source),
+            summary = context.getString(
+                R.string.summary_active_source,
+                lyricSourceLabel(context, preference),
+                connectionLabel(context, activeConnection, preference)
+            ),
+            onClick = onOpenSourceDialog
+        )
+    }
+}
+
+/**
+ * Conditional Lyricon setup hint: only rendered when the user picked Lyricon but it isn't
+ * connected (missing/ inactive Xposed module, or API too low). Hidden once connected or
+ * when Spicy is the active source.
+ */
+@Composable
+private fun LyriconSetupHint() {
+    val context = LocalContext.current
+    val preference by collectPreference()
+    val lyriconConnection by collectConnection(LyricSource.LYRICON)
+    if (preference != LyricSource.LYRICON) return
+    if (lyriconConnection == ProducerConnection.CONNECTED ||
+        lyriconConnection == ProducerConnection.RECONNECTED
+    ) return
+    SettingsCard {
+        BasicComponent(
+            title = stringResource(R.string.title_lyricon_setup),
+            summary = stringResource(R.string.summary_lyricon_not_connected)
+        )
+        ArrowPreference(
+            title = stringResource(R.string.action_lyricon_guide),
+            onClick = { openExternalUrl(context, LYRICON_GUIDE_URL) }
+        )
+    }
+}
+
+@Composable
+private fun LyricSourcePickerDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val arbiter = LyricProducers.arbiterOrNull()
+    val current by collectPreference()
+    WindowDialog(
+        title = stringResource(R.string.section_lyric_source),
+        summary = stringResource(R.string.dialog_lyric_source_summary),
+        show = true,
+        onDismissRequest = onDismiss
+    ) {
+        Column {
+            LyricSource.entries.forEach { source ->
+                RadioButtonPreference(
+                    lyricSourceLabel(context, source),
+                    current == source,
+                    {
+                        arbiter?.setPreference(source, context)
+                        onDismiss()
+                    }
+                )
+            }
+        }
+    }
+}
+
+private fun lyricSourceLabel(context: android.content.Context, source: LyricSource): String =
+    context.getString(
+        when (source) {
+            LyricSource.SPICY -> R.string.lyric_source_spicy
+            LyricSource.LYRICON -> R.string.lyric_source_lyricon
+        }
+    )
+
+private fun connectionLabel(
+    context: android.content.Context,
+    connection: ProducerConnection,
+    source: LyricSource
+): String {
+    // Lyricon needs API >= 27 (O_MR1); below that the producer is a no-op.
+    if (source == LyricSource.LYRICON && Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1) {
+        return context.getString(R.string.source_status_unavailable_api)
+    }
+    return context.getString(
+        when (connection) {
+            ProducerConnection.CONNECTED -> R.string.source_status_connected
+            ProducerConnection.RECONNECTED -> R.string.source_status_reconnected
+            ProducerConnection.CONNECT_TIMEOUT -> R.string.source_status_connect_timeout
+            ProducerConnection.DISCONNECTED -> R.string.source_status_disconnected
+        }
+    )
+}
+
+private fun nowPlayingSummary(
+    context: android.content.Context,
+    state: LyricProducerState,
+    source: LyricSource
+): String {
+    val title = state.title.ifBlank { context.getString(R.string.summary_no_track) }
+    val artist = state.artist.trim()
+    return when {
+        artist.isBlank() -> "$title  ·  ${lyricSourceLabel(context, source)}"
+        else -> "$title · $artist  ·  ${lyricSourceLabel(context, source)}"
+    }
+}
+
+private fun projectionStateSummary(
+    context: android.content.Context,
+    active: LyricProducerState?
+): String {
+    if (active == null) return context.getString(R.string.projection_state_idle)
+    return when {
+        !active.playing -> context.getString(R.string.projection_state_paused)
+        active.line.isNotBlank() || active.hasTimedLyrics ->
+            context.getString(R.string.projection_state_active)
+        else -> context.getString(R.string.projection_state_idle)
+    }
+}
+
+private const val LYRICON_GUIDE_URL = "https://github.com/amarinne/hyperglow#lyricon-setup"

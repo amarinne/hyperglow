@@ -3,6 +3,7 @@ package com.eza.hyperglow.producer
 import android.content.Context
 import android.os.SystemClock
 import com.eza.hyperglow.AppLog
+import com.eza.hyperglow.aod.AodRenderPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -72,6 +73,13 @@ class LyricProducerArbiter(
             return
         }
         started = true
+        // Restore the persisted preference so the user's source choice survives restarts.
+        // Spec: preference is "persisted in user preferences"; this was previously doc-only.
+        val restored = AodRenderPreferences.readLyricSource(context.applicationContext)
+        if (restored != mutablePreference.value) {
+            AppLog.i("LyricProducerArbiter", "restored preference: $restored")
+            mutablePreference.value = restored
+        }
         spicy.start(context)
         lyricon.start(context)
         arbitrationJob = scope.launch { arbitrateLoop(context) }
@@ -98,19 +106,29 @@ class LyricProducerArbiter(
     /**
      * Change the preferred source. Per spec: stops emitting the previous producer's state
      * within one frame; begins emitting the newly selected producer's state only after it
-     * reports CONNECTED. The next arbitration tick applies the switch.
+     * reports CONNECTED. The next arbitration tick applies the switch. The choice is
+     * persisted via [AodRenderPreferences] so it survives process restarts.
      */
-    fun setPreference(source: LyricSource) {
+    fun setPreference(source: LyricSource, context: Context? = null) {
         if (mutablePreference.value == source) {
             AppLog.i("LyricProducerArbiter", "setPreference: already $source (no-op)")
             return
         }
         AppLog.i("LyricProducerArbiter", "preference ${mutablePreference.value} -> $source")
+        context?.applicationContext?.let { AodRenderPreferences.writeLyricSource(it, source) }
         // Clear immediately so a stale state from the old producer cannot leak during the
         // gap before the new producer reports CONNECTED (spec: stop within one frame).
         mutableActive.value = null
         mutablePreference.value = source
     }
+
+    /**
+     * The live connection state of [source]'s producer. Exposed so the UI can show whether
+     * the selected (or fallback) source is actually connected — e.g. whether the Lyricon
+     * Xposed module is active in SystemUI.
+     */
+    fun connection(source: LyricSource): StateFlow<ProducerConnection> =
+        producer(source).connection
 
     private suspend fun arbitrateLoop(context: Context) {
         // Collect both producers' connection and state, recomputing `active` on any change.

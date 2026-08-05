@@ -2,6 +2,7 @@ package com.eza.hyperglow.aod
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.eza.hyperglow.producer.LyricSource
 
 data class AodRenderConfig(
     val aodEnabled: Boolean = true,
@@ -139,6 +140,7 @@ object AodRenderPreferences {
     const val LOCKSCREEN_KEEP_AWAKE = "lockscreen_keep_awake"
     const val RAISE_TO_AOD = "raise_to_aod"
     const val SUPPRESS_LOCKSCREEN_EDITOR_LONG_PRESS = "suppress_lockscreen_editor_long_press"
+    const val LYRIC_SOURCE = "lyric_source"
 
     private var preferences: SharedPreferences? = null
     private var cachedConfig: AodRenderConfig? = null
@@ -179,5 +181,25 @@ object AodRenderPreferences {
             prefs.getBoolean(RAISE_TO_AOD, false),
             prefs.getBoolean(SUPPRESS_LOCKSCREEN_EDITOR_LONG_PRESS, false)
         ).also { cachedConfig = it }
+    }
+
+    /**
+     * The user's preferred lyrics source (Spicy EX vs Lyricon). Persisted so the choice
+     * survives process restarts; read once at arbiter startup, written on every switch.
+     * Defaults to [LyricSource.SPICY] (the historical behavior) when unset.
+     */
+    fun readLyricSource(context: Context): LyricSource {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        return when (prefs.getString(LYRIC_SOURCE, LyricSource.SPICY.name)) {
+            LyricSource.LYRICON.name -> LyricSource.LYRICON
+            else -> LyricSource.SPICY
+        }
+    }
+
+    fun writeLyricSource(context: Context, source: LyricSource) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(LYRIC_SOURCE, source.name)
+            .apply()
     }
 }

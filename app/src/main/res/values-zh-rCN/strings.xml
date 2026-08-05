@@ -30,6 +30,32 @@
     <string name="summary_report_unsupported">为此不受支持的配置发送兼容性报告。</string>
     <string name="action_restart_systemui">重启系统界面</string>
 
+    <string name="section_lyric_source">歌词源</string>
+    <string name="lyric_source_spicy">Spicy EX</string>
+    <string name="lyric_source_lyricon">Lyricon</string>
+    <string name="summary_lyric_source_spicy">HyperGlow 内置的进程内桥接，始终可用。</string>
+    <string name="summary_lyric_source_lyricon">通过系统界面中的 Lyricon Xposed 模块，以回调方式驱动歌词。</string>
+    <string name="label_active_source">当前歌词源</string>
+    <string name="summary_active_source">%1$s · %2$s</string>
+    <string name="source_status_connected">已连接</string>
+    <string name="source_status_reconnected">重新连接中</string>
+    <string name="source_status_disconnected">未连接</string>
+    <string name="source_status_connect_timeout">连接超时</string>
+    <string name="source_status_unavailable_api">不可用（需 Android 8.1 及以上）</string>
+    <string name="dialog_lyric_source_summary">选择为息屏和锁屏提供歌词的来源。另一个来源会作为自动回退使用。</string>
+
+    <string name="section_live_status">实时状态</string>
+    <string name="label_now_playing">正在播放</string>
+    <string name="summary_no_track">当前歌词源暂无曲目。</string>
+    <string name="label_projection_state">投影</string>
+    <string name="projection_state_active">正在显示歌词</string>
+    <string name="projection_state_idle">空闲</string>
+    <string name="projection_state_paused">已暂停</string>
+
+    <string name="title_lyricon_setup">完成 Lyricon 配置</string>
+    <string name="summary_lyricon_not_connected">已选择 Lyricon 但未连接。请确认 Lyricon Xposed 模块已安装并在系统界面中激活，然后重启系统界面。</string>
+    <string name="action_lyricon_guide">Lyricon 配置指南</string>
+
     <string name="section_spotify_integration">Spotify 集成</string>
     <string name="action_download_spicy_ex">下载 Spicy EX</string>
     <string name="action_open_spotify">打开 Spotify</string>
