@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 
 /**
@@ -39,7 +40,19 @@ class SpicyLyricProducer : LyricProducer {
     override val connection: StateFlow<ProducerConnection> = mutableConnection.asStateFlow()
 
     override val state: StateFlow<LyricProducerState?> =
-        SpicyBridgeStore.state.map { spicy -> spicy?.let(::toProducerState) }.stateIn(
+        SpicyBridgeStore.state.onEach { spicy ->
+            if (spicy == null) {
+                AppLog.i("SpicyLyricProducer", "ingest: spicy state cleared")
+            } else {
+                AppLog.i(
+                    "SpicyLyricProducer",
+                    "ingest: producer=${spicy.producerId} gen=${spicy.generation} " +
+                        "seq=${spicy.sequence} status=${spicy.status} " +
+                        "track=${spicy.trackUri} playing=${spicy.playing} " +
+                        "pos=${spicy.positionMs}/${spicy.durationMs}ms"
+                )
+            }
+        }.map { spicy -> spicy?.let(::toProducerState) }.stateIn(
             scope = scope,
             started = SharingStarted.Eagerly,
             initialValue = SpicyBridgeStore.state.value?.let(::toProducerState)

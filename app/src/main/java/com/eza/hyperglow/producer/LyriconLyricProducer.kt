@@ -94,12 +94,18 @@ class LyriconLyricProducer : LyricProducer {
         }
 
         override fun onSongChanged(song: Song?) {
-            AppLog.i("LyriconLyricProducer", "song=${song?.name}")
-            currentSong = song
             if (song == null) {
+                AppLog.i("LyriconLyricProducer", "onSongChanged: null (cleared)")
+                currentSong = null
                 mutableState.value = null
                 return
             }
+            AppLog.i(
+                "LyriconLyricProducer",
+                "onSongChanged: id=${song.id} name=${song.name} artist=${song.artist} " +
+                    "duration=${song.duration}ms lines=${song.lyrics?.size ?: 0}"
+            )
+            currentSong = song
             // TODO(phase3): emit an initial LyricProducerState from `song` using the last known
             // position; the position-poll loop below keeps it updated. For now we only stash the
             // song so the poll loop (once implemented) can compute the active line.
@@ -107,10 +113,11 @@ class LyriconLyricProducer : LyricProducer {
 
         override fun onReceiveText(text: String?) {
             // Plain-text lyrics (no timestamps). Out of scope for karaoke AOD; ignore.
+            AppLog.i("LyriconLyricProducer", "onReceiveText: len=${text?.length} (ignored)")
         }
 
         override fun onPlaybackStateChanged(isPlaying: Boolean) {
-            AppLog.i("LyriconLyricProducer", "playing=$isPlaying")
+            AppLog.i("LyriconLyricProducer", "onPlaybackStateChanged: playing=$isPlaying")
             isPlayingState = isPlaying
             // TODO(phase3): re-emit state with updated `playing`; position projection in the
             // arbiter/engine already handles paused vs playing via `speed`.
@@ -119,11 +126,13 @@ class LyriconLyricProducer : LyricProducer {
         override fun onPositionChanged(position: Long) {
             // Position is also delivered via SharedMemory polling in LyriconSubscriberImpl; this
             // callback is the low-frequency signal. The high-frequency poll is started in start().
+            AppLog.i("LyriconLyricProducer", "onPositionChanged: pos=${position}ms")
             currentPositionMs = position
             // TODO(phase3): recompute active RichLyricLine for `position` and emit state.
         }
 
         override fun onSeekTo(position: Long) {
+            AppLog.i("LyriconLyricProducer", "onSeekTo: pos=${position}ms")
             currentPositionMs = position
             // TODO(phase3): immediately re-emit (seek invalidates projected position).
         }
@@ -144,29 +153,39 @@ class LyriconLyricProducer : LyricProducer {
     @Volatile private var isPlayingState: Boolean = false
 
     override fun start(context: Context) {
-        if (started) return
+        if (started) {
+            AppLog.i("LyriconLyricProducer", "start: already started (no-op)")
+            return
+        }
         started = true
         contextRef = context.applicationContext
+        AppLog.i("LyriconLyricProducer", "start: api=${Build.VERSION.SDK_INT}")
 
         // API < 27: LyriconFactory returns EmptyLyriconSubscriber (no-op). Per spec, this
         // producer MUST be a no-op below API 27, so we skip registration entirely.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1) {
-            AppLog.i("LyriconLyricProducer", "API < 27, producer is no-op")
+            AppLog.i("LyriconLyricProducer", "start: API < 27, producer is no-op")
             return
         }
 
+        AppLog.i("LyriconLyricProducer", "start: creating subscriber")
         val sub = LyriconFactory.createSubscriber(context.applicationContext)
         subscriber = sub
         sub.addConnectionListener(connectionListener)
-        sub.subscribeActivePlayer(playerListener)
+        val subscribed = sub.subscribeActivePlayer(playerListener)
+        AppLog.i("LyriconLyricProducer", "start: subscribeActivePlayer=$subscribed")
         sub.register()
         startPositionPoll()
-        AppLog.i("LyriconLyricProducer", "started, registered with central service")
+        AppLog.i("LyriconLyricProducer", "start: registered with central service, polling started")
     }
 
     override fun stop() {
-        if (!started) return
+        if (!started) {
+            AppLog.i("LyriconLyricProducer", "stop: not started (no-op)")
+            return
+        }
         started = false
+        AppLog.i("LyriconLyricProducer", "stop: cancelling poll + unregistering")
         positionPollJob?.cancel(); positionPollJob = null
         subscriber?.let { sub ->
             runCatching {
@@ -174,13 +193,13 @@ class LyriconLyricProducer : LyricProducer {
                 sub.removeConnectionListener(connectionListener)
                 sub.unregister()
                 sub.destroy()
-            }.onFailure { AppLog.w("LyriconLyricProducer", "stop error", it) }
+            }.onFailure { AppLog.w("LyriconLyricProducer", "stop: cleanup error", it) }
         }
         subscriber = null
         mutableConnection.value = ProducerConnection.DISCONNECTED
         mutableState.value = null
         scope.cancel()
-        AppLog.i("LyriconLyricProducer", "stopped")
+        AppLog.i("LyriconLyricProducer", "stop: done")
     }
 
     /**

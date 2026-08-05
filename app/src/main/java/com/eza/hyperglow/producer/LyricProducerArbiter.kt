@@ -113,6 +113,10 @@ class LyricProducerArbiter(
             // Only write on actual change to avoid redundant StateFlow emissions.
             val sig = next?.let { "${it.producerId}:${it.generation}:${it.sequence}" }
             if (sig != lastActiveSignature) {
+                AppLog.i(
+                    "LyricProducerArbiter",
+                    "active changed: ${lastActiveSignature ?: "null"} -> ${sig ?: "null"}"
+                )
                 mutableActive.value = next
                 lastActiveSignature = sig
             }
@@ -132,30 +136,76 @@ class LyricProducerArbiter(
         val preferred = producer(pref)
         val preferredConn = preferred.connection.value
         val preferredState = preferred.state.value
+        val now = clock()
         return when {
             preferredConn == ProducerConnection.CONNECTED ||
                 preferredConn == ProducerConnection.RECONNECTED -> {
                 if (preferredState != null && !isStale(preferredState)) {
+                    AppLog.i(
+                        "LyricProducerArbiter",
+                        "select: pref=$pref conn=$preferredConn producer=${preferredState.producerId} " +
+                            "gen=${preferredState.generation} seq=${preferredState.sequence} " +
+                            "age=${now - preferredState.receivedAtElapsedMs}ms"
+                    )
                     preferredState
                 } else {
                     // Preferred connected but no/stale state: try fallback before null.
+                    val reason = when {
+                        preferredState == null -> "nullState"
+                        isStale(preferredState) -> "stale(age=${now - preferredState.receivedAtElapsedMs}ms)"
+                        else -> "unknown"
+                    }
+                    AppLog.i(
+                        "LyricProducerArbiter",
+                        "select: pref=$pref conn=$preferredConn but $reason -> fallback"
+                    )
                     fallbackState(pref)
                 }
             }
             else -> {
                 // Preferred disconnected/timeout: fall back to the other producer.
+                AppLog.i(
+                    "LyricProducerArbiter",
+                    "select: pref=$pref conn=$preferredConn (not connected) -> fallback"
+                )
                 fallbackState(pref)
             }
         }
     }
 
     private fun fallbackState(excluded: LyricSource): LyricProducerState? {
-        val other = producer(other(excluded))
+        val otherSource = other(excluded)
+        val other = producer(otherSource)
         val otherConn = other.connection.value
         if (otherConn != ProducerConnection.CONNECTED &&
-            otherConn != ProducerConnection.RECONNECTED) return null
-        val otherState = other.state.value ?: return null
-        return if (isStale(otherState)) null else otherState
+            otherConn != ProducerConnection.RECONNECTED) {
+            AppLog.i(
+                "LyricProducerArbiter",
+                "fallback: $otherSource conn=$otherConn (not connected) -> null"
+            )
+            return null
+        }
+        val otherState = other.state.value
+        if (otherState == null) {
+            AppLog.i("LyricProducerArbiter", "fallback: $otherSource connected but nullState -> null")
+            return null
+        }
+        val now = clock()
+        return if (isStale(otherState)) {
+            AppLog.i(
+                "LyricProducerArbiter",
+                "fallback: $otherSource stale(age=${now - otherState.receivedAtElapsedMs}ms) -> null"
+            )
+            null
+        } else {
+            AppLog.i(
+                "LyricProducerArbiter",
+                "fallback: $otherSource producer=${otherState.producerId} " +
+                    "gen=${otherState.generation} seq=${otherState.sequence} " +
+                    "age=${now - otherState.receivedAtElapsedMs}ms"
+            )
+            otherState
+        }
     }
 
     private fun staleSweepLoop() = scope.launch {
