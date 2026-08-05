@@ -31,6 +31,21 @@
       "source": "lyricon-integration/lyric-producer-abstraction.adr.md",
       "target": "lyricon-integration/lyricon-lyrics-source-prd.prd.md",
       "type": "related"
+    },
+    {
+      "source": "lyricon-integration/spicy-to-aod-data-flow.doc.md",
+      "target": "lyricon-integration/lyric-producer-abstraction.adr.md",
+      "type": "related"
+    },
+    {
+      "source": "lyricon-integration/spicy-to-aod-data-flow.doc.md",
+      "target": "lyricon-integration/lyric-producer-contract.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "lyricon-integration/spicy-to-aod-data-flow.doc.md",
+      "target": "lyricon-integration/lyricon-lyrics-source-prd.prd.md",
+      "type": "related"
     }
   ]
 }
