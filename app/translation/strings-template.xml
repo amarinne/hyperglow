@@ -34,6 +34,33 @@
     <string name="summary_report_supported">Capture filtered diagnostics or send compatibility metadata.</string>
     <string name="summary_report_unsupported">Send a compatibility report for this unsupported profile.</string>
     <string name="action_restart_systemui">Restart System UI</string>
+
+    <string name="section_lyric_source">Lyrics source</string>
+    <string name="lyric_source_spicy">Spicy EX</string>
+    <string name="lyric_source_lyricon">Lyricon</string>
+    <string name="summary_lyric_source_spicy">In-process bridge bundled with HyperGlow. Always available.</string>
+    <string name="summary_lyric_source_lyricon">Uses the Lyricon Xposed module in SystemUI for callback-driven lyrics.</string>
+    <string name="label_active_source">Active source</string>
+    <string name="summary_active_source">%1$s · %2$s</string>
+    <string name="source_status_connected">Connected</string>
+    <string name="source_status_reconnected">Reconnecting</string>
+    <string name="source_status_disconnected">Disconnected</string>
+    <string name="source_status_connect_timeout">Connection timed out</string>
+    <string name="source_status_unavailable_api">Unavailable (requires Android 8.1+)</string>
+    <string name="dialog_lyric_source_summary">Pick which provider feeds lyrics to AOD and the lock screen. The other source is used as an automatic fallback.</string>
+
+    <string name="section_live_status">Live status</string>
+    <string name="label_now_playing">Now playing</string>
+    <string name="summary_no_track">No track from the active source yet.</string>
+    <string name="label_projection_state">Projection</string>
+    <string name="projection_state_active">Showing lyrics</string>
+    <string name="projection_state_idle">Idle</string>
+    <string name="projection_state_paused">Paused</string>
+
+    <string name="title_lyricon_setup">Finish Lyricon setup</string>
+    <string name="summary_lyricon_not_connected">Lyricon is selected but not connected. Make sure the Lyricon Xposed module is installed and active in SystemUI, then restart System UI.</string>
+    <string name="action_lyricon_guide">Lyricon setup guide</string>
+
     <string name="section_spotify_integration">Spotify integration</string>
     <string name="action_download_spicy_ex">Download Spicy EX</string>
     <string name="action_open_spotify">Open Spotify</string>
