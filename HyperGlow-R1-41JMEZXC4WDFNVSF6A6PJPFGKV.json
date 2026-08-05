@@ -1,0 +1,138 @@
+{
+    "envelopeVersion": 1,
+    "reportId": "R1-41JMEZXC4WDFNVSF6A6PJPFGKV",
+    "product": "hyperglow",
+    "productReportVersion": 2,
+    "createdAtUtc": "2026-08-05T10:25:48.156Z",
+    "category": "compatibility",
+    "description": "无法使用",
+    "commonMetadata": {
+        "appVersionName": "0.3.50",
+        "appVersionCode": 62,
+        "buildType": "debug",
+        "manufacturer": "Xiaomi",
+        "brand": "Redmi",
+        "model": "24122RKC7C",
+        "device": "miro",
+        "product": "miro",
+        "androidRelease": "16",
+        "androidApi": 36,
+        "androidSecurityPatch": "2026-01-01",
+        "androidDisplay": "BP2A.250605.031.A3",
+        "androidIncremental": "OS3.0.6.0.WOMCNXM",
+        "buildFingerprint": "Redmi/miro/miro:16/BP2A.250605.031.A3/OS3.0.6.0.WOMCNXM:user/release-keys",
+        "xiaomiOsProperties": {
+            "ro.mi.os.version.name": "OS3.0",
+            "ro.mi.os.version.incremental": "OS3.0.6.0.WOMCNXM",
+            "ro.miui.ui.version.name": "V816",
+            "ro.miui.ui.version.code": "816",
+            "ro.product.mod_device": "miro",
+            "ro.miui.build.region": "cn"
+        },
+        "locales": [
+            "zh-CN"
+        ],
+        "packageVersions": {
+            "hyperglow": {
+                "present": true,
+                "versionName": "0.3.50",
+                "versionCode": 62
+            },
+            "systemui": {
+                "present": true,
+                "versionName": "20250121.0",
+                "versionCode": 202501210
+            },
+            "xiaomi_aod": {
+                "present": true,
+                "versionName": "DEV-2313.0.0.1-11211901",
+                "versionCode": 22313001
+            },
+            "spotify": {
+                "present": false,
+                "versionName": "missing",
+                "versionCode": 0
+            }
+        }
+    },
+    "productMetadata": {
+        "capabilityReportProtocol": 0,
+        "capabilityReportAgeMs": null,
+        "profileState": "no_systemui_report",
+        "rawSymbolProbes": {},
+        "resolvedCapabilities": [],
+        "configuredSurfaces": {
+            "aod": true,
+            "lockscreen": false
+        },
+        "systemUiCallbackPresent": false,
+        "spotifyProducerStatePresent": false,
+        "spotifyProducerSafeStatus": "absent",
+        "spotifyProducerPlaying": null,
+        "spotifyProducerStateAgeMs": null,
+        "diagnosticLoggingAvailable": true,
+        "diagnosticLoggingEnabled": false,
+        "rootAccessStatus": "granted",
+        "currentMediaEvidence": {
+            "present": false,
+            "trackUri": "",
+            "title": "",
+            "artist": "",
+            "album": "",
+            "source": "",
+            "provider": "",
+            "language": "",
+            "timingType": "",
+            "lineIndex": -1,
+            "originalLine": "",
+            "romanizedLine": "",
+            "translatedLine": "",
+            "stateAgeMs": null
+        },
+        "setupChecks": {
+            "setupState": "failed",
+            "setupFailures": [
+                "capability_report",
+                "systemui_hook",
+                "spotify_package",
+                "spotify_bridge"
+            ],
+            "rootAccessStatus": "granted",
+            "capabilityReportPresent": false,
+            "systemUiHookActive": false,
+            "profileSupported": false,
+            "spotifyProducerBridgePresent": false,
+            "requiredPackagesPresent": false
+        }
+    },
+    "capture": {
+        "outcome": "captured",
+        "startedAtUtc": "2026-08-05T10:24:53.288Z",
+        "finishedAtUtc": "2026-08-05T10:25:48.156Z",
+        "previousDiagnosticLoggingEnabled": false,
+        "rootAccessStatus": "granted",
+        "commandFailures": [],
+        "truncationFlags": {
+            "diagnosticEventsAndLogs": false,
+            "crashExcerpt": false,
+            "lsposedModuleLines": false
+        }
+    },
+    "rawDiagnostics": {
+        "diagnosticEventsAndLogs": "systemui_processes=matched\nSystemUI process snapshot:\nsystem        1000  8867       00:42 com.android.systemui\nu0_a495      10495 13189       33:15 com.eza.hyperglow\nXposed framework evidence:\nlspd_dir=present\nlspd_log_dir=present\nmodule_prop=/data/adb/modules/zygisksu/module.prop\nid=zygisksu\nname=Zygisk Next\nversion=1.4.3 (817-e815170-release)\nversionCode=817\nmodule_prop=/data/adb/modules/zygisk_lsposed/module.prop\nid=zygisk_lsposed\nname=LSPosed\nversion=v2.1.1 (7790)\nversionCode=7790\nroot_solution=ksu path=/data/adb/ksu\nmanager_packages=listed\npackage:io.github.lsposed.disableflagsecure\npackage:org.lsposed.manager\n\n--------- beginning of main\n08-05 18:25:40.516 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=9976 age=3ms\n08-05 18:25:40.516 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:9970 -> lyricon:4:9976\n08-05 18:25:40.617 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=9982 age=2ms\n08-05 18:25:40.617 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:9976 -> lyricon:4:9982\n08-05 18:25:40.718 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=9988 age=5ms\n08-05 18:25:40.718 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:9982 -> lyricon:4:9988\n08-05 18:25:40.818 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=9994 age=6ms\n08-05 18:25:40.818 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:9988 -> lyricon:4:9994\n08-05 18:25:40.919 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10000 age=3ms\n08-05 18:25:40.919 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:9994 -> lyricon:4:10000\n08-05 18:25:41.019 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10006 age=5ms\n08-05 18:25:41.020 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10000 -> lyricon:4:10006\n08-05 18:25:41.120 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10012 age=7ms\n08-05 18:25:41.120 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10006 -> lyricon:4:10012\n08-05 18:25:41.221 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10018 age=10ms\n08-05 18:25:41.221 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10012 -> lyricon:4:10018\n08-05 18:25:41.321 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10024 age=12ms\n08-05 18:25:41.321 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10018 -> lyricon:4:10024\n08-05 18:25:41.422 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10030 age=13ms\n08-05 18:25:41.422 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10024 -> lyricon:4:10030\n08-05 18:25:41.522 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10036 age=12ms\n08-05 18:25:41.522 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10030 -> lyricon:4:10036\n08-05 18:25:41.624 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10042 age=15ms\n08-05 18:25:41.624 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10036 -> lyricon:4:10042\n08-05 18:25:41.725 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10048 age=16ms\n08-05 18:25:41.725 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10042 -> lyricon:4:10048\n08-05 18:25:41.825 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10055 age=1ms\n08-05 18:25:41.825 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10048 -> lyricon:4:10055\n08-05 18:25:41.926 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10061 age=1ms\n08-05 18:25:41.926 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10055 -> lyricon:4:10061\n08-05 18:25:42.027 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10067 age=3ms\n08-05 18:25:42.027 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10061 -> lyricon:4:10067\n08-05 18:25:42.127 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10073 age=3ms\n08-05 18:25:42.127 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10067 -> lyricon:4:10073\n08-05 18:25:42.228 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10079 age=3ms\n08-05 18:25:42.228 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10073 -> lyricon:4:10079\n08-05 18:25:42.328 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10085 age=4ms\n08-05 18:25:42.328 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10079 -> lyricon:4:10085\n08-05 18:25:42.429 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10091 age=3ms\n08-05 18:25:42.429 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10085 -> lyricon:4:10091\n08-05 18:25:42.529 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10097 age=6ms\n08-05 18:25:42.529 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10091 -> lyricon:4:10097\n08-05 18:25:42.630 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10103 age=8ms\n08-05 18:25:42.630 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10097 -> lyricon:4:10103\n08-05 18:25:42.731 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10109 age=6ms\n08-05 18:25:42.731 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10103 -> lyricon:4:10109\n08-05 18:25:42.843 13189   425 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10114 age=17ms\n08-05 18:25:42.843 13189   425 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10109 -> lyricon:4:10114\n08-05 18:25:42.944 13189   425 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10121 age=1ms\n08-05 18:25:42.944 13189   425 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10114 -> lyricon:4:10121\n08-05 18:25:43.044 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10127 age=3ms\n08-05 18:25:43.045 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10121 -> lyricon:4:10127\n08-05 18:25:43.146 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10133 age=6ms\n08-05 18:25:43.147 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10127 -> lyricon:4:10133\n08-05 18:25:43.247 13189   425 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10139 age=0ms\n08-05 18:25:43.247 13189   425 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10133 -> lyricon:4:10139\n08-05 18:25:43.350 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10144 age=20ms\n08-05 18:25:43.350 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10139 -> lyricon:4:10144\n08-05 18:25:43.450 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10151 age=2ms\n08-05 18:25:43.451 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10144 -> lyricon:4:10151\n08-05 18:25:43.551 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10157 age=4ms\n08-05 18:25:43.551 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10151 -> lyricon:4:10157\n08-05 18:25:43.654 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10163 age=7ms\n08-05 18:25:43.654 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10157 -> lyricon:4:10163\n08-05 18:25:43.755 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10169 age=9ms\n08-05 18:25:43.755 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10163 -> lyricon:4:10169\n08-05 18:25:43.857 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10175 age=4ms\n08-05 18:25:43.857 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10169 -> lyricon:4:10175\n08-05 18:25:43.958 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10181 age=5ms\n08-05 18:25:43.958 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10175 -> lyricon:4:10181\n08-05 18:25:44.059 13189   425 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10187 age=7ms\n08-05 18:25:44.059 13189   425 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10181 -> lyricon:4:10187\n08-05 18:25:44.160 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10193 age=9ms\n08-05 18:25:44.160 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10187 -> lyricon:4:10193\n08-05 18:25:44.261 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10199 age=11ms\n08-05 18:25:44.261 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10193 -> lyricon:4:10199\n08-05 18:25:44.362 13189   425 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10205 age=13ms\n08-05 18:25:44.362 13189   425 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10199 -> lyricon:4:10205\n08-05 18:25:44.464 13189   425 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10211 age=14ms\n08-05 18:25:44.464 13189   425 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10205 -> lyricon:4:10211\n08-05 18:25:44.565 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10217 age=15ms\n08-05 18:25:44.565 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10211 -> lyricon:4:10217\n08-05 18:25:44.665 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10223 age=15ms\n08-05 18:25:44.665 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10217 -> lyricon:4:10223\n08-05 18:25:44.766 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10229 age=15ms\n08-05 18:25:44.766 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10223 -> lyricon:4:10229\n08-05 18:25:44.867 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10235 age=15ms\n08-05 18:25:44.867 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10229 -> lyricon:4:10235\n08-05 18:25:44.968 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10241 age=17ms\n08-05 18:25:44.968 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10235 -> lyricon:4:10241\n08-05 18:25:45.069 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10248 age=1ms\n08-05 18:25:45.069 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10241 -> lyricon:4:10248\n08-05 18:25:45.170 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10254 age=2ms\n08-05 18:25:45.170 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10248 -> lyricon:4:10254\n08-05 18:25:45.271 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10260 age=3ms\n08-05 18:25:45.271 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10254 -> lyricon:4:10260\n08-05 18:25:45.372 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10266 age=4ms\n08-05 18:25:45.372 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10260 -> lyricon:4:10266\n08-05 18:25:45.473 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10272 age=4ms\n08-05 18:25:45.473 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10266 -> lyricon:4:10272\n08-05 18:25:45.573 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10278 age=6ms\n08-05 18:25:45.574 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10272 -> lyricon:4:10278\n08-05 18:25:45.675 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10284 age=8ms\n08-05 18:25:45.675 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10278 -> lyricon:4:10284\n08-05 18:25:45.776 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10290 age=10ms\n08-05 18:25:45.776 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10284 -> lyricon:4:10290\n08-05 18:25:45.880 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10296 age=13ms\n08-05 18:25:45.880 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10290 -> lyricon:4:10296\n08-05 18:25:45.981 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10302 age=15ms\n08-05 18:25:45.982 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10296 -> lyricon:4:10302\n08-05 18:25:46.083 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10308 age=15ms\n08-05 18:25:46.083 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10302 -> lyricon:4:10308\n08-05 18:25:46.184 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10314 age=16ms\n08-05 18:25:46.184 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10308 -> lyricon:4:10314\n08-05 18:25:46.285 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10321 age=2ms\n08-05 18:25:46.286 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10314 -> lyricon:4:10321\n08-05 18:25:46.386 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10327 age=3ms\n08-05 18:25:46.387 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10321 -> lyricon:4:10327\n08-05 18:25:46.487 13189   425 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10333 age=3ms\n08-05 18:25:46.487 13189   425 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10327 -> lyricon:4:10333\n08-05 18:25:46.588 13189   425 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10339 age=4ms\n08-05 18:25:46.588 13189   425 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10333 -> lyricon:4:10339\n08-05 18:25:46.689 13189   425 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10345 age=6ms\n08-05 18:25:46.689 13189   425 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10339 -> lyricon:4:10345\n08-05 18:25:46.790 13189   425 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10351 age=6ms\n08-05 18:25:46.790 13189   425 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10345 -> lyricon:4:10351\n08-05 18:25:46.891 13189   424 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10357 age=8ms\n08-05 18:25:46.891 13189   424 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10351 -> lyricon:4:10357\n08-05 18:25:46.991 13189   423 I HyperGlow: [LyricProducerArbiter] select: pref=LYRICON conn=CONNECTED producer=lyricon gen=4 seq=10363 age=8ms\n08-05 18:25:46.991 13189   423 I HyperGlow: [LyricProducerArbiter] active changed: lyricon:4:10357 -> lyricon:4:10363\n",
+        "crashExcerpt": "",
+        "lsposedModuleLines": "lsposed_log=empty\n",
+        "runtimeSettings": {
+            "aodConfigured": "true",
+            "lockscreenConfigured": "false",
+            "keepAodActive": "true",
+            "keepAodActiveWithoutTimedLyrics": "false",
+            "keepAodActiveDurationMs": "-1",
+            "lockscreenKeepAwake": "false",
+            "raiseToAod": "false",
+            "positionFollowing": "false",
+            "diagnosticLogging": "false",
+            "diagnosticLoggingDuringCapture": "true"
+        }
+    }
+}
