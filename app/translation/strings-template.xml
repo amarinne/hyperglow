@@ -34,6 +34,9 @@
     <string name="summary_report_supported">Capture filtered diagnostics or send compatibility metadata.</string>
     <string name="summary_report_unsupported">Send a compatibility report for this unsupported profile.</string>
     <string name="action_restart_systemui">Restart System UI</string>
+    <string name="setting_experimental_mode">Experimental mode</string>
+    <string name="summary_experimental_mode">This System UI version is not verified, but the required symbols were detected. Enable to unlock AOD and lock screen configuration at your own risk — surface hooks may not behave correctly on unverified builds.</string>
+    <string name="summary_experimental_mode_on">Unverified profile unlocked via experimental mode. Surface behavior is not guaranteed.</string>
 
     <string name="section_lyric_source">Lyrics source</string>
     <string name="lyric_source_spicy">Spicy EX</string>
