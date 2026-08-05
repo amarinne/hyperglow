@@ -67,7 +67,10 @@ class LyricProducerArbiter(
      * (see HyperGlowApplication, wired in Phase 2 integration).
      */
     fun start(context: Context) {
-        if (started) return
+        if (started) {
+            AppLog.i("LyricProducerArbiter", "start: already started (no-op)")
+            return
+        }
         started = true
         spicy.start(context)
         lyricon.start(context)
@@ -78,7 +81,10 @@ class LyricProducerArbiter(
 
     /** Stop observing and clear active state. Idempotent. */
     fun stop() {
-        if (!started) return
+        if (!started) {
+            AppLog.i("LyricProducerArbiter", "stop: not started (no-op)")
+            return
+        }
         started = false
         arbitrationJob?.cancel(); arbitrationJob = null
         staleSweepJob?.cancel(); staleSweepJob = null
@@ -95,7 +101,10 @@ class LyricProducerArbiter(
      * reports CONNECTED. The next arbitration tick applies the switch.
      */
     fun setPreference(source: LyricSource) {
-        if (mutablePreference.value == source) return
+        if (mutablePreference.value == source) {
+            AppLog.i("LyricProducerArbiter", "setPreference: already $source (no-op)")
+            return
+        }
         AppLog.i("LyricProducerArbiter", "preference ${mutablePreference.value} -> $source")
         // Clear immediately so a stale state from the old producer cannot leak during the
         // gap before the new producer reports CONNECTED (spec: stop within one frame).

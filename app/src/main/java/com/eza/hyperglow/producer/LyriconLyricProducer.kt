@@ -140,10 +140,12 @@ class LyriconLyricProducer : LyricProducer {
         override fun onDisplayTranslationChanged(isDisplayTranslation: Boolean) {
             // HyperGlow controls translation display via its own CustomizationRepository; ignore
             // the lyricon-side toggle to avoid double-toggling.
+            AppLog.i("LyriconLyricProducer", "onDisplayTranslationChanged: $isDisplayTranslation (ignored, owned by HyperGlow)")
         }
 
         override fun onDisplayRomaChanged(isDisplayRoma: Boolean) {
             // Same as above: romanization display is owned by HyperGlow's render modes.
+            AppLog.i("LyriconLyricProducer", "onDisplayRomaChanged: $isDisplayRoma (ignored, owned by HyperGlow)")
         }
     }
 
