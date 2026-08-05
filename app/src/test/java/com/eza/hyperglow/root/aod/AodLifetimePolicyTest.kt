@@ -48,6 +48,55 @@ class AodLifetimePolicyTest {
     }
 
     @Test
+    fun racedHideRecoversOnceAndNeverFightsXiaomiOwnedDisplayPower() {
+        assertTrue(isAodDisplayOffState(1))
+        assertFalse(isAodDisplayOffState(2))
+        assertFalse(isAodDisplayOffState(3))
+        assertFalse(isAodDisplayOffState(4))
+
+        // The captured race: guard activates, presenting AOD vanishes 1.79 s later.
+        assertTrue(
+            shouldRecoverRacedAodHide(
+                surfaceAttached = true,
+                keepAliveRequested = true,
+                recoveryPending = true,
+                lifetimeActiveSinceElapsedMs = 1_000L,
+                nowElapsedMs = 2_790L
+            )
+        )
+        // One shot per activation: a second off edge in the same window does not re-wake.
+        assertFalse(
+            shouldRecoverRacedAodHide(
+                surfaceAttached = true,
+                keepAliveRequested = true,
+                recoveryPending = false,
+                lifetimeActiveSinceElapsedMs = 1_000L,
+                nowElapsedMs = 2_790L
+            )
+        )
+        // Past the hide animation, the off edge is Xiaomi's decision to keep.
+        assertFalse(
+            shouldRecoverRacedAodHide(
+                surfaceAttached = true,
+                keepAliveRequested = true,
+                recoveryPending = true,
+                lifetimeActiveSinceElapsedMs = 1_000L,
+                nowElapsedMs = 1_000L + HIDE_RACE_RECOVERY_WINDOW_MS + 1L
+            )
+        )
+        // Released keepalive, detached surface, and an unarmed guard never recover.
+        assertFalse(
+            shouldRecoverRacedAodHide(true, false, true, 1_000L, 2_000L)
+        )
+        assertFalse(
+            shouldRecoverRacedAodHide(false, true, true, 1_000L, 2_000L)
+        )
+        assertFalse(
+            shouldRecoverRacedAodHide(true, true, true, Long.MIN_VALUE, 2_000L)
+        )
+    }
+
+    @Test
     fun managedPositionFallbackStopsRetryingAfterBoundedAttempts() {
         assertTrue(shouldRetryManagedAodPosition(0, 5))
         assertTrue(shouldRetryManagedAodPosition(4, 5))

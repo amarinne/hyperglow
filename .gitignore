@@ -8,7 +8,7 @@
 local.properties
 **/build/
 artifacts/
-docs/
+docs/private/
 research/
 
 AGENTS.md

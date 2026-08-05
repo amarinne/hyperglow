@@ -301,6 +301,7 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
                 HookLogger.i(TAG, "AOD root display state=$state displayId=$displayId")
             }
             LinkageTransitionCoordinator.onAodDisplayState(state)
+            AodPowerCoordinator.onAodDisplayState(state)
             if (changed) requestGeometryUpdate()
         }
     }
@@ -1514,6 +1515,7 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
                 "state=$lastObservedDisplayState"
         )
         LinkageTransitionCoordinator.onAodDisplayState(lastObservedDisplayState)
+        AodPowerCoordinator.onAodDisplayState(lastObservedDisplayState)
     }
 
     private fun enqueueGeometryUpdate(
