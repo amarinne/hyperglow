@@ -32,7 +32,7 @@ The `LyricProducer` boundary: an abstraction over a lyrics source that emits a `
 3. WHEN the selected producer reports `DISCONNECTED` or its state exceeds `STALE_AFTER_MS = 3000ms` (matching `SpicyBridgeStore.STALE_AFTER_MS`), the arbiter MUST clear `active` to null and MAY fall back to the next connected producer.
 4. WHEN the user changes the source preference, the arbiter MUST stop emitting the previous producer's state within one frame and MUST begin emitting the newly selected producer's state only after it reports `CONNECTED`.
 5. A `LyricProducer` MUST normalize its ingress payload into `LyricProducerState` before emitting; the `spotify:track:` constraint MUST remain internal to `SpicyBridgeStateReducer` and MUST NOT be re-imposed at the boundary.
-6. The lyricon producer MUST compute the active `RichLyricLine` and per-word progress from `SharedMemory` position before emitting state, because lyricon delivers the full `Song`.
+6. The lyricon producer MUST compute the active `RichLyricLine` and per-word progress from playback position before emitting state, because lyricon delivers the full `Song`. Position is sourced from the SDK's `SharedMemory` poller and delivered to the producer via `ActivePlayerListener.onPositionChanged` (~60 Hz on `Dispatchers.Default`); the producer MUST NOT attempt to access `SharedMemory` directly (it is internal to the SDK). Active-line selection MUST use the SDK's `TimingNavigator<RichLyricLine>` over the `normalize()`d lyrics.
 7. Render modes for the lyricon producer MUST be sourced from `CustomizationRepository` / `AodRenderPreferences`, because lyricon `Song` carries no render-mode fields.
 8. Projection consumers MAY read `active` reactively but MUST NOT call producer methods directly.
 

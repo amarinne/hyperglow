@@ -55,7 +55,7 @@ This reference documents the current end-to-end data flow that carries lyrics fr
 
 ### Where the lyricon producer plugs in
 
-The `LyricProducer` boundary (per the contract spec) sits between Stage 2 and Stage 3: `AodProjectionEngine` will consume `LyricProducerArbiter.active` instead of `SpicyBridgeStore.state` directly. Stages 3–8 (projection, wire encode, IPC, SystemUI rendering) are producer-agnostic and need no change for the lyricon path. The lyricon producer is responsible for Stage-1-and-2-equivalent work: deserialize `Song`, compute the active `RichLyricLine` from `SharedMemory` position, and emit a `LyricProducerState` whose shape `AodProjectionEngine` can project the same way it projects `SpicyBridgeState` today.
+The `LyricProducer` boundary (per the contract spec) sits between Stage 2 and Stage 3: `AodProjectionEngine` will consume `LyricProducerArbiter.active` instead of `SpicyBridgeStore.state` directly. Stages 3–8 (projection, wire encode, IPC, SystemUI rendering) are producer-agnostic and need no change for the lyricon path. The lyricon producer is responsible for Stage-1-and-2-equivalent work: deserialize `Song`, compute the active `RichLyricLine` from playback position (delivered via `ActivePlayerListener.onPositionChanged` ~60 Hz — the SDK polls its internal `SharedMemory` itself; the producer does not access `SharedMemory` directly), and emit a `LyricProducerState` whose shape `AodProjectionEngine` can project the same way it projects `SpicyBridgeState` today.
 
 ## Examples
 

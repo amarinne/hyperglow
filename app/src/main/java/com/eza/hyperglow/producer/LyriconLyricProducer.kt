@@ -2,48 +2,58 @@ package com.eza.hyperglow.producer
 
 import android.content.Context
 import android.os.Build
+import android.os.SystemClock
 import com.eza.hyperglow.AppLog
+import com.eza.hyperglow.customization.CustomizationRepository
+import com.eza.hyperglow.customization.CompiledSurfaceProfile
+import com.eza.hyperglow.customization.SceneCompiler
+import io.github.proify.lyricon.lyric.model.RichLyricLine
+import io.github.proify.lyricon.lyric.model.Song
+import io.github.proify.lyricon.lyric.model.extensions.TimingNavigator
 import io.github.proify.lyricon.subscriber.ActivePlayerListener
 import io.github.proify.lyricon.subscriber.ConnectionListener
 import io.github.proify.lyricon.subscriber.LyriconFactory
 import io.github.proify.lyricon.subscriber.LyriconSubscriber
 import io.github.proify.lyricon.subscriber.ProviderInfo
-import io.github.proify.lyricon.lyric.model.RichLyricLine
-import io.github.proify.lyricon.lyric.model.Song
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 
 /**
  * [LyricProducer] backed by the lyricon subscriber SDK.
  *
- * Phase 2 scope: lifecycle, connection mapping, and the listener surface are wired against the
- * real SDK API. The heavy work — polling `SharedMemory` for position and computing the active
- * [RichLyricLine] + per-word progress — is intentionally left as TODO for Phase 3, because it
- * requires the lyricon Xposed module to be active in `com.android.systemui` to validate.
+ * Position delivery: the SDK polls its `SharedMemory` position buffer internally at ~60 Hz and
+ * delivers each distinct value via [ActivePlayerListener.onPositionChanged] on `Dispatchers.Default`.
+ * There is no public `SharedMemory`/`ByteBuffer` accessor, so this producer does NOT poll memory
+ * itself — it consumes `onPositionChanged` directly (per spec clause 6, the position IS sourced
+ * from SharedMemory, just delivered via the SDK's callback).
  *
- * Contract notes (see `.archcore/lyricon-integration/lyric-producer-contract.spec.md`):
+ * Active-line selection: uses the SDK's [TimingNavigator] (binary search + sequential cache)
+ * over the normalized song lyrics. [RichLyricLine] implements `ILyricTiming`, so
+ * `TimingNavigator<RichLyricLine>` finds the current line for a position in O(log n).
+ *
+ * Render modes: the lyricon `Song` carries no render-mode fields, so per spec clause 5 they are
+ * sourced from [CustomizationRepository.loadCompiled] (the AOD [CompiledSurfaceProfile]).
+ * Snapshot is cached and refreshed on song change — never read at 60 Hz.
+ *
+ * Contract (see `.archcore/lyricon-integration/lyric-producer-contract.spec.md`):
  * - Requires API >= 27 (O_MR1). Below that, `LyriconFactory.createSubscriber` returns
  *   `EmptyLyriconSubscriber`, so this producer is a no-op (spec: API<27 → no-op).
  * - Requires lyricon's Xposed module active in SystemUI; its absence MUST NOT crash HyperGlow.
  *   Until connected, [connection] stays DISCONNECTED and [state] stays null, so the arbiter
  *   falls back to the Spicy producer automatically.
- * - [connection] is driven 1:1 by [ConnectionListener] callbacks.
- * - Render modes are sourced from [AodRenderPreferences] / [CustomizationRepository] (the
- *   lyricon `Song` carries no render-mode fields).
+ * - The `spotify:track:` constraint is NOT imposed here (it stays in SpicyBridgeStateReducer);
+ *   the track identity is a synthetic `lyricon:<songId|songName>`.
  *
- * Why a skeleton now: the boundary (LyricProducer) and arbitration (LyricProducerArbiter) can
- * be validated with the Spicy path alone; the lyricon producer plugs in without touching
- * projection code once its ingress is implemented.
+ * Threading: all [ActivePlayerListener] callbacks arrive on Binder threads or `Dispatchers.Default`
+ * (never main). [MutableStateFlow] is thread-safe, so emitting from any callback is safe.
+ *
+ * @param clock injectable monotonic clock (millis); defaults to [SystemClock.elapsedRealtime].
+ *   Injected in unit tests so [emit] can run without Android's [SystemClock].
  */
-class LyriconLyricProducer : LyricProducer {
+class LyriconLyricProducer(
+    private val clock: () -> Long = SystemClock::elapsedRealtime
+) : LyricProducer {
 
     override val id: LyricSource = LyricSource.LYRICON
 
@@ -55,10 +65,20 @@ class LyriconLyricProducer : LyricProducer {
 
     private var subscriber: LyriconSubscriber? = null
     private var contextRef: Context? = null
-    private var positionPollJob: Job? = null
     private var started = false
 
-    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    // --- Ingress state, updated by playerListener; read by emit(). @Volatile for cross-thread. ---
+    @Volatile private var currentSong: Song? = null
+    @Volatile private var navigator: TimingNavigator<RichLyricLine>? = null
+    @Volatile private var currentPositionMs: Long = 0L
+    @Volatile private var isPlayingState: Boolean = false
+    @Volatile private var currentLineIndex: Int = -1
+    @Volatile private var cachedWords: List<LyricWord>? = null
+    @Volatile private var renderModesSnapshot: ProducerRenderModes = defaultRenderModes()
+
+    // Session/sequence for arbiter dedup (producerId:generation:sequence).
+    @Volatile private var generation: Int = 0
+    @Volatile private var sequence: Long = 0L
 
     internal val connectionListener = object : ConnectionListener {
         override fun onConnected(s: LyriconSubscriber) {
@@ -89,6 +109,10 @@ class LyriconLyricProducer : LyricProducer {
             AppLog.i("LyriconLyricProducer", "provider=${providerInfo?.packageName}")
             if (providerInfo == null) {
                 // No active player: clear state, let arbiter fall back / go idle.
+                currentSong = null
+                navigator = null
+                currentLineIndex = -1
+                cachedWords = null
                 mutableState.value = null
             }
         }
@@ -97,6 +121,9 @@ class LyriconLyricProducer : LyricProducer {
             if (song == null) {
                 AppLog.i("LyriconLyricProducer", "onSongChanged: null (cleared)")
                 currentSong = null
+                navigator = null
+                currentLineIndex = -1
+                cachedWords = null
                 mutableState.value = null
                 return
             }
@@ -105,10 +132,22 @@ class LyriconLyricProducer : LyricProducer {
                 "onSongChanged: id=${song.id} name=${song.name} artist=${song.artist} " +
                     "duration=${song.duration}ms lines=${song.lyrics?.size ?: 0}"
             )
-            currentSong = song
-            // TODO(phase3): emit an initial LyricProducerState from `song` using the last known
-            // position; the position-poll loop below keeps it updated. For now we only stash the
-            // song so the poll loop (once implemented) can compute the active line.
+            // normalize() deep-copies and sorts lyrics by begin (asc, required by TimingNavigator),
+            // dropping invalid lines. Safe to call on the SDK's instance (it doesn't mutate it).
+            val normalized = song.normalize()
+            currentSong = normalized
+            generation++
+            val lyrics = normalized.lyrics
+            navigator = if (!lyrics.isNullOrEmpty()) {
+                TimingNavigator(lyrics.toTypedArray())
+            } else {
+                null
+            }
+            currentLineIndex = -1
+            cachedWords = null
+            refreshRenderModes()
+            // Emit initial state at the last known position (will be refined by onPositionChanged).
+            emit()
         }
 
         override fun onReceiveText(text: String?) {
@@ -119,22 +158,25 @@ class LyriconLyricProducer : LyricProducer {
         override fun onPlaybackStateChanged(isPlaying: Boolean) {
             AppLog.i("LyriconLyricProducer", "onPlaybackStateChanged: playing=$isPlaying")
             isPlayingState = isPlaying
-            // TODO(phase3): re-emit state with updated `playing`; position projection in the
-            // arbiter/engine already handles paused vs playing via `speed`.
+            // Re-emit so the engine sees the new playing/speed without waiting for next position.
+            emit()
         }
 
         override fun onPositionChanged(position: Long) {
-            // Position is also delivered via SharedMemory polling in LyriconSubscriberImpl; this
-            // callback is the low-frequency signal. The high-frequency poll is started in start().
-            AppLog.i("LyriconLyricProducer", "onPositionChanged: pos=${position}ms")
+            // High-frequency (~60 Hz) callback on Dispatchers.Default. This IS the SharedMemory
+            // position, delivered by the SDK's internal poller. Compute the active line and emit.
             currentPositionMs = position
-            // TODO(phase3): recompute active RichLyricLine for `position` and emit state.
+            recomputeAndEmit()
         }
 
         override fun onSeekTo(position: Long) {
             AppLog.i("LyriconLyricProducer", "onSeekTo: pos=${position}ms")
             currentPositionMs = position
-            // TODO(phase3): immediately re-emit (seek invalidates projected position).
+            // Seek invalidates the navigator's sequential cache (playback jumped).
+            navigator?.resetCache()
+            currentLineIndex = -1
+            cachedWords = null
+            recomputeAndEmit()
         }
 
         override fun onDisplayTranslationChanged(isDisplayTranslation: Boolean) {
@@ -148,11 +190,6 @@ class LyriconLyricProducer : LyricProducer {
             AppLog.i("LyriconLyricProducer", "onDisplayRomaChanged: $isDisplayRoma (ignored, owned by HyperGlow)")
         }
     }
-
-    // --- Ingress state, updated by playerListener. Phase 3 reads these in the poll loop. ---
-    @Volatile private var currentSong: Song? = null
-    @Volatile private var currentPositionMs: Long = 0L
-    @Volatile private var isPlayingState: Boolean = false
 
     override fun start(context: Context) {
         if (started) {
@@ -176,9 +213,9 @@ class LyriconLyricProducer : LyricProducer {
         sub.addConnectionListener(connectionListener)
         val subscribed = sub.subscribeActivePlayer(playerListener)
         AppLog.i("LyriconLyricProducer", "start: subscribeActivePlayer=$subscribed")
+        refreshRenderModes()
         sub.register()
-        startPositionPoll()
-        AppLog.i("LyriconLyricProducer", "start: registered with central service, polling started")
+        AppLog.i("LyriconLyricProducer", "start: registered with central service")
     }
 
     override fun stop() {
@@ -187,8 +224,7 @@ class LyriconLyricProducer : LyricProducer {
             return
         }
         started = false
-        AppLog.i("LyriconLyricProducer", "stop: cancelling poll + unregistering")
-        positionPollJob?.cancel(); positionPollJob = null
+        AppLog.i("LyriconLyricProducer", "stop: unregistering")
         subscriber?.let { sub ->
             runCatching {
                 sub.unsubscribeActivePlayer(playerListener)
@@ -200,42 +236,119 @@ class LyriconLyricProducer : LyricProducer {
         subscriber = null
         mutableConnection.value = ProducerConnection.DISCONNECTED
         mutableState.value = null
-        scope.cancel()
         AppLog.i("LyriconLyricProducer", "stop: done")
     }
 
     /**
-     * Phase 3: poll the subscriber's SharedMemory for high-frequency position updates, compute
-     * the active [RichLyricLine] from `currentSong.lyrics` for `currentPositionMs`, and emit a
-     * [LyricProducerState] with per-word [LyricWord] timing. Render modes come from
-     * [AodRenderPreferences] / [CustomizationRepository].
+     * Find the active line for [currentPositionMs] via [TimingNavigator], rebuild the per-word
+     * cache only when the line changes, then emit a fresh [LyricProducerState].
      *
-     * Skeleton today: no-op loop that keeps the coroutine alive without emitting, so the
-     * producer stays DISCONNECTED/null-state and the arbiter cleanly falls back to Spicy.
+     * Called at ~60 Hz from [onPositionChanged]; the word-list allocation is amortized by
+     * caching across position-only updates within the same line.
      */
-    private fun startPositionPoll() {
-        positionPollJob = scope.launch {
-            while (isActive) {
-                // TODO(phase3):
-                //   1. Read position from SharedMemory (subscriber.positionBytes / mapped buffer)
-                //      — faster than onPositionChanged for smooth karaoke.
-                //   2. val song = currentSong ?: continue
-                //   3. val line = song.lyrics?.primaryRowAt(currentPositionMs) ?: continue
-                //   4. val words = line.words?.map { it.toLyricWord() }
-                //   5. val renderModes = AodRenderPreferences.read(contextRef) + CustomizationRepository.snapshot()
-                //   6. mutableState.value = buildState(song, line, words, renderModes)
-                kotlinx.coroutines.delay(POSITION_POLL_INTERVAL_MS)
+    private fun recomputeAndEmit() {
+        val nav = navigator ?: return emit() // no lyrics yet; emit metadata-only state
+        val song = currentSong ?: return
+        val pos = currentPositionMs
+        val idx = nav.findTargetIndex(pos)
+        if (idx < 0) {
+            // Before the first line: no current line yet.
+            if (currentLineIndex != -1) {
+                currentLineIndex = -1
+                cachedWords = null
             }
+            emit()
+            return
         }
+        if (idx != currentLineIndex) {
+            currentLineIndex = idx
+            val line = nav.source[idx]
+            cachedWords = line.toLyricWords()
+            AppLog.i(
+                "LyriconLyricProducer",
+                "line changed: idx=$idx begin=${line.begin} end=${line.end} text=${line.text?.take(24)}"
+            )
+        }
+        emit()
     }
 
-    @Suppress("unused") // referenced by Phase 3 TODO above
+    /**
+     * Build and emit a [LyricProducerState] from the current ingress fields. Cheap: reuses
+     * [cachedWords] (only rebuilt on line change) and [renderModesSnapshot] (only rebuilt on
+     * song change). Safe to call at 60 Hz.
+     */
+    private fun emit() {
+        val song = currentSong ?: run { mutableState.value = null; return }
+        val now = clock()
+        val line = currentLineIndex.let { idx ->
+            if (idx < 0) null else navigator?.source?.getOrNull(idx)
+        }
+        sequence++
+        mutableState.value = LyricProducerState(
+            producerId = PRODUCER_ID,
+            generation = generation,
+            sequence = sequence,
+            status = "ready",
+            trackUri = "lyricon:${song.id ?: song.name}",
+            title = song.name.orEmpty(),
+            artist = song.artist.orEmpty(),
+            album = "",
+            imageId = "",
+            line = line?.text.orEmpty(),
+            romanizedLine = line?.roma.orEmpty(),
+            translatedLine = line?.translation.orEmpty(),
+            lineIndex = currentLineIndex,
+            positionMs = currentPositionMs,
+            durationMs = song.duration,
+            sampledAtElapsedMs = now,
+            speed = if (isPlayingState) 1f else 0f,
+            playing = isPlayingState,
+            receivedAtElapsedMs = now,
+            words = cachedWords,
+            renderModes = renderModesSnapshot
+        )
+    }
+
+    /**
+     * Refresh [renderModesSnapshot] from the AOD [CompiledSurfaceProfile]. Called on start and
+     * song change — NOT at 60 Hz (compile is non-trivial). Per spec clause 5, the lyricon `Song`
+     * carries no render modes, so they are sourced from HyperGlow's own customization.
+     */
+    @Synchronized
+    private fun refreshRenderModes() {
+        val ctx = contextRef ?: run {
+            renderModesSnapshot = defaultRenderModes()
+            return
+        }
+        renderModesSnapshot = runCatching {
+            val compiled = CustomizationRepository.loadCompiled(ctx)
+            val profile = compiled.profiles[SceneCompiler.SURFACE_AOD]
+            profile?.toProducerRenderModes() ?: defaultRenderModes()
+        }.onFailure {
+            AppLog.w("LyriconLyricProducer", "refreshRenderModes failed, using defaults", it)
+        }.getOrDefault(defaultRenderModes())
+    }
+
+    private fun CompiledSurfaceProfile.toProducerRenderModes() = ProducerRenderModes(
+        weight = weight,
+        textSize = textSize,
+        textSizeCustom = textSizeCustom,
+        secondary = secondaryMode,
+        animation = animation,
+        glow = glow,
+        lineSyncFill = lineSyncFillMode,
+        overflow = overflow,
+        transition = transition.id,
+        font = fontFamily
+    )
+
     private fun RichLyricLine.toLyricWords(): List<LyricWord>? = words?.map { w ->
-        // io.github.proify.lyricon.lyric.model.LyricWord has begin/end/text; boundaryAfter is
-        // a Spicy-specific concept and defaults to false here.
+        // io.github.proify.lyricon.lyric.model.LyricWord has begin/end/text.
+        // boundaryAfter is a Spicy-specific concept; default false (the engine treats word
+        // boundaries from begin/end timing). roma is line-level (RichLyricLine.ruma), not per-word.
         LyricWord(
             text = w.text.orEmpty(),
-            romanized = "", // roma lives at RichLyricLine.ruma level, not per-word
+            romanized = "",
             startMs = w.begin,
             endMs = w.end,
             boundaryAfter = false
@@ -243,7 +356,20 @@ class LyriconLyricProducer : LyricProducer {
     }
 
     companion object {
-        /** High-frequency position poll interval. Matches AodProjectionEngine's 100ms tick. */
-        private const val POSITION_POLL_INTERVAL_MS = 100L
+        private const val PRODUCER_ID = "lyricon"
+
+        /** Default render modes when customization is unavailable; matches SpicyBridgeState defaults. */
+        private fun defaultRenderModes() = ProducerRenderModes(
+            weight = "Medium",
+            textSize = "normal",
+            textSizeCustom = 100,
+            secondary = "Main only",
+            animation = "Karaoke fill",
+            glow = "Off",
+            lineSyncFill = "Top to bottom",
+            overflow = "Wrap",
+            transition = "Fade up",
+            font = "spotify"
+        )
     }
 }
