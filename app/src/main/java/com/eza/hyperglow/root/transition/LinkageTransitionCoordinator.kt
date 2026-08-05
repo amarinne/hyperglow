@@ -312,6 +312,13 @@ internal object LinkageTransitionCoordinator {
         }
         failedTarget?.let { surfaces[it]?.hideForFailedTransition() }
         surfaces.values.forEach { it.setHandoffActive(false) }
+        failedTarget?.let { kind ->
+            val surface = surfaces[kind] ?: return@let
+            if (!stateMachine.recoverTimedOutTarget(kind)) return@let
+            surface.resetTransition()
+            publishAuthority()
+            HookLogger.i(TAG, "Timed-out target recovered inline kind=$kind state=${stateMachine.state}")
+        }
         freeze.clear()
         activeToken = -1L
         animationStartedToken = -1L

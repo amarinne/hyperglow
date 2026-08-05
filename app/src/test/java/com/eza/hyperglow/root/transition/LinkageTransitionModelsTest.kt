@@ -169,6 +169,26 @@ class LinkageTransitionModelsTest {
     }
 
     @Test
+    fun timedOutLockscreenTargetRecoversWhenStillAttached() {
+        val machine = LinkageStateMachine()
+        machine.attach(LyricSurfaceKind.LOCKSCREEN)
+        machine.attach(LyricSurfaceKind.AOD)
+        val token = machine.linkage(toLockscreen = true)
+
+        assertTrue(machine.timeout(token))
+        assertEquals(LinkageTransitionState.LOCKSCREEN_NO_CUSTOM_SURFACE, machine.state)
+        assertEquals(null, machine.authority.stableSurface)
+        assertFalse(machine.authority.isSceneActive(LyricSurfaceKind.LOCKSCREEN))
+
+        assertTrue(machine.recoverTimedOutTarget(LyricSurfaceKind.LOCKSCREEN))
+        assertEquals(LinkageTransitionState.LOCKSCREEN, machine.state)
+        assertEquals(
+            LinkageSceneRole.AUTHORITATIVE,
+            machine.authority.roleOf(LyricSurfaceKind.LOCKSCREEN)
+        )
+    }
+
+    @Test
     fun sourceDetachSettlesToReadyTargetAndTargetDetachFailsClosed() {
         val reverse = LinkageStateMachine()
         reverse.attach(LyricSurfaceKind.LOCKSCREEN)

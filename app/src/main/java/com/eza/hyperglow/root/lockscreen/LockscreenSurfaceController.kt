@@ -1861,9 +1861,9 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
         val editorState = readField(controller, "editorState")?.toString()
         val keyguardStateController = readField(controller, "keyguardStateController")
         val quickSettingsController = readField(controller, "quickSettingsControllerImpl")
-        return readBoolean(controller, "keyguardBouncerShowing", true) ||
-            readFloat(controller, "keyguardBouncerFraction", 1f) > 0.01f ||
-            (editorState != null && editorState != "IDEL") ||
+        return readBoolean(controller, "keyguardBouncerShowing", false) ||
+            readFloat(controller, "keyguardBouncerFraction", 0f) > 0.01f ||
+            (editorState != null && editorState != "IDLE" && editorState != "IDEL") ||
             (readField(keyguardStateController, "mKeyguardGoingAway") as? Boolean) == true ||
             invokeNoArgBoolean(quickSettingsController, "getExpanded", false)
     }
