@@ -39,7 +39,11 @@ data class SurfaceProfile(
     val overflow: String = "Wrap",
     val adaptiveSectioning: Boolean = true,
     val palette: Map<String, String> = emptyMap(),
-    val backgroundStyle: String = "auto"
+    val backgroundStyle: String = "auto",
+    /** 卡片背景不透明度,0-100。0 完全透明,100 完全不透明。 */
+    val cardAlpha: Int = 85,
+    /** 卡片背景色 token,见 [CARD_COLOR_VALUES]。 */
+    val cardColor: String = "black"
 )
 
 @Serializable
@@ -98,6 +102,10 @@ data class CompiledSurfaceProfile(
     val adaptiveSectioning: Boolean,
     val palette: Map<String, String>,
     val backgroundStyle: String = "none",
+    /** 卡片背景不透明度,0-100。仅当 backgroundStyle=="card" 时生效。 */
+    val cardAlpha: Int = 85,
+    /** 卡片背景色 token,见 [CARD_COLOR_VALUES]。仅当 backgroundStyle=="card" 时生效。 */
+    val cardColor: String = "black",
     val metadataSizePercent: Int = 100,
     val rubyVisible: Boolean = true,
     val secondaryTextBright: Boolean = true,
@@ -107,6 +115,16 @@ data class CompiledSurfaceProfile(
 const val CURRENT_CUSTOMIZATION_VERSION = 1
 const val DEFAULT_LYRIC_LINE_LIMIT = 3
 const val NO_LYRIC_LINE_LIMIT = 0
+
+/** 锁屏歌词卡片背景色可选 token。 */
+val CARD_COLOR_VALUES = setOf("black", "dark_gray", "white", "accent", "blur")
+const val DEFAULT_CARD_ALPHA = 85
+const val DEFAULT_CARD_COLOR = "black"
+
+internal fun normalizeCardAlpha(value: Int): Int = value.coerceIn(0, 100)
+
+internal fun normalizeCardColor(value: String): String =
+    value.takeIf { it in CARD_COLOR_VALUES } ?: DEFAULT_CARD_COLOR
 
 internal fun normalizeLyricLineLimit(value: Int): Int = when (value) {
     NO_LYRIC_LINE_LIMIT,

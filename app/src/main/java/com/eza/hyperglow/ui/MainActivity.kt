@@ -100,6 +100,7 @@ import top.yukonga.miuix.kmp.icon.extended.Home
 import top.yukonga.miuix.kmp.icon.extended.Settings
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.RadioButtonPreference
+import top.yukonga.miuix.kmp.preference.SliderPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.ColorSchemeMode
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -1348,6 +1349,28 @@ private fun LyricLayoutScreen(
                             summary =
                                 stringResource(R.string.summary_show_lyric_card)
                         )
+                        if (selectedProfile.backgroundStyle == "card") {
+                            AodChoiceRow(AodChoiceKind.CARD_COLOR, selectedProfile.cardColor) {
+                                openChoice(
+                                    AodChoiceKind.CARD_COLOR,
+                                    com.eza.hyperglow.customization.CARD_COLOR_VALUES.toList(),
+                                    selectedProfile.cardColor
+                                ) { value -> updateSelected { it.copy(cardColor = value) } }
+                            }
+                            SliderPreference(
+                                value = selectedProfile.cardAlpha.toFloat(),
+                                onValueChange = { value ->
+                                    updateSelected {
+                                        it.copy(cardAlpha = value.roundToInt())
+                                    }
+                                },
+                                title = stringResource(R.string.setting_card_transparency),
+                                summary = stringResource(R.string.summary_card_transparency),
+                                valueText = "${selectedProfile.cardAlpha}%",
+                                valueRange = 0f..100f,
+                                steps = 19
+                            )
+                        }
                         val progressEnabled = selectedProfile.widgets.any { it.type == "media_progress" }
                         SwitchPreference(
                             progressEnabled,
@@ -1685,6 +1708,13 @@ private fun choiceDisplayLabel(
     AodChoiceKind.GLOW -> context.getString(
         if (value == "On") R.string.option_on else R.string.option_off
     )
+    AodChoiceKind.CARD_COLOR -> context.getString(when (value) {
+        "white" -> R.string.option_card_color_white
+        "dark_gray" -> R.string.option_card_color_dark_gray
+        "accent" -> R.string.option_card_color_accent
+        "blur" -> R.string.option_card_color_blur
+        else -> R.string.option_card_color_black
+    })
 }
 
 private enum class AodChoiceKind(@param:StringRes val titleRes: Int) {
@@ -1703,7 +1733,8 @@ private enum class AodChoiceKind(@param:StringRes val titleRes: Int) {
     GLOW(R.string.choice_glow),
     LINE_PROGRESS(R.string.choice_line_progress_effect),
     TEXT_BRIGHTNESS(R.string.choice_text_brightness),
-    TRANSITION_SPEED(R.string.choice_scene_transition_speed)
+    TRANSITION_SPEED(R.string.choice_scene_transition_speed),
+    CARD_COLOR(R.string.choice_card_color)
 }
 
 private data class AodChoice(

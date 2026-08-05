@@ -338,6 +338,83 @@ class SceneCompilerTest {
     }
 
     @Test
+    fun cardAlphaAndColorAreClampedAndFallenBackOnCompile() {
+        val compiled = SceneCompiler.compile(
+            CustomizationDocument(
+                profiles = mapOf(
+                    SceneCompiler.SURFACE_LOCKSCREEN to SurfaceProfile(
+                        backgroundStyle = "card",
+                        cardAlpha = 999,
+                        cardColor = "neon_pink"
+                    )
+                )
+            )
+        ).profiles.getValue(SceneCompiler.SURFACE_LOCKSCREEN)
+
+        assertEquals(100, compiled.cardAlpha)
+        assertEquals(DEFAULT_CARD_COLOR, compiled.cardColor)
+        assertEquals(
+            DEFAULT_CARD_ALPHA,
+            SceneCompiler.compile(
+                CustomizationDocument(
+                    profiles = mapOf(
+                        SceneCompiler.SURFACE_LOCKSCREEN to SurfaceProfile(
+                            backgroundStyle = "card",
+                            cardAlpha = -20
+                        )
+                    )
+                )
+            ).profiles.getValue(SceneCompiler.SURFACE_LOCKSCREEN).cardAlpha
+        )
+    }
+
+    @Test
+    fun cardAlphaAndColorSurviveSystemUiValidationForEachPresetToken() {
+        CARD_COLOR_VALUES.forEach { token ->
+            val compiled = SceneCompiler.compile(
+                CustomizationDocument(
+                    profiles = mapOf(
+                        SceneCompiler.SURFACE_LOCKSCREEN to SurfaceProfile(
+                            backgroundStyle = "card",
+                            cardAlpha = 42,
+                            cardColor = token
+                        )
+                    )
+                )
+            )
+            val validated = SystemUiCustomizationValidator.validate(compiled)!!
+                .profiles.getValue(SceneCompiler.SURFACE_LOCKSCREEN)
+
+            assertEquals(token, validated.cardColor)
+            assertEquals(42, validated.cardAlpha)
+            assertEquals("card", validated.backgroundStyle)
+        }
+    }
+
+    @Test
+    fun systemUiValidatorResetsInvalidCardColorToDefault() {
+        val compiled = SceneCompiler.compile(
+            CustomizationDocument(
+                profiles = mapOf(
+                    SceneCompiler.SURFACE_LOCKSCREEN to SurfaceProfile(
+                        backgroundStyle = "card",
+                        cardColor = "black"
+                    )
+                )
+            )
+        )
+        val tampered = compiled.profiles.getValue(SceneCompiler.SURFACE_LOCKSCREEN)
+            .copy(cardColor = "injected_color")
+        val validated = SystemUiCustomizationValidator.validate(
+            compiled.copy(
+                profiles = compiled.profiles + (SceneCompiler.SURFACE_LOCKSCREEN to tampered)
+            )
+        )!!.profiles.getValue(SceneCompiler.SURFACE_LOCKSCREEN)
+
+        assertEquals(DEFAULT_CARD_COLOR, validated.cardColor)
+    }
+
+    @Test
     fun systemUiValidatorRejectsVersionAndChangesCanonicalDigestAfterTampering() {
         val compiled = SceneCompiler.compile(SceneCompiler.safeDefaultDocument())
         assertNull(SystemUiCustomizationValidator.validate(compiled.copy(version = 99)))

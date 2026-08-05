@@ -168,7 +168,9 @@ object SceneCompiler {
                 aod -> "none"
                 profile.backgroundStyle == "none" -> "none"
                 else -> "card"
-            }
+            },
+            cardAlpha = normalizeCardAlpha(profile.cardAlpha),
+            cardColor = normalizeCardColor(profile.cardColor)
         )
     }
 

@@ -172,6 +172,14 @@
     <string name="summary_show_lyric_card">在锁屏歌词后添加通知样式背景。</string>
     <string name="setting_show_playback_progress">显示播放进度</string>
     <string name="summary_show_playback_progress">在歌词下方添加不可交互的进度条。</string>
+    <string name="setting_card_transparency">卡片透明度</string>
+    <string name="summary_card_transparency">调整歌词卡片背景的不透明度。</string>
+    <string name="choice_card_color">卡片颜色</string>
+    <string name="option_card_color_black">黑色</string>
+    <string name="option_card_color_dark_gray">深灰</string>
+    <string name="option_card_color_white">白色</string>
+    <string name="option_card_color_accent">强调色</string>
+    <string name="option_card_color_blur">模糊</string>
     <string name="section_both_surfaces">两个显示区域</string>
     <string name="action_import_appearance">导入外观文件</string>
     <string name="action_export_appearance">导出外观文件</string>

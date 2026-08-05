@@ -5,6 +5,8 @@ import com.eza.hyperglow.customization.CompiledCustomization
 import com.eza.hyperglow.customization.CompiledSurfaceProfile
 import com.eza.hyperglow.customization.SceneCompiler
 import com.eza.hyperglow.customization.WidgetSpec
+import com.eza.hyperglow.customization.normalizeCardAlpha
+import com.eza.hyperglow.customization.normalizeCardColor
 import com.eza.hyperglow.customization.normalizeLyricLineLimit
 import com.eza.hyperglow.aod.normalizePauseLingerMs
 import com.eza.hyperglow.root.projection.LyricSurfaceKind
@@ -131,6 +133,8 @@ internal object SystemUiCustomizationValidator {
             lineSyncFillMode = normalizeLineSyncFillMode(profile.lineSyncFillMode),
             overflow = if (profile.overflow == "Clip") "Clip" else "Wrap",
             backgroundStyle = if (!aod && profile.backgroundStyle == "card") "card" else "none",
+            cardAlpha = normalizeCardAlpha(profile.cardAlpha),
+            cardColor = normalizeCardColor(profile.cardColor),
             palette = profile.palette.asSequence()
                 .filter { it.key in SEMANTIC_COLORS && it.value in PALETTE_VALUES }
                 .take(SEMANTIC_COLORS.size)

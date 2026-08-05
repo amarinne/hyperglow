@@ -172,6 +172,14 @@
     <string name="summary_show_lyric_card">Adds a notification-style background behind lock screen lyrics.</string>
     <string name="setting_show_playback_progress">Show playback progress</string>
     <string name="summary_show_playback_progress">Adds a noninteractive progress bar below the lyrics.</string>
+    <string name="setting_card_transparency">Card transparency</string>
+    <string name="summary_card_transparency">Adjust the background opacity of the lyric card.</string>
+    <string name="choice_card_color">Card color</string>
+    <string name="option_card_color_black">Black</string>
+    <string name="option_card_color_dark_gray">Dark gray</string>
+    <string name="option_card_color_white">White</string>
+    <string name="option_card_color_accent">Accent</string>
+    <string name="option_card_color_blur">Blur</string>
     <string name="section_both_surfaces">Both surfaces</string>
     <string name="action_import_appearance">Import appearance file</string>
     <string name="action_export_appearance">Export appearance file</string>
