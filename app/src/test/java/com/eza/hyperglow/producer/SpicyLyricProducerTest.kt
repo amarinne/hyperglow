@@ -174,4 +174,22 @@ class SpicyLyricProducerTest {
         assertEquals("Fade up", modes.transition)
         assertEquals("spotify", modes.font)
     }
+
+    @Test
+    fun activeRowFieldsEmitDefaultsUntilDocumentCouplingMigrated() {
+        // Spec clause 9: until the Spicy producer is wired to SpicyBridgeDocumentStore for the
+        // active-row fields, it emits them at defaults. AodProjectionEngine still reads the
+        // document store directly for its project() internals on the Spicy path. This test locks
+        // that documented deviation so the engine-switch step can detect when it changes.
+        val mapped = producer.toProducerState(spicyState())
+
+        assertEquals(LyricKind.NONE, mapped.lyricKind)
+        assertEquals(false, mapped.hasTimedLyrics)
+        assertEquals(false, mapped.alignedRight)
+        assertEquals(0L, mapped.lineStartMs)
+        assertEquals(0L, mapped.lineEndMs)
+        assertNull(mapped.nextLineStartMs)
+        assertTrue(mapped.ruby.isEmpty())
+        assertTrue(mapped.layoutGroups.isEmpty())
+    }
 }

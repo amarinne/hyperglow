@@ -327,4 +327,109 @@ class LyriconLyricProducerTest {
         producer.playerListener.onSongChanged(noId)
         assertEquals("lyricon:Fallback Name", producer.state.value!!.trackUri)
     }
+
+    // --- Phase 3: active-row fields (lyricKind / lineStartMs / lineEndMs / hasTimedLyrics /
+    //     nextLineStartMs / ruby / layoutGroups / alignedRight) populated by emit() ---
+
+    @Test
+    fun rowFields_populatedFromActiveSyllableLine() {
+        producer.playerListener.onSongChanged(threeLineSong())
+        producer.playerListener.onPositionChanged(2_000L) // line 0 [1000,3000], has words
+
+        val state = producer.state.value!!
+        assertEquals(LyricKind.SYLLABLE, state.lyricKind)
+        assertEquals(true, state.hasTimedLyrics)
+        assertEquals(1_000L, state.lineStartMs)
+        assertEquals(3_000L, state.lineEndMs)
+        // Next line begins at 3500 → nextLineStartMs.
+        assertEquals(3_500L, state.nextLineStartMs)
+        // Lyricon carries no alignment / ruby / layout-group concepts.
+        assertEquals(false, state.alignedRight)
+        assertTrue(state.ruby.isEmpty())
+        assertTrue(state.layoutGroups.isEmpty())
+    }
+
+    @Test
+    fun rowFields_populatedFromLineLevelLineWithoutWords() {
+        producer.playerListener.onSongChanged(threeLineSong())
+        producer.playerListener.onPositionChanged(6_000L) // line 2 [5000,7000], words=null
+
+        val state = producer.state.value!!
+        assertEquals(LyricKind.LINE, state.lyricKind)
+        assertEquals(5_000L, state.lineStartMs)
+        assertEquals(7_000L, state.lineEndMs)
+        // Line 2 is the last → no next line.
+        assertNull(state.nextLineStartMs)
+        // words null for a line-level line.
+        assertNull(state.words)
+        // hasTimedLyrics is song-level (other lines have timing).
+        assertEquals(true, state.hasTimedLyrics)
+    }
+
+    @Test
+    fun noLyricsSong_emitsNoneKindAndNoTimedLyrics() {
+        val noLyrics = Song(id = "nolyrics", name = "No Lyrics", artist = "A", duration = 1_000L)
+        producer.playerListener.onSongChanged(noLyrics)
+        producer.playerListener.onPositionChanged(500L)
+
+        val state = producer.state.value!!
+        assertEquals(LyricKind.NONE, state.lyricKind)
+        assertEquals(false, state.hasTimedLyrics)
+        assertNull(state.nextLineStartMs)
+        assertEquals(0L, state.lineStartMs)
+        assertEquals(0L, state.lineEndMs)
+    }
+
+    @Test
+    fun beforeFirstLine_lyricKindIsSongLevelAndNextLineStartIsFirstBegin() {
+        producer.playerListener.onSongChanged(threeLineSong())
+        producer.playerListener.onPositionChanged(500L) // before line 0 (begin=1000)
+
+        val state = producer.state.value!!
+        assertEquals(-1, state.lineIndex)
+        // No active line, but the song has timed lyrics with words → song-level SYLLABLE so the
+        // engine can tell "timed lyrics exist, between lines" (INTERLUDE) from "no lyrics".
+        assertEquals(LyricKind.SYLLABLE, state.lyricKind)
+        assertEquals(true, state.hasTimedLyrics)
+        assertEquals(1_000L, state.nextLineStartMs) // first line begins at 1000
+        assertEquals(0L, state.lineStartMs) // no active row
+        assertEquals(0L, state.lineEndMs)
+    }
+
+    @Test
+    fun nextLineStartMs_advancesAsPositionMovesThroughSong() {
+        producer.playerListener.onSongChanged(threeLineSong())
+
+        producer.playerListener.onPositionChanged(2_000L) // before line 1 (3500)
+        assertEquals(3_500L, producer.state.value!!.nextLineStartMs)
+
+        producer.playerListener.onPositionChanged(4_200L) // before line 2 (5000)
+        assertEquals(5_000L, producer.state.value!!.nextLineStartMs)
+
+        producer.playerListener.onPositionChanged(6_000L) // past the last line's begin
+        assertNull(producer.state.value!!.nextLineStartMs)
+    }
+
+    @Test
+    fun songWithOnlyLineLevelLyrics_songLevelKindIsLineBeforeFirstPosition() {
+        // All lines have words=null → song-level kind is LINE (not SYLLABLE) before first line.
+        val lineLevel = Song(
+            id = "ll", name = "LL", artist = "A", duration = 5_000L,
+            lyrics = listOf(
+                line(1_000, 2_000, "a", words = null),
+                line(2_500, 3_500, "b", words = null)
+            )
+        )
+        producer.playerListener.onSongChanged(lineLevel)
+        producer.playerListener.onPositionChanged(500L)
+
+        val state = producer.state.value!!
+        assertEquals(LyricKind.LINE, state.lyricKind)
+        assertEquals(true, state.hasTimedLyrics) // lines have end > begin
+        assertEquals(1_000L, state.nextLineStartMs)
+
+        // Within a line-level line, kind stays LINE.
+        producer.playerListener.onPositionChanged(1_500L)
+        assertEquals(LyricKind.LINE, producer.state.value!!.lyricKind)
+    }
 }

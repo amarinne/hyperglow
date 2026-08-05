@@ -280,9 +280,26 @@ class LyriconLyricProducer(
     private fun emit() {
         val song = currentSong ?: run { mutableState.value = null; return }
         val now = clock()
+        val lyrics = song.lyrics
         val line = currentLineIndex.let { idx ->
             if (idx < 0) null else navigator?.source?.getOrNull(idx)
         }
+        // Active-row fields (spec clause 6: producer computes the active line before emitting).
+        // lyricKind is per-active-line when a line is active; otherwise song-level, so the engine
+        // can still tell "timed lyrics exist, between lines" (INTERLUDE) from "no lyrics" (NONE).
+        val hasTimedLyrics = !lyrics.isNullOrEmpty() &&
+            lyrics.any { it.end > it.begin }
+        val lyricKind = when {
+            lyrics.isNullOrEmpty() -> LyricKind.NONE
+            line != null -> if (!line.words.isNullOrEmpty()) LyricKind.SYLLABLE else LyricKind.LINE
+            else -> if (lyrics.any { !it.words.isNullOrEmpty() }) LyricKind.SYLLABLE
+                else LyricKind.LINE
+        }
+        val nextLineStartMs = lyrics
+            ?.asSequence()
+            ?.map { it.begin }
+            ?.filter { it > currentPositionMs }
+            ?.minOrNull()
         sequence++
         mutableState.value = LyricProducerState(
             producerId = PRODUCER_ID,
@@ -305,7 +322,16 @@ class LyriconLyricProducer(
             playing = isPlayingState,
             receivedAtElapsedMs = now,
             words = cachedWords,
-            renderModes = renderModesSnapshot
+            renderModes = renderModesSnapshot,
+            lyricKind = lyricKind,
+            // Lyricon carries no alignment / ruby / layout-group concepts; defaults are correct.
+            alignedRight = false,
+            lineStartMs = line?.begin ?: 0L,
+            lineEndMs = line?.end ?: 0L,
+            ruby = emptyList(),
+            layoutGroups = emptyList(),
+            hasTimedLyrics = hasTimedLyrics,
+            nextLineStartMs = nextLineStartMs
         )
     }
 

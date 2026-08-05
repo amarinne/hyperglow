@@ -61,6 +61,41 @@ data class ProducerRenderModes(
 )
 
 /**
+ * Timing granularity of the lyrics the producer is currently emitting, used by projection to
+ * pick the right render path (mirrors the Spicy document `type` + the `unsynced`/`no_lyrics`
+ * distinctions the engine historically derived from `SpicyBridgeDocument`):
+ *
+ * - [NONE]: no lyrics data at all (no document / no song lyrics). The engine MAY fall back to
+ *   the producer's `line` field for an untimed one-liner.
+ * - [UNSYNCED]: lyrics data exists but is untimed (plain-text document). Engine renders "♪".
+ * - [LINE]: timed, line-level lyrics. Active row has no per-word timing.
+ * - [SYLLABLE]: timed, word/syllable-level lyrics. Active row carries per-word timing in `words`.
+ *
+ * The lyricon producer never emits [UNSYNCED] (plain-text lyrics are ignored in `onReceiveText`);
+ * it emits [LINE]/[SYLLABLE] when a song with timed lyrics is loaded, [NONE] otherwise.
+ */
+enum class LyricKind { NONE, UNSYNCED, LINE, SYLLABLE }
+
+/**
+ * One ruby (furigana) annotation on the active lyric line. Mirrors
+ * [com.eza.hyperglow.bridge.SpicyBridgeRuby]. Empty for the lyricon path (the lyricon `Song`
+ * model carries no ruby annotations).
+ */
+data class LyricRuby(val start: Int, val end: Int, val reading: String)
+
+/**
+ * One layout group on the active lyric line. Mirrors
+ * [com.eza.hyperglow.bridge.SpicyBridgeLayoutGroup]. Empty for the lyricon path.
+ */
+data class LyricLayoutGroup(
+    val start: Int,
+    val end: Int,
+    val kind: String,
+    val keepTogether: Boolean,
+    val confidence: Double
+)
+
+/**
  * Producer-agnostic lyrics state consumed by [com.eza.hyperglow.aod.AodProjectionEngine].
  *
  * This is the single ingress-to-projection boundary. Producers MUST normalize their ingress
@@ -71,6 +106,13 @@ data class ProducerRenderModes(
  *
  * `words` is null when the producer has no per-word timing (line-level lyrics); non-null for
  * syllable/word-level karaoke.
+ *
+ * The active-row fields (`lyricKind`, `alignedRight`, `lineStartMs`, `lineEndMs`, `ruby`,
+ * `layoutGroups`, `hasTimedLyrics`, `nextLineStartMs`) describe the line the producer has
+ * selected for the current `positionMs`. Producers MUST compute the active line before emitting
+ * (spec clause 6); projection MUST NOT re-select the line from a raw rows list. All row fields
+ * carry defaults so a producer that only emits line-level state (e.g. the Spicy path until its
+ * document coupling is migrated) still constructs a valid [LyricProducerState].
  *
  * `staleAfterMs` matches `SpicyBridgeStore.STALE_AFTER_MS = 3000ms` uniformly for both
  * producers (see the spec's uniform-staleness invariant).
@@ -97,6 +139,14 @@ data class LyricProducerState(
     val receivedAtElapsedMs: Long,
     val words: List<LyricWord>?,
     val renderModes: ProducerRenderModes,
+    val lyricKind: LyricKind = LyricKind.NONE,
+    val alignedRight: Boolean = false,
+    val lineStartMs: Long = 0L,
+    val lineEndMs: Long = 0L,
+    val ruby: List<LyricRuby> = emptyList(),
+    val layoutGroups: List<LyricLayoutGroup> = emptyList(),
+    val hasTimedLyrics: Boolean = false,
+    val nextLineStartMs: Long? = null,
     val staleAfterMs: Long = STALE_AFTER_MS
 ) {
     companion object {
