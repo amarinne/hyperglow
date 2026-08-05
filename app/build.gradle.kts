@@ -112,7 +112,11 @@ dependencies {
     implementation("top.yukonga.miuix.kmp:miuix-icons-android:0.9.3")
     implementation("top.yukonga.miuix.kmp:miuix-preference-android:0.9.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0")
+    // lyricon subscriber SDK — consumes lyrics from lyricon's central service
+    // (Xposed-injected into com.android.systemui). Transitively pulls in
+    // io.github.proify.lyricon.lyric:model (the Song/RichLyricLine model).
+    implementation("io.github.proify.lyricon:subscriber:0.1.70")
     compileOnly("io.github.libxposed:api:102.0.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
