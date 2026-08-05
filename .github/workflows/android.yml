@@ -1,10 +1,6 @@
 name: Verify HyperGlow
 
 on:
-  push:
-    branches:
-      - main
-      - "trae/agent-**"
   workflow_dispatch:
 
 permissions:
