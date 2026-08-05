@@ -2,6 +2,8 @@ package com.eza.hyperglow.bridge
 
 import com.eza.hyperglow.aod.AodProjectionEngine
 import com.eza.hyperglow.aod.ProjectionSessionIdentity
+import com.eza.hyperglow.producer.LyricProducerState
+import com.eza.hyperglow.producer.ProducerRenderModes
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -31,10 +33,14 @@ class SpicyBridgeDocumentTest {
 
     @Test
     fun projectedPositionUsesSparseAnchorAndClampsDuration() {
-        val state = SpicyBridgeState(
+        // Phase 3: the engine's projectedPosition overload takes LyricProducerState (the producer
+        // boundary), not SpicyBridgeState. The Spicy path's positionMs/sampledAtElapsedMs/speed/
+        // durationMs/playing fields are mapped losslessly into LyricProducerState, so the sparse
+        // anchor + clamp behavior is identical.
+        val state = LyricProducerState(
             producerId = "producer",
             generation = 1,
-            sequence = 1,
+            sequence = 1L,
             status = "ready",
             trackUri = "spotify:track:test",
             title = "title",
@@ -45,16 +51,18 @@ class SpicyBridgeDocumentTest {
             romanizedLine = "",
             translatedLine = "",
             lineIndex = 0,
-            positionMs = 1_000,
-            durationMs = 2_000,
-            sampledAtElapsedMs = 10_000,
+            positionMs = 1_000L,
+            durationMs = 2_000L,
+            sampledAtElapsedMs = 10_000L,
             speed = 2f,
             playing = true,
-            receivedAtElapsedMs = 10_000
+            receivedAtElapsedMs = 10_000L,
+            words = null,
+            renderModes = defaultRenderModes()
         )
 
-        assertEquals(1_500, AodProjectionEngine.projectedPosition(state, 10_250))
-        assertEquals(2_000, AodProjectionEngine.projectedPosition(state, 20_000))
+        assertEquals(1_500L, AodProjectionEngine.projectedPosition(state, 10_250))
+        assertEquals(2_000L, AodProjectionEngine.projectedPosition(state, 20_000))
     }
 
     @Test
@@ -78,20 +86,20 @@ class SpicyBridgeDocumentTest {
     fun nonplayingLoadingEdgeIsTransportGapButReadyPauseIsRealPause() {
         assertTrue(
             AodProjectionEngine.isPlayingTransportGap(
-                state(3_000, status = "loading").copy(playing = false)
+                producerState(3_000, status = "loading").copy(playing = false)
             )
         )
         assertFalse(
             AodProjectionEngine.isPlayingTransportGap(
-                state(3_000, status = "ready").copy(playing = false)
+                producerState(3_000, status = "ready").copy(playing = false)
             )
         )
-        assertFalse(AodProjectionEngine.isPlayingTransportGap(state(3_000, status = "loading")))
+        assertFalse(AodProjectionEngine.isPlayingTransportGap(producerState(3_000, status = "loading")))
     }
 
     @Test
     fun songChangeNonPlayingEdgeNeverCommitsPauseRetention() {
-        val playing = state(3_000, status = "ready", generation = 40)
+        val playing = producerState(3_000, status = "ready", generation = 40)
         val ending = playing.copy(playing = false)
         val pending = ProjectionSessionIdentity.from(ending)
 
@@ -117,7 +125,7 @@ class SpicyBridgeDocumentTest {
 
     @Test
     fun confirmedPauseDoesNotReopenStillPlayingGrace() {
-        val paused = state(3_000, status = "ready", generation = 40).copy(playing = false)
+        val paused = producerState(3_000, status = "ready", generation = 40).copy(playing = false)
         val session = ProjectionSessionIdentity.from(paused)
         val nextSong = ProjectionSessionIdentity.from(paused.copy(generation = 41))
 
@@ -137,7 +145,7 @@ class SpicyBridgeDocumentTest {
 
     @Test
     fun fallbackRefreshUsesFourSecondsAndRejectsOldStatusOrSession() {
-        val loading = state(durationMs = 3_000, status = "loading", generation = 7)
+        val loading = producerState(durationMs = 3_000, status = "loading", generation = 7)
         val expected = AodProjectionEngine.fallbackRefreshSession(loading)
 
         assertEquals(1_000L, AodProjectionEngine.fallbackRefreshIntervalMs())
@@ -418,6 +426,55 @@ class SpicyBridgeDocumentTest {
         speed = 1f,
         playing = true,
         receivedAtElapsedMs = 10_000
+    )
+
+    /**
+     * Phase 3 engine-overload test fixture: [LyricProducerState] mirroring [state] (same
+     * producerId/generation/sequence/status/trackUri/timing fields). The engine's
+     * `projectedPosition` / `isPlayingTransportGap` / `shouldCommitPauseRetention` /
+     * `shouldOpenPauseGrace` / `fallbackRefreshSession` / `canRefreshFallback` overloads now
+     * operate on this boundary type, not [SpicyBridgeState]. Active-row fields keep their
+     * defaults — these tests exercise transport/pause/fallback policy, not row selection.
+     */
+    private fun producerState(
+        durationMs: Long,
+        status: String = "ready",
+        generation: Int = 1
+    ) = LyricProducerState(
+        producerId = "producer",
+        generation = generation,
+        sequence = 1L,
+        status = status,
+        trackUri = "spotify:track:test",
+        title = "title",
+        artist = "artist",
+        album = "album",
+        imageId = "",
+        line = "line",
+        romanizedLine = "",
+        translatedLine = "",
+        lineIndex = 0,
+        positionMs = 1_000L,
+        durationMs = durationMs,
+        sampledAtElapsedMs = 10_000L,
+        speed = 1f,
+        playing = true,
+        receivedAtElapsedMs = 10_000L,
+        words = null,
+        renderModes = defaultRenderModes()
+    )
+
+    private fun defaultRenderModes() = ProducerRenderModes(
+        weight = "Medium",
+        textSize = "normal",
+        textSizeCustom = 100,
+        secondary = "Main only",
+        animation = "Karaoke fill",
+        glow = "Off",
+        lineSyncFill = "Top to bottom",
+        overflow = "Wrap",
+        transition = "Fade up",
+        font = "spotify"
     )
 
     private fun gzip(value: String): ByteArray = ByteArrayOutputStream().use { output ->

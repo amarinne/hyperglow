@@ -1,8 +1,9 @@
 package com.eza.hyperglow.aod
 
-import com.eza.hyperglow.bridge.SpicyBridgeState
 import com.eza.hyperglow.bridge.SpicyBridgeDocument
 import com.eza.hyperglow.bridge.SpicyBridgeRow
+import com.eza.hyperglow.producer.LyricProducerState
+import com.eza.hyperglow.producer.ProducerRenderModes
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -14,12 +15,11 @@ class AodProjectionLifecycleTest {
     fun terminalInvalidationRejectsInFlightVisiblePublication() {
         val guard = ProjectionPublicationGuard()
         val state = state()
-        val document = Any()
         val token = requireNotNull(guard.begin(state))
 
         guard.invalidate()
 
-        assertFalse(guard.canPublish(token, state, state, document, document))
+        assertFalse(guard.canPublish(token, state, state))
     }
 
     @Test
@@ -29,21 +29,24 @@ class AodProjectionLifecycleTest {
         val firstToken = requireNotNull(guard.begin(first))
         val newer = first.copy(sequence = 2L, receivedAtElapsedMs = 20L)
         val newerToken = requireNotNull(guard.begin(newer))
-        val document = Any()
 
-        assertFalse(guard.canPublish(firstToken, first, newer, document, document))
-        assertTrue(guard.canPublish(newerToken, newer, newer, document, document))
+        assertFalse(guard.canPublish(firstToken, first, newer))
+        assertTrue(guard.canPublish(newerToken, newer, newer))
     }
 
     @Test
-    fun documentReplacementRejectsLayoutBuiltFromOldDocument() {
+    fun supersededStateRejectsLayoutBuiltFromPriorState() {
+        // Phase 3: the document-reference check is gone; the active row is part of
+        // LyricProducerState itself. A layout built from a prior state is rejected because
+        // `candidate` (the prior state) no longer equals `current` (the arbiter's active state).
         val guard = ProjectionPublicationGuard()
-        val state = state()
-        val token = requireNotNull(guard.begin(state))
-        val oldDocument = Any()
-        val newDocument = Any()
+        val first = state()
+        val token = requireNotNull(guard.begin(first))
+        val replaced = first.copy(sequence = 2L)
 
-        assertFalse(guard.canPublish(token, state, state, oldDocument, newDocument))
+        guard.begin(replaced)
+
+        assertFalse(guard.canPublish(token, first, replaced))
     }
 
     @Test
@@ -144,7 +147,7 @@ class AodProjectionLifecycleTest {
     private fun state(
         sequence: Long = 1L,
         trackUri: String = "spotify:track:test"
-    ) = SpicyBridgeState(
+    ) = LyricProducerState(
         producerId = "producer",
         generation = 7,
         sequence = sequence,
@@ -163,6 +166,19 @@ class AodProjectionLifecycleTest {
         sampledAtElapsedMs = 10L,
         speed = 1f,
         playing = true,
-        receivedAtElapsedMs = 10L
+        receivedAtElapsedMs = 10L,
+        words = null,
+        renderModes = ProducerRenderModes(
+            weight = "Medium",
+            textSize = "normal",
+            textSizeCustom = 100,
+            secondary = "Main only",
+            animation = "Karaoke fill",
+            glow = "Off",
+            lineSyncFill = "Top to bottom",
+            overflow = "Wrap",
+            transition = "Fade up",
+            font = "spotify"
+        )
     )
 }

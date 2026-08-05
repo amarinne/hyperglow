@@ -1,6 +1,7 @@
 package com.eza.hyperglow.aod
 
-import com.eza.hyperglow.bridge.SpicyBridgeState
+import com.eza.hyperglow.producer.LyricProducerState
+import com.eza.hyperglow.producer.ProducerRenderModes
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
@@ -21,7 +22,7 @@ class AodProjectionIdentityTest {
         )
     }
 
-    private fun state(producerId: String, trackUri: String) = SpicyBridgeState(
+    private fun state(producerId: String, trackUri: String) = LyricProducerState(
         producerId = producerId,
         generation = 1,
         sequence = 1,
@@ -40,6 +41,19 @@ class AodProjectionIdentityTest {
         sampledAtElapsedMs = 100,
         speed = 1f,
         playing = true,
-        receivedAtElapsedMs = 100
+        receivedAtElapsedMs = 100,
+        words = null,
+        renderModes = ProducerRenderModes(
+            weight = "Medium",
+            textSize = "normal",
+            textSizeCustom = 100,
+            secondary = "Main only",
+            animation = "Karaoke fill",
+            glow = "Off",
+            lineSyncFill = "Top to bottom",
+            overflow = "Wrap",
+            transition = "Fade up",
+            font = "spotify"
+        )
     )
 }

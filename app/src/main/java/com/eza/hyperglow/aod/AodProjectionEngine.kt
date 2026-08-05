@@ -4,19 +4,17 @@ import android.content.Context
 import android.os.SystemClock
 import com.eza.hyperglow.RuntimeCustomization
 import com.eza.hyperglow.bridge.SpicyBridgeDocument
-import com.eza.hyperglow.bridge.SpicyBridgeDocumentStore
 import com.eza.hyperglow.bridge.SpicyBridgeState
 import com.eza.hyperglow.bridge.SpicyBridgeStore
 import com.eza.hyperglow.customization.CustomizationRepository
-import com.eza.hyperglow.customization.SceneCompiler
 import com.eza.hyperglow.producer.LyricProducerState
+import com.eza.hyperglow.producer.LyricProducers
 import com.eza.hyperglow.root.projection.currentProcessUserId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 internal data class FallbackRefreshSession(
@@ -32,13 +30,14 @@ internal data class ProjectionSessionIdentity(
     val trackUri: String
 ) {
     companion object {
+        /** [SpicyBridgeState] 适配——保留供 bridge 包测试使用。 */
         fun from(state: SpicyBridgeState) = ProjectionSessionIdentity(
             producerId = state.producerId,
             generation = state.generation,
             trackUri = state.trackUri
         )
 
-        /** [LyricProducerState] 适配——[AodStateProjector] 与 Phase 3 引擎切换后使用。 */
+        /** [LyricProducerState] 适配——Phase 3 引擎切换后的主入口。 */
         fun from(state: LyricProducerState) = ProjectionSessionIdentity(
             producerId = state.producerId,
             generation = state.generation,
@@ -52,19 +51,24 @@ internal data class ProjectionPublicationToken(
     val session: ProjectionSessionIdentity
 )
 
+/**
+ * Guards projection publication against stale/in-flight state. Phase 3: operates on
+ * [LyricProducerState] (the producer boundary); the document-reference checks the Spicy path
+ * needed are gone because producers now select the active row before emitting (spec clause 8).
+ */
 internal class ProjectionPublicationGuard {
     private var generation = 0L
     private var activeSession: ProjectionSessionIdentity? = null
 
     @Synchronized
-    fun begin(state: SpicyBridgeState?): ProjectionPublicationToken? {
+    fun begin(state: LyricProducerState?): ProjectionPublicationToken? {
         generation++
         activeSession = state?.let(ProjectionSessionIdentity::from)
         return activeSession?.let { ProjectionPublicationToken(generation, it) }
     }
 
     @Synchronized
-    fun current(state: SpicyBridgeState): ProjectionPublicationToken? {
+    fun current(state: LyricProducerState): ProjectionPublicationToken? {
         val session = ProjectionSessionIdentity.from(state)
         if (session != activeSession) return null
         return ProjectionPublicationToken(generation, session)
@@ -76,18 +80,21 @@ internal class ProjectionPublicationGuard {
         activeSession = null
     }
 
+    /**
+     * True only when [candidate] is still the arbiter's current active state ([current]) and the
+     * token matches the live generation/session. The document checks the Spicy path needed are
+     * dropped: the active row is now part of [LyricProducerState] itself, so state-reference
+     * equality is sufficient to reject a layout built from superseded state.
+     */
     @Synchronized
     fun canPublish(
         token: ProjectionPublicationToken,
-        candidate: SpicyBridgeState,
-        current: SpicyBridgeState?,
-        capturedDocument: Any?,
-        currentDocument: Any?
+        candidate: LyricProducerState,
+        current: LyricProducerState?
     ): Boolean = token.generation == generation &&
         token.session == activeSession &&
         candidate === current &&
-        ProjectionSessionIdentity.from(candidate) == token.session &&
-        capturedDocument === currentDocument
+        ProjectionSessionIdentity.from(candidate) == token.session
 }
 
 internal class ProjectionReleaseGate {
@@ -124,6 +131,12 @@ object AodProjectionEngine {
     private val powerSessionPolicy = AodPowerSessionPolicy()
     private val metadataIntroPolicy = SongMetadataIntroPolicy()
 
+    /**
+     * The single ingress: [LyricProducers.arbiter].[LyricProducerArbiter.active]. Phase 3 engine
+     * switch — the engine no longer reads `SpicyBridgeStore.state` / `SpicyBridgeDocumentStore`
+     * for projection (spec clause 30). A background loop still expires stale Spicy bridge state
+     * to keep that store's lifecycle intact, but it does not feed projection.
+     */
     @Synchronized
     fun start(context: Context) {
         if (started) return
@@ -131,8 +144,7 @@ object AodProjectionEngine {
         started = true
         publishCustomizationIfDue(SystemClock.elapsedRealtime())
         scope.launch {
-            combine(SpicyBridgeStore.state, SpicyBridgeDocumentStore.state) { state, _ -> state }
-                .collect(::handleState)
+            LyricProducers.arbiter.active.collect(::handleState)
         }
         scope.launch {
             while (true) {
@@ -143,17 +155,16 @@ object AodProjectionEngine {
     }
 
     @Synchronized
-    private fun handleState(state: SpicyBridgeState?) {
+    private fun handleState(state: LyricProducerState?) {
         val publicationToken = publicationGuard.begin(state)
         if (state == null) {
             stopScheduler()
             cancelPauseConfirmation()
             scheduleRelease()
-            SpicyBridgeDocumentStore.clear()
             return
         }
         cancelRelease()
-        if (!SpicyBridgeStore.isCurrentActive(state)) {
+        if (!isCurrentActive(state)) {
             cancelPauseConfirmation()
             releaseNow(playbackActive = false)
             return
@@ -187,8 +198,16 @@ object AodProjectionEngine {
         project(state, publicationToken = requireNotNull(publicationToken))
     }
 
+    /**
+     * Whether [state] is still the arbiter's current active state. Replaces the Spicy path's
+     * `SpicyBridgeStore.isCurrentActive`: the arbiter clears `active` on disconnect/staleness, so
+     * reference equality against [LyricProducerArbiter.active].value is the authoritative check.
+     */
+    private fun isCurrentActive(state: LyricProducerState): Boolean =
+        LyricProducers.arbiter.active.value === state
+
     @Synchronized
-    private fun ensureScheduler(state: SpicyBridgeState) {
+    private fun ensureScheduler(state: LyricProducerState) {
         val key = "${state.producerId}:${state.generation}:${state.trackUri}"
         if (scheduler?.isActive == true && sessionKey == key) return
         stopScheduler()
@@ -196,8 +215,8 @@ object AodProjectionEngine {
         sessionKey = key
         scheduler = scope.launch {
             while (true) {
-                val current = SpicyBridgeStore.state.value ?: break
-                if (!SpicyBridgeStore.isCurrentActive(current) ||
+                val current = LyricProducers.arbiter.active.value ?: break
+                if (!isCurrentActive(current) ||
                     current.status != "ready" || !current.playing ||
                     ProjectionSessionIdentity.from(current) != expectedSession
                 ) break
@@ -214,7 +233,7 @@ object AodProjectionEngine {
     }
 
     @Synchronized
-    private fun startStatusKeepAlive(state: SpicyBridgeState) {
+    private fun startStatusKeepAlive(state: LyricProducerState) {
         if (!AodStateBridge.hasVisibleState()) return
         val expected = fallbackRefreshSession(state)
         if (transitionKeepAlive?.isActive == true && fallbackSession == expected) return
@@ -223,10 +242,8 @@ object AodProjectionEngine {
         transitionKeepAlive = scope.launch {
             while (true) {
                 delay(FALLBACK_REFRESH_INTERVAL_MS)
-                val current = SpicyBridgeStore.state.value ?: break
-                if (!SpicyBridgeStore.isCurrentActive(current) ||
-                    !canRefreshFallback(expected, current)
-                ) break
+                val current = LyricProducers.arbiter.active.value ?: break
+                if (!isCurrentActive(current) || !canRefreshFallback(expected, current)) break
                 val publicationToken = publicationGuard.current(current) ?: break
                 val now = SystemClock.elapsedRealtime()
                 project(current, now, publicationToken)
@@ -269,11 +286,11 @@ object AodProjectionEngine {
         if (pendingPauseSession != session) return
         pauseConfirmJob = null
         pendingPauseSession = null
-        val current = SpicyBridgeStore.state.value
+        val current = LyricProducers.arbiter.active.value
         if (!shouldCommitPauseRetention(
                 pendingSession = session,
                 current = current,
-                currentActive = current != null && SpicyBridgeStore.isCurrentActive(current)
+                currentActive = current != null && isCurrentActive(current)
             )
         ) return
         confirmedPauseSession = session
@@ -306,8 +323,8 @@ object AodProjectionEngine {
     @Synchronized
     private fun releaseIfCurrent(releaseToken: Long) {
         if (!releaseGate.isCurrent(releaseToken)) return
-        val current = SpicyBridgeStore.state.value
-        if (current != null && SpicyBridgeStore.isCurrentActive(current) && current.playing) return
+        val current = LyricProducers.arbiter.active.value
+        if (current != null && isCurrentActive(current) && current.playing) return
         releaseJob = null
         releaseNow(playbackActive = false)
     }
@@ -339,147 +356,33 @@ object AodProjectionEngine {
         )
     }
 
+    /**
+     * Maps [state] to [AodDisplayState] via the pure [projectToDisplay] function (spec clause 8:
+     * projection MUST NOT re-select the active line — producers do that). Publication is gated on
+     * the state still being the arbiter's current active state and the token matching.
+     */
     private fun project(
-        state: SpicyBridgeState,
+        state: LyricProducerState,
         now: Long = SystemClock.elapsedRealtime(),
         publicationToken: ProjectionPublicationToken
     ) {
         publishCustomizationIfDue(now)
-        val position = projectedPosition(state, now)
-        val capturedDocument = SpicyBridgeDocumentStore.state.value
-        val document = capturedDocument?.takeIf { it.matches(state) }
-        val timedDocument = document?.takeIf { isTimedDocumentType(it.type) }
-        val unsynced = document != null && timedDocument == null
-        val noLyrics = state.status == "no_lyrics"
-        val hasTimedLyrics = !noLyrics && timedDocument?.let(::hasActualLyricTiming) == true
-        val row = timedDocument?.primaryRowAt(position).takeUnless { noLyrics }
-        val metadata = listOf(state.title, state.artist)
-            .filter { it.isNotBlank() }
-            .joinToString(" · ")
-        val fallbackLine = state.line.takeIf {
-            !unsynced && !noLyrics && document == null && state.status == "ready" && it.isNotBlank()
-        }
-        val lyricState = when {
-            unsynced || noLyrics -> SongIntroLyricState.NONE
-            row != null || fallbackLine != null -> SongIntroLyricState.ACTIVE
-            timedDocument != null -> SongIntroLyricState.INTERLUDE
-            else -> SongIntroLyricState.UNKNOWN
-        }
-        val nextLyricStartMs = timedDocument?.rows?.asSequence()
-            ?.map { it.startMs }
-            ?.filter { it > position }
-            ?.minOrNull()
-        val showLargeMetadata = metadataIntroPolicy.shouldShowLargeMetadata(
-            SongMetadataIntroInput(
-                session = ProjectionSessionIdentity.from(state),
-                metadataAvailable = metadata.isNotBlank(),
-                lyricState = lyricState,
-                positionMs = position,
-                nextLyricStartMs = nextLyricStartMs,
-                speed = state.speed,
-                nowElapsedMs = now
-            )
-        )
-        val presentedRow = row.takeUnless { showLargeMetadata }
-        val original = when {
-            showLargeMetadata -> metadata
-            unsynced || noLyrics -> "♪"
-            presentedRow != null -> presentedRow.text
-            timedDocument != null || state.status == "loading" -> "♪"
-            fallbackLine != null -> fallbackLine
-            else -> "♪"
-        }
-        val romanized = if (showLargeMetadata || unsynced || noLyrics) "" else
-            (presentedRow?.romanized ?: state.romanizedLine.takeIf { document == null }).orEmpty()
-        val translated = if (showLargeMetadata || unsynced || noLyrics) "" else
-            (presentedRow?.translated ?: state.translatedLine.takeIf { it.isNotBlank() }).orEmpty()
         val prefs = appContext?.let(AodRenderPreferences::read) ?: AodRenderConfig()
         val compiled = appContext?.let(CustomizationRepository::loadCompiled)
-        val aodProfile = compiled?.profiles?.get(SceneCompiler.SURFACE_AOD)
-        val aodEnabled = aodProfile?.enabled ?: prefs.aodEnabled
-        val lockscreenEnabled = compiled?.profiles?.get(SceneCompiler.SURFACE_LOCKSCREEN)?.enabled
-            ?: prefs.lockscreenEnabled
-        val persistentKeepAlive = shouldKeepAodAlive(
-            playing = state.playing,
-            aodEnabled = aodEnabled,
-            keepAwake = prefs.keepAwake,
-            keepAwakeUnsynced = prefs.keepAwakeUnsynced,
-            hasTimedLyrics = hasTimedLyrics
-        )
-        val powerDecision = powerSessionPolicy.resolve(
-            state = SpicyPowerSessionState(
-                session = ProjectionSessionIdentity.from(state),
-                playing = state.playing,
-                aodEnabled = aodEnabled,
-                keepAwake = prefs.keepAwake,
-                keepAliveDurationMs = prefs.keepAwakeDurationMs
-            ),
-            nowElapsedMs = now,
-            persistentKeepAlive = persistentKeepAlive
-        )
-        val projectedState = AodDisplayState(
-            visible = original.isNotBlank(),
-            playbackActive = state.playing,
-            userId = currentProcessUserId(),
-            trackGeneration = trackGeneration(state),
-            aodEnabled = aodEnabled,
-            lockscreenEnabled = lockscreenEnabled,
-            seamlessTransitionEnabled = prefs.seamlessTransitionEnabled,
-            keepAlive = powerDecision.keepAlive,
-            positionFollowingEnabled = prefs.experimentalPositionFollowing,
-            burnInPattern = prefs.burnInPattern,
-            burnInIntervalMs = prefs.burnInIntervalMs,
-            wakeSignal = sessionWakeSignal(state, hasTimedLyrics),
-            original = original,
-            romanized = romanized,
-            translated = translated,
-            metadata = metadata,
-            alignedRight = presentedRow?.alignedRight == true,
-            lineLevelSync = document != null && presentedRow != null &&
-                isEffectiveLineLevelSync(document.type, presentedRow.words.size),
-            lineStartMs = presentedRow?.startMs ?: 0L,
-            lineEndMs = presentedRow?.fillEndMs ?: 0L,
-            durationMs = state.durationMs,
-            positionMs = position,
-            sampledAtElapsedMs = now,
-            speed = state.speed,
-            words = presentedRow?.words.orEmpty().map {
-                AodDisplayWord(
-                    it.text,
-                    it.romanized,
-                    it.startMs,
-                    it.endMs,
-                    it.boundaryAfter,
-                    it.sourceStart,
-                    it.sourceEnd
-                )
-            },
-            ruby = presentedRow?.ruby.orEmpty().map { AodDisplayRuby(it.start, it.end, it.reading) },
-            layoutGroups = presentedRow?.layoutGroups.orEmpty().map {
-                AodDisplayLayoutGroup(it.start, it.end, it.kind, it.keepTogether, it.confidence)
-            },
-            weight = prefs.weight,
-            textSizeMode = prefs.textSize,
-            textSizeCustom = prefs.textSizeCustom,
-            secondaryMode = prefs.secondaryMode,
-            animationMode = prefs.animation,
-            glowMode = prefs.glow,
-            lineSyncFillMode = state.liveCardLineSyncFill,
-            overflowMode = prefs.overflowMode,
-            transitionMode = if (noLyrics) "None" else state.liveCardTransition,
-            fontFamily = prefs.fontFamily,
-            alignmentMode = prefs.alignment,
-            metadataVisible = aodProfile?.metadataVisible ?: (prefs.metadataVisible != "hide"),
-            metadataAnchor = prefs.metadataAnchor,
-            adaptiveSectioning = prefs.adaptiveSectioning
+        val projectedState = projectToDisplay(
+            state = state,
+            now = now,
+            prefs = prefs,
+            compiled = compiled,
+            metadataIntroPolicy = metadataIntroPolicy,
+            powerSessionPolicy = powerSessionPolicy,
+            userId = currentProcessUserId()
         )
         if (!publicationGuard.canPublish(
                 token = publicationToken,
                 candidate = state,
-                current = SpicyBridgeStore.state.value,
-                capturedDocument = capturedDocument,
-                currentDocument = SpicyBridgeDocumentStore.state.value
-            ) || !SpicyBridgeStore.isCurrentActive(state) || !state.playing
+                current = LyricProducers.arbiter.active.value
+            ) || !isCurrentActive(state) || !state.playing
         ) return
         AodStateBridge.publish(projectedState)
     }
@@ -502,7 +405,7 @@ object AodProjectionEngine {
         lastKeepAliveAt = 0L
     }
 
-    fun projectedPosition(state: SpicyBridgeState, now: Long): Long =
+    fun projectedPosition(state: LyricProducerState, now: Long): Long =
         projectedPosition(
             positionMs = state.positionMs,
             sampledAtElapsedMs = state.sampledAtElapsedMs,
@@ -515,7 +418,7 @@ object AodProjectionEngine {
     fun keepAliveDue(lastAt: Long, now: Long): Boolean =
         lastAt <= 0L || now - lastAt >= KEEP_ALIVE_INTERVAL_MS
 
-    internal fun fallbackRefreshSession(state: SpicyBridgeState) = FallbackRefreshSession(
+    internal fun fallbackRefreshSession(state: LyricProducerState) = FallbackRefreshSession(
         state.producerId,
         state.generation,
         state.trackUri,
@@ -524,7 +427,7 @@ object AodProjectionEngine {
 
     internal fun canRefreshFallback(
         expected: FallbackRefreshSession,
-        current: SpicyBridgeState
+        current: LyricProducerState
     ): Boolean = current.playing &&
         shouldShowPlaybackFallback(current.status, current.playing) &&
         fallbackRefreshSession(current) == expected
@@ -534,7 +437,7 @@ object AodProjectionEngine {
     fun shouldShowPlaybackFallback(status: String, playing: Boolean): Boolean =
         playing && (status == "loading" || status == "no_lyrics")
 
-    internal fun isPlayingTransportGap(state: SpicyBridgeState): Boolean =
+    internal fun isPlayingTransportGap(state: LyricProducerState): Boolean =
         !state.playing && state.status == "loading"
 
     internal fun pauseConfirmWindowMs(): Long = PAUSE_CONFIRM_MS
@@ -555,7 +458,7 @@ object AodProjectionEngine {
      */
     internal fun shouldCommitPauseRetention(
         pendingSession: ProjectionSessionIdentity,
-        current: SpicyBridgeState?,
+        current: LyricProducerState?,
         currentActive: Boolean
     ): Boolean = current != null && currentActive && !current.playing &&
         ProjectionSessionIdentity.from(current) == pendingSession
@@ -566,6 +469,9 @@ object AodProjectionEngine {
     internal fun playbackFallback(status: String, line: String, metadata: String): String? =
         if (status == "loading") metadata.takeIf { it.isNotBlank() }
         else line.takeIf { it.isNotBlank() }
+
+    // --- Document-level helpers (retained for Spicy document tests; not called by project()
+    // after the Phase 3 switch — producers now select the active row before emitting). ---
 
     fun isTimedDocumentType(type: String): Boolean =
         type.equals("Line", ignoreCase = true) || type.equals("Syllable", ignoreCase = true)
@@ -589,18 +495,13 @@ object AodProjectionEngine {
         isLineLevelDocumentType(type) ||
             type.equals("Syllable", ignoreCase = true) && wordCount <= 0
 
-    internal fun sessionWakeSignal(state: SpicyBridgeState, hasTimedLyrics: Boolean): Long {
-        val phase = if (hasTimedLyrics) "timed" else "song"
-        return "${state.producerId}|${state.generation}|${state.trackUri}|$phase"
-            .hashCode()
-            .toLong()
-            .takeUnless { it == 0L } ?: 1L
-    }
+    /** Delegates to [AodStateProjector.sessionWakeSignal] (LyricProducerState overload). */
+    internal fun sessionWakeSignal(state: LyricProducerState, hasTimedLyrics: Boolean): Long =
+        com.eza.hyperglow.aod.sessionWakeSignal(state, hasTimedLyrics)
 
-    internal fun trackGeneration(state: SpicyBridgeState): Long {
-        val identity = "${state.producerId}\u0000${state.generation}\u0000${state.trackUri}"
-        return identity.hashCode().toLong() and Long.MAX_VALUE
-    }
+    /** Delegates to [AodStateProjector.trackGeneration] (LyricProducerState overload). */
+    internal fun trackGeneration(state: LyricProducerState): Long =
+        com.eza.hyperglow.aod.trackGeneration(state)
 
     private const val KEEP_ALIVE_INTERVAL_MS = 4_000L
     private const val FALLBACK_REFRESH_INTERVAL_MS = 1_000L
