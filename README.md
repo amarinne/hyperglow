@@ -42,12 +42,37 @@ APK from [Releases](https://github.com/amarinne/hyperglow/releases).
 
 ## Build
 
-JDK 21 and an Android SDK are required.
+JDK 21 and an Android SDK are required. No credentials or accounts are needed — every dependency
+resolves from Google's Maven repository and Maven Central.
 
 ```sh
 JAVA_HOME=/path/to/jdk21 ./gradlew :app:testDebugUnitTest :app:assembleDebug
-JAVA_HOME=/path/to/jdk21 ./gradlew :app:assembleRelease
 ```
+
+That produces an installable debug APK under `app/build/outputs/apk/debug/`. Released builds are
+signed with a private key that is not in this repository, so a build from source will not share the
+signing lineage of the published releases: installing your own build over a release requires
+uninstalling first, and the LSPosed module has to be re-enabled afterwards.
+
+## Contributing
+
+Read the specs in [`docs/`](docs/) before changing behavior — `ARCHITECTURE.md` for process
+boundaries and trust, `LOCKSCREEN_AOD_BEHAVIOR_SPEC.md` for lockscreen/AOD visibility, lifetime, and
+power rules, `STYLE_GUIDE.md` for conventions. They are the contract; code that contradicts them is
+a bug even when it works.
+
+This repository is generated from a private working repository, so a few things are worth knowing
+before opening a pull request:
+
+- Changes are limited to what exists here. A pull request that adds files outside this tree cannot
+  be integrated as written.
+- `README.md`, `FAQ.md`, and `.gitignore` are generated. Edits to them are lost; raise the change in
+  an issue instead.
+- Every accepted change is verified on the maintainer's device before release. Unit tests passing is
+  necessary, not sufficient — anything touching SystemUI hooks, AOD power, or geometry needs
+  hardware verification that cannot run in CI.
+- Large or architectural changes are worth discussing in an issue first, so the design can be
+  checked against the specs before you build it.
 
 ## License
 

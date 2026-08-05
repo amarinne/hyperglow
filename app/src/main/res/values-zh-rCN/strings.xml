@@ -22,12 +22,10 @@
     <string name="label_aod_lyrics">息屏歌词</string>
     <string name="label_lockscreen_lyrics">锁屏歌词</string>
     <string name="label_diagnostic_logging">诊断日志</string>
-    <string name="summary_diagnostic_logging_available">记录详细的模块事件，可能降低性能。</string>
+    <string name="summary_diagnostic_logging_available">可能降低性能。</string>
     <string name="summary_diagnostic_logging_unavailable">此构建不包含诊断日志。</string>
     <string name="action_send_compatibility_report">发送兼容性报告</string>
     <string name="action_report_problem">报告问题</string>
-    <string name="summary_report_supported">捕获经过筛选的诊断信息，或发送兼容性元数据。</string>
-    <string name="summary_report_unsupported">为此不受支持的配置发送兼容性报告。</string>
     <string name="action_restart_systemui">重启系统界面</string>
 
     <string name="section_spotify_integration">Spotify 集成</string>
@@ -38,10 +36,8 @@
 
     <string name="section_surfaces">显示区域</string>
     <string name="setting_show_aod">在息屏显示</string>
-    <string name="summary_show_aod_supported">在已验证的息屏区域显示歌词。</string>
     <string name="summary_show_aod_unsupported">已保留配置，但此配置无法运行息屏歌词。</string>
     <string name="setting_show_lockscreen">在锁屏显示</string>
-    <string name="summary_show_lockscreen_supported">手机锁定时显示歌词。</string>
     <string name="summary_unavailable_systemui_version">此系统界面版本不可用。</string>
 
     <string name="section_appearance">外观</string>
@@ -52,31 +48,28 @@
 
     <string name="section_aod_behavior">息屏行为</string>
     <string name="setting_keep_aod_active">保持息屏活动</string>
-    <string name="summary_keep_aod_active">Spotify 播放计时歌词时保持息屏开启。会增加耗电。</string>
+    <string name="summary_keep_aod_active">会增加耗电。</string>
     <string name="summary_unavailable_systemui_profile">此系统界面配置不可用。</string>
     <string name="setting_keep_aod_active_for">保持息屏活动时长</string>
     <string name="setting_keep_aod_unsynced">没有计时歌词时也保持息屏活动</string>
-    <string name="summary_keep_aod_unsynced">适用于加载期间及没有计时歌词的歌曲。</string>
     <string name="setting_aod_clock_image">息屏时钟或图片</string>
     <string name="summary_aod_placement_unsupported">此系统界面版本不支持协调息屏位置。</string>
     <string name="setting_movement_interval">移动间隔</string>
 
     <string name="section_lockscreen_behavior">锁屏行为</string>
     <string name="setting_keep_lockscreen_awake">保持锁屏唤醒</string>
-    <string name="summary_keep_lockscreen_awake">Spotify 播放且歌词可见时阻止屏幕变暗。会增加耗电。</string>
+    <string name="summary_keep_lockscreen_awake">会增加耗电。</string>
     <string name="setting_block_lockscreen_customization">阻止锁屏自定义</string>
     <string name="summary_block_lockscreen_customization">阻止壁纸编辑器和轮播预览打开。</string>
     <string name="section_wake_gestures">唤醒手势</string>
     <string name="setting_raise_to_aod">抬起显示息屏</string>
-    <string name="summary_raise_to_aod">需要启用 HyperOS 抬起唤醒。抬起手机时显示息屏，而不是锁屏。</string>
+    <string name="summary_raise_to_aod">需要启用 HyperOS 抬起唤醒。</string>
 
     <string name="dialog_restart_systemui_title">重启系统界面？</string>
-    <string name="dialog_restart_systemui_summary">系统界面将重启。屏幕、状态栏和息屏显示会短暂消失。需要 Root 权限。</string>
-    <string name="dialog_aod_clock_summary">选择歌词显示时它保持的位置或移动方式。</string>
+    <string name="dialog_restart_systemui_summary">屏幕、状态栏和息屏显示会短暂消失。需要 Root 权限。</string>
     <string name="option_follow_xiaomi">跟随小米</string>
     <string name="dialog_pause_summary">同时应用于息屏和锁屏歌词。</string>
     <string name="dialog_keep_aod_duration_summary">限制一次连续播放会话。暂停 Spotify 后，下次播放会开始新会话。</string>
-    <string name="dialog_movement_interval_summary">选择息屏时钟或图片移动的频率。</string>
 
     <string name="status_no_systemui_report">没有系统界面报告</string>
     <string name="status_verified_profile">已验证配置</string>
@@ -119,13 +112,10 @@
     <string name="choice_alignment">对齐</string>
     <string name="choice_secondary_text">辅助文字</string>
     <string name="setting_bright_secondary_text">高亮辅助文字</string>
-    <string name="summary_bright_secondary_text">关闭时，转写和翻译会以较暗样式显示。</string>
     <string name="setting_show_furigana">显示振假名</string>
-    <string name="summary_show_furigana">在日文文字上方显示小号读音。</string>
     <string name="choice_long_lines">长歌词</string>
     <string name="choice_lyric_lines">歌词行数</string>
     <string name="setting_keep_phrases_together">保持词组完整</string>
-    <string name="summary_keep_phrases_together">歌词换行时尽量保持单词和词组完整。</string>
     <string name="setting_show_song_info">显示歌曲信息</string>
     <string name="choice_song_info_position">歌曲信息位置</string>
     <string name="setting_song_info_size">歌曲信息大小</string>
@@ -140,9 +130,8 @@
     <string name="choice_scene_transition_speed">场景过渡速度</string>
     <string name="section_lockscreen_card">锁屏歌词卡片</string>
     <string name="setting_show_lyric_card">显示歌词卡片</string>
-    <string name="summary_show_lyric_card">在锁屏歌词后添加通知样式背景。</string>
     <string name="setting_show_playback_progress">显示播放进度</string>
-    <string name="summary_show_playback_progress">在歌词下方添加不可交互的进度条。</string>
+    <string name="summary_show_playback_progress">进度条不可交互。</string>
     <string name="section_both_surfaces">两个显示区域</string>
     <string name="action_import_appearance">导入外观文件</string>
     <string name="action_export_appearance">导出外观文件</string>

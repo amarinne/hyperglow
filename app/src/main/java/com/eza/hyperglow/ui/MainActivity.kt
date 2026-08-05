@@ -347,11 +347,6 @@ private fun HomeScreen(
                                 } else {
                                     stringResource(R.string.action_report_problem)
                                 },
-                                summary = if (aodSupported || lockscreenSupported) {
-                                    stringResource(R.string.summary_report_supported)
-                                } else {
-                                    stringResource(R.string.summary_report_unsupported)
-                                },
                                 onClick = onOpenDiagnostics
                             )
                             ArrowPreference(
@@ -432,7 +427,7 @@ private fun HomeScreen(
                                 },
                                 stringResource(R.string.setting_show_aod),
                                 summary = if (aodSupported) {
-                                    stringResource(R.string.summary_show_aod_supported)
+                                    null
                                 } else {
                                     stringResource(R.string.summary_show_aod_unsupported)
                                 },
@@ -460,7 +455,7 @@ private fun HomeScreen(
                                 },
                                 stringResource(R.string.setting_show_lockscreen),
                                 summary = if (lockscreenSupported) {
-                                    stringResource(R.string.summary_show_lockscreen_supported)
+                                    null
                                 } else {
                                     stringResource(R.string.summary_unavailable_systemui_version)
                                 },
@@ -526,7 +521,6 @@ private fun HomeScreen(
                                     keepAwakeUnsynced = enabled
                                 },
                                 stringResource(R.string.setting_keep_aod_unsynced),
-                                summary = stringResource(R.string.summary_keep_aod_unsynced),
                                 enabled = aodSupported && keepAwake
                             )
                             ArrowPreference(
@@ -673,8 +667,6 @@ private fun HomeScreen(
     if (showBurnInPatternDialog) {
         WindowDialog(
             title = stringResource(R.string.setting_aod_clock_image),
-            summary =
-                stringResource(R.string.dialog_aod_clock_summary),
             show = true,
             onDismissRequest = { showBurnInPatternDialog = false }
         ) {
@@ -760,7 +752,6 @@ private fun HomeScreen(
     if (showBurnInIntervalDialog) {
         WindowDialog(
             title = stringResource(R.string.setting_movement_interval),
-            summary = stringResource(R.string.dialog_movement_interval_summary),
             show = true,
             onDismissRequest = { showBurnInIntervalDialog = false }
         ) {
@@ -1138,15 +1129,13 @@ private fun LyricLayoutScreen(
                         SwitchPreference(
                             selectedProfile.secondaryTextBright,
                             { bright -> updateSelected { it.copy(secondaryTextBright = bright) } },
-                            stringResource(R.string.setting_bright_secondary_text),
-                            summary = stringResource(R.string.summary_bright_secondary_text)
+                            stringResource(R.string.setting_bright_secondary_text)
                         )
                     }
                     SwitchPreference(
                         selectedProfile.rubyVisible,
                         { visible -> updateSelected { it.copy(rubyVisible = visible) } },
-                        stringResource(R.string.setting_show_furigana),
-                        summary = stringResource(R.string.summary_show_furigana)
+                        stringResource(R.string.setting_show_furigana)
                     )
                     AodChoiceRow(AodChoiceKind.LONG_LINES, selectedProfile.overflow) {
                         openChoice(
@@ -1169,8 +1158,7 @@ private fun LyricLayoutScreen(
                     SwitchPreference(
                         selectedProfile.adaptiveSectioning,
                         { enabled -> updateSelected { it.copy(adaptiveSectioning = enabled) } },
-                        stringResource(R.string.setting_keep_phrases_together),
-                        summary = stringResource(R.string.summary_keep_phrases_together)
+                        stringResource(R.string.setting_keep_phrases_together)
                     )
                     SwitchPreference(
                         selectedProfile.metadataVisible,
@@ -1303,9 +1291,7 @@ private fun LyricLayoutScreen(
                                     it.copy(backgroundStyle = if (enabled) "card" else "none")
                                 }
                             },
-                            stringResource(R.string.setting_show_lyric_card),
-                            summary =
-                                stringResource(R.string.summary_show_lyric_card)
+                            stringResource(R.string.setting_show_lyric_card)
                         )
                         val progressEnabled = selectedProfile.widgets.any { it.type == "media_progress" }
                         SwitchPreference(

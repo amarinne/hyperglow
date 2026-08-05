@@ -2,6 +2,7 @@ package com.eza.hyperglow.root.aod
 
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import com.eza.hyperglow.root.HookLogger
 import com.eza.hyperglow.root.capability.XiaomiCapability
 import com.eza.hyperglow.root.capability.XiaomiCapabilityResolver
@@ -15,11 +16,15 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var surfaceAttached = false
+    private var aodDisplayOff = false
     private var aodEnabled = false
     private var keepAliveRequested = false
     private var graceEligible = false
     private var graceActive = false
     private var lastWakeSignal = Long.MIN_VALUE
+    private var lifetimeActive = false
+    private var lifetimeActiveSinceElapsedMs = Long.MIN_VALUE
+    private var hideRaceRecoveryPending = false
     private val graceExpiry = Runnable {
         if (!graceActive) return@Runnable
         graceActive = false
@@ -36,9 +41,37 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
     }
 
     fun onSurfaceDetached() {
+        aodDisplayOff = false
         if (!surfaceAttached) return
         surfaceAttached = false
         updateLifetimeGuard()
+    }
+
+    /**
+     * A hide already in flight when keepalive intent arrives cannot be suppressed, so a presenting
+     * AOD can vanish moments after the guard activates. That single race is recoverable by
+     * re-asserting the wake identity once the doze state has settled. Display power is not otherwise
+     * ours to override: a sensor/pocket pause, a deliberate sleep, and an expired session all reach
+     * the same off edge, and re-waking those fights Xiaomi in a loop. Recovery is therefore armed
+     * only by an inactive-to-active guard edge observed while AOD was still presenting, and is
+     * consumed by the first off edge inside the bounded hide-animation window.
+     */
+    fun onAodDisplayState(state: Int) {
+        val off = isAodDisplayOffState(state)
+        if (off == aodDisplayOff) return
+        aodDisplayOff = off
+        if (!off || lastWakeSignal == Long.MIN_VALUE) return
+        if (!shouldRecoverRacedAodHide(
+                surfaceAttached = surfaceAttached,
+                keepAliveRequested = keepAliveRequested,
+                recoveryPending = hideRaceRecoveryPending,
+                lifetimeActiveSinceElapsedMs = lifetimeActiveSinceElapsedMs,
+                nowElapsedMs = SystemClock.elapsedRealtime()
+            )
+        ) return
+        hideRaceRecoveryPending = false
+        HookLogger.i(TAG, "AOD hide race recovery signal=$lastWakeSignal")
+        dispatchWake(signal = lastWakeSignal, allowed = aodEnabled, forceRetry = true)
     }
 
     override fun onLyricSnapshot(snapshot: LyricSnapshot) {
@@ -96,6 +129,8 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
         keepAliveRequested = false
         graceEligible = false
         aodEnabled = false
+        aodDisplayOff = false
+        hideRaceRecoveryPending = false
         lastWakeSignal = Long.MIN_VALUE
         updateLifetimeGuard()
     }
@@ -108,6 +143,11 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
                 XiaomiCapability.AOD_LIFETIME_GUARD
             )
         )
+        if (active != lifetimeActive) {
+            lifetimeActive = active
+            lifetimeActiveSinceElapsedMs = if (active) SystemClock.elapsedRealtime() else Long.MIN_VALUE
+            hideRaceRecoveryPending = active && !aodDisplayOff
+        }
         AodLifetimeController.setLyricActive(active)
     }
 
@@ -119,7 +159,7 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
         HookLogger.i(
             TAG,
             "AOD wake requested signal=$signal attached=$surfaceAttached " +
-                "retry=$forceRetry accepted=$accepted"
+                "displayOff=$aodDisplayOff retry=$forceRetry accepted=$accepted"
         )
     }
 
@@ -158,6 +198,28 @@ internal fun shouldRetryDetachedAodWake(
     surfaceAttached: Boolean,
     keepAliveRequested: Boolean
 ): Boolean = !surfaceAttached && keepAliveRequested
+
+/**
+ * Bounded to the one unwinnable race: keepalive intent landing after Xiaomi's policy hide has
+ * already run, so the presenting AOD disappears while the guard is nominally active. Every other
+ * powered-off AOD belongs to Xiaomi. The armed flag is one-shot per guard activation and is never
+ * armed when AOD was already dark, which is what separates the race from a sensor pause, a
+ * deliberate sleep, or a session that simply ended.
+ */
+internal fun shouldRecoverRacedAodHide(
+    surfaceAttached: Boolean,
+    keepAliveRequested: Boolean,
+    recoveryPending: Boolean,
+    lifetimeActiveSinceElapsedMs: Long,
+    nowElapsedMs: Long
+): Boolean = surfaceAttached && keepAliveRequested && recoveryPending &&
+    lifetimeActiveSinceElapsedMs != Long.MIN_VALUE &&
+    nowElapsedMs - lifetimeActiveSinceElapsedMs <= HIDE_RACE_RECOVERY_WINDOW_MS
+
+internal fun isAodDisplayOffState(state: Int): Boolean = state == 1
+
+/** Bounds recovery to Xiaomi's hide animation; the captured race lost the panel 1.79 s in. */
+internal const val HIDE_RACE_RECOVERY_WINDOW_MS = 2_500L
 
 internal fun shouldActivateAodPowerLifetime(
     surfaceAttached: Boolean,
