@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "files": {},
+  "relations": [
+    {
+      "source": "lyricon-integration/lyricon-lyrics-source-prd.prd.md",
+      "target": "lyricon-integration/lyricon-as-lyrics-source.idea.md",
+      "type": "implements"
+    },
+    {
+      "source": "lyricon-integration/lyricon-lyrics-source-plan.plan.md",
+      "target": "lyricon-integration/lyricon-lyrics-source-prd.prd.md",
+      "type": "implements"
+    }
+  ]
+}
