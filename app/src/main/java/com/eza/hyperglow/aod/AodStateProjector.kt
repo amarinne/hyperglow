@@ -7,7 +7,6 @@ import com.eza.hyperglow.producer.LyricProducerState
 import com.eza.hyperglow.producer.LyricLayoutGroup
 import com.eza.hyperglow.producer.LyricRuby
 import com.eza.hyperglow.producer.LyricWord
-import com.eza.hyperglow.root.projection.currentProcessUserId
 
 /**
  * 纯函数映射层：把 [LyricProducerState]（生产者边界）映射成 [AodDisplayState]（SystemUI 投递载荷）。
@@ -31,6 +30,9 @@ import com.eza.hyperglow.root.projection.currentProcessUserId
  *   的覆盖，原引擎从 `appContext` 读取，这里注入）。
  * @param metadataIntroPolicy 大元数据引导策略（有状态，注入以复用引擎实例）。
  * @param powerSessionPolicy 保活会话策略（有状态，注入以复用引擎实例）。
+ * @param userId 当前进程用户 id（原引擎内联调用 `currentProcessUserId()`，此处注入以保持
+ *   纯函数性——`currentProcessUserId()` 依赖 `android.os.UserHandle`/`android.os.Process`，
+ *   在 JVM 单测里是 stub，调用会抛 `RuntimeException("Stub!")`）。
  */
 @Suppress("unused") // Phase 1：仅单测引用，Phase 3 引擎切换后启用
 internal fun projectToDisplay(
@@ -39,7 +41,8 @@ internal fun projectToDisplay(
     prefs: AodRenderConfig,
     compiled: CompiledCustomization?,
     metadataIntroPolicy: SongMetadataIntroPolicy,
-    powerSessionPolicy: AodPowerSessionPolicy
+    powerSessionPolicy: AodPowerSessionPolicy,
+    userId: Int
 ): AodDisplayState {
     val position = projectedPosition(state, now)
 
@@ -141,7 +144,7 @@ internal fun projectToDisplay(
     return AodDisplayState(
         visible = original.isNotBlank(),
         playbackActive = state.playing,
-        userId = currentProcessUserId(),
+        userId = userId,
         trackGeneration = trackGeneration(state),
         aodEnabled = aodEnabled,
         lockscreenEnabled = lockscreenEnabled,

@@ -166,7 +166,8 @@ class AodStateProjectorTest {
             prefs = prefs,
             compiled = compiled,
             metadataIntroPolicy = SongMetadataIntroPolicy(),
-            powerSessionPolicy = AodPowerSessionPolicy()
+            powerSessionPolicy = AodPowerSessionPolicy(),
+            userId = 0
         )
 
     // --- lyricKind = NONE ---

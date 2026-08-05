@@ -3,7 +3,10 @@ package com.eza.hyperglow.producer
 import io.github.proify.lyricon.lyric.model.LyricWord as LyriconLyricWord
 import io.github.proify.lyricon.lyric.model.RichLyricLine
 import io.github.proify.lyricon.lyric.model.Song
+import io.github.proify.lyricon.subscriber.ActivePlayerListener
+import io.github.proify.lyricon.subscriber.ConnectionListener
 import io.github.proify.lyricon.subscriber.LyriconSubscriber
+import io.github.proify.lyricon.subscriber.SubscriberInfo
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -26,7 +29,23 @@ class LyriconLyricProducerTest {
 
     private val producer = LyriconLyricProducer { 0L }
 
-    private val unusedSubscriber: LyriconSubscriber get() = null as LyriconSubscriber
+    /**
+     * Empty [LyriconSubscriber] stub. ConnectionListener callbacks receive a non-null
+     * [LyriconSubscriber] (the SDK declares the param non-nullable), and the producer's callback
+     * bodies never dereference it — but Kotlin's non-null assertion on a `null as` cast throws
+     * NPE at the call site. A real (no-op) instance satisfies the contract without depending on
+     * Mockito/MockK (not on the test classpath).
+     */
+    private val unusedSubscriber: LyriconSubscriber = object : LyriconSubscriber {
+        override val subscriberInfo: SubscriberInfo = SubscriberInfo("test", "test")
+        override fun addConnectionListener(listener: ConnectionListener) {}
+        override fun removeConnectionListener(listener: ConnectionListener) {}
+        override fun subscribeActivePlayer(listener: ActivePlayerListener): Boolean = false
+        override fun unsubscribeActivePlayer(listener: ActivePlayerListener): Boolean = false
+        override fun register() {}
+        override fun unregister() {}
+        override fun destroy() {}
+    }
 
     private fun line(begin: Long, end: Long, text: String, words: List<LyriconLyricWord>? = null) =
         RichLyricLine(
