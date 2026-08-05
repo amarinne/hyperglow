@@ -16,7 +16,7 @@ object AppLog {
         runCatching { Log.i(TAG, "[$area] bootstrap=$stage") }
     }
     fun w(area: String, message: String, error: Throwable? = null) =
-        Log.w(TAG, "[$area] $message", error)
+        runCatching { Log.w(TAG, "[$area] $message", error) }
     fun e(area: String, message: String, error: Throwable? = null) =
         Log.e(TAG, "[$area] $message", error)
 }

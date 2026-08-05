@@ -178,7 +178,9 @@ class AodStateProjectorTest {
             lyricKind = LyricKind.NONE,
             hasTimedLyrics = false,
             line = "",
-            lineIndex = -1
+            lineIndex = -1,
+            title = "",
+            artist = ""
         )
         val out = project(s)
         assertEquals("♪", out.original)
@@ -197,7 +199,9 @@ class AodStateProjectorTest {
             lyricKind = LyricKind.UNSYNCED,
             hasTimedLyrics = false,
             line = "untimed one-liner",
-            lineIndex = -1
+            lineIndex = -1,
+            title = "",
+            artist = ""
         )
         val out = project(s)
         assertEquals("♪", out.original)
@@ -425,7 +429,9 @@ class AodStateProjectorTest {
             line = "",
             lineIndex = -1,
             nextLineStartMs = 5_000L,
-            positionMs = 1_000L
+            positionMs = 1_000L,
+            title = "",
+            artist = ""
         )
         val out = project(s)
         assertNotNull(out)
