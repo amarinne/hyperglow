@@ -131,6 +131,14 @@ private const val REVERSE_ANCHOR_QUIET_PERIOD_MS = 32L
 private const val REVERSE_ANCHOR_FALLBACK_DEADLINE_MS = 240L
 private const val REVERSE_ANCHOR_PROBE_MS = 16L
 private const val LOCKSCREEN_ENTRY_SLIDE_DP = 20f
+/**
+ * Lockscreen freshness tolerance while media is actively playing. The shared 5 s lyric-freshness
+ * window is tighter than typical producer keepalive spacing, which makes the surface flap between
+ * snapshots (visible -> stale -> hidden -> next keepalive -> visible). While playback is active the
+ * line text and projected position are still valid well beyond 5 s, so a looser window keeps the
+ * card stable without retaining stale content after playback actually stops.
+ */
+private const val LOCKSCREEN_PLAYBACK_FRESH_MS = 15_000L
 
 private class AdaptiveLyricCardBackgroundView(context: android.content.Context) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = CARD_BACKGROUND_COLOR }
@@ -212,14 +220,17 @@ internal fun shouldRenderLockscreenSnapshot(
     profileEnabled: Boolean,
     transitionFailed: Boolean,
     nowElapsedMs: Long
-): Boolean = snapshot != null &&
-    snapshot.visible &&
-    snapshot.isAuthorizedForPresentation() &&
-    snapshot.lockscreenEnabled &&
-    profileEnabled &&
-    !transitionFailed &&
-    !snapshot.metadata.startsWith("AOD DEMO") &&
-    nowElapsedMs - snapshot.updatedAtElapsedMs <= LYRIC_SNAPSHOT_FRESH_MS
+): Boolean {
+    val current = snapshot ?: return false
+    val freshMs = if (current.playbackActive) LOCKSCREEN_PLAYBACK_FRESH_MS else LYRIC_SNAPSHOT_FRESH_MS
+    return current.visible &&
+        current.isAuthorizedForPresentation() &&
+        current.lockscreenEnabled &&
+        profileEnabled &&
+        !transitionFailed &&
+        !current.metadata.startsWith("AOD DEMO") &&
+        nowElapsedMs - current.updatedAtElapsedMs <= freshMs
+}
 
 internal fun freezeLockscreenSnapshot(
     snapshot: LyricSnapshot,
@@ -1800,7 +1811,9 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
         cancelFreshnessExpiry()
         if (!snapshot.visible) return
         freshnessGeneration = attachmentGeneration
-        val delay = (snapshot.updatedAtElapsedMs + LYRIC_SNAPSHOT_FRESH_MS -
+        val freshMs = if (snapshot.playbackActive) LOCKSCREEN_PLAYBACK_FRESH_MS
+        else LYRIC_SNAPSHOT_FRESH_MS
+        val delay = (snapshot.updatedAtElapsedMs + freshMs -
             SystemClock.elapsedRealtime()).coerceAtLeast(0L) + 1L
         mainHandler.postDelayed(freshnessExpiry, delay)
     }
@@ -1863,9 +1876,20 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
         val quickSettingsController = readField(controller, "quickSettingsControllerImpl")
         return readBoolean(controller, "keyguardBouncerShowing", false) ||
             readFloat(controller, "keyguardBouncerFraction", 0f) > 0.01f ||
-            (editorState != null && editorState != "IDLE" && editorState != "IDEL") ||
+            isEditorActivelyObscuring(editorState) ||
             (readField(keyguardStateController, "mKeyguardGoingAway") as? Boolean) == true ||
             invokeNoArgBoolean(quickSettingsController, "getExpanded", false)
+    }
+
+    /**
+     * editorState may be an enum name, an int ordinal, or absent. Only explicitly recognized
+     * editing/dragging states obscure playback; numeric ordinals and unknown values fail open so
+     * a type mismatch never hides lyrics during normal lockscreen use.
+     */
+    private fun isEditorActivelyObscuring(editorState: String?): Boolean {
+        val state = editorState?.uppercase() ?: return false
+        if (state in setOf("IDLE", "IDEL", "0", "NULL", "")) return false
+        return state.contains("EDIT") || state.contains("DRAG")
     }
 
     private fun invokeNoArgInt(owner: Any?, name: String): Int = runCatching {

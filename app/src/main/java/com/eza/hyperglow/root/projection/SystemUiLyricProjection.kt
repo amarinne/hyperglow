@@ -21,7 +21,26 @@ import java.util.IdentityHashMap
 internal enum class LyricSurfaceKind { LOCKSCREEN, AOD }
 
 internal const val LYRIC_SNAPSHOT_FRESH_MS = 5_000L
+
+/**
+ * Looser freshness window honored while media is actively playing. The shared 5 s window is
+ * tighter than the producer's ~4 s keepalive spacing, so any missed/late keepalive made the
+ * projection clear [latestSnapshot] at 5 s. That was catastrophic for both surfaces:
+ *
+ *  - AOD: clearing the snapshot stops the draw-wake renewal (playbackActive reads false) AND
+ *    rejects subsequent keepalives (accept() returns early when latestSnapshot == null), so the
+ *    doze surface stops compositing and lyrics freeze until the next line-change snapshot.
+ *  - Lockscreen: onLyricProjectionStale -> hideSurface() fires at 5 s, overriding the
+ *    controller's own 15 s playback window and making the card flap visible/hidden.
+ *
+ * While playback is active the lyric content and position are still valid well beyond 5 s, so a
+ * 15 s window keeps both surfaces stable without retaining stale content after playback stops.
+ */
+internal const val LYRIC_PLAYBACK_FRESH_MS = 15_000L
 private const val MAX_WIRE_FUTURE_SKEW_MS = 1_000L
+
+internal fun lyricFreshnessWindowMs(playbackActive: Boolean): Long =
+    if (playbackActive) LYRIC_PLAYBACK_FRESH_MS else LYRIC_SNAPSHOT_FRESH_MS
 
 internal fun isPlausibleWireTimestamp(updatedAtElapsedMs: Long, nowElapsedMs: Long): Boolean =
     updatedAtElapsedMs >= 0L && nowElapsedMs >= 0L &&
@@ -36,11 +55,12 @@ internal fun shouldRenewAodDraw(
     sceneActive: Boolean,
     effectivelyVisible: Boolean,
     pendingStockMotion: Boolean,
-    keepAlive: Boolean
+    keepAlive: Boolean,
+    playbackActive: Boolean = false
 ): Boolean = surfaceKind == LyricSurfaceKind.AOD &&
     attached &&
     sceneActive &&
-    keepAlive &&
+    (keepAlive || playbackActive) &&
     (effectivelyVisible || pendingStockMotion)
 
 internal fun shouldRequestAodWake(
@@ -204,7 +224,7 @@ internal class SystemUiLyricProjection(
     internal fun expireIfStale(nowElapsedMs: Long): Boolean {
         val snapshot = latestSnapshot ?: return false
         if ((!snapshot.visible && !snapshot.playbackActive) ||
-            nowElapsedMs - snapshot.updatedAtElapsedMs <= LYRIC_SNAPSHOT_FRESH_MS
+            nowElapsedMs - snapshot.updatedAtElapsedMs <= lyricFreshnessWindowMs(snapshot.playbackActive)
         ) {
             return false
         }
@@ -299,7 +319,8 @@ internal class SystemUiLyricProjection(
         if (!snapshot.visible && !snapshot.playbackActive) return
         val expectedRevision = snapshot.revision
         val expectedUpdatedAt = snapshot.updatedAtElapsedMs
-        val delay = (expectedUpdatedAt + LYRIC_SNAPSHOT_FRESH_MS -
+        val freshMs = lyricFreshnessWindowMs(snapshot.playbackActive)
+        val delay = (expectedUpdatedAt + freshMs -
             elapsedRealtime()).coerceAtLeast(0L) + 1L
         expiryScheduler.schedule(delay) {
             synchronized(this) {

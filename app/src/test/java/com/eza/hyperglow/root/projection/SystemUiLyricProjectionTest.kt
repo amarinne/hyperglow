@@ -10,6 +10,7 @@ import com.eza.hyperglow.aod.AodStateWireWord
 import com.eza.hyperglow.customization.SceneCompiler
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -282,6 +283,14 @@ class SystemUiLyricProjectionTest {
         assertTrue(shouldRenewAodDraw(
             LyricSurfaceKind.AOD, true, true, false, true, true
         ))
+        // Playback-active synced lyrics renew the draw wake even without explicit keepAlive,
+        // so the AOD keeps compositing frames while the screen is off.
+        assertTrue(shouldRenewAodDraw(
+            LyricSurfaceKind.AOD, true, true, true, false, false, playbackActive = true
+        ))
+        assertFalse(shouldRenewAodDraw(
+            LyricSurfaceKind.AOD, true, true, false, false, false, playbackActive = true
+        ))
         assertFalse(shouldRequestAodWake(true, false, true))
         assertFalse(shouldRequestAodWake(true, true, false))
         assertTrue(shouldRequestAodWake(true, true, true))
@@ -364,7 +373,11 @@ class SystemUiLyricProjectionTest {
             )
         )
 
-        assertTrue(harness.projection.expireIfStale(5_011L))
+        // Playback-active snapshots use the looser 15 s window so a missed keepalive no longer
+        // clears the cached snapshot at 5 s (which previously froze AOD updates and made the
+        // lockscreen card flap). The transport gap still expires once it exceeds 15 s.
+        assertFalse(harness.projection.expireIfStale(5_011L))
+        assertTrue(harness.projection.expireIfStale(15_011L))
 
         harness.projection.accept(
             LyricProjectionMessage.Snapshot(
@@ -379,6 +392,48 @@ class SystemUiLyricProjectionTest {
 
         assertFalse(harness.projection.expireIfStale(Long.MAX_VALUE))
         assertTrue(harness.projection.cachedSnapshot()?.pauseRetentionEligible == true)
+    }
+
+    @Test
+    fun playbackActiveVisibleSnapshotSurvivesKeepaliveGapWithoutStaleHide() {
+        val harness = Harness()
+        val subscriber = RecordingSubscriber(LyricSurfaceKind.LOCKSCREEN)
+        harness.projection.attach(subscriber, null)
+        harness.projection.accept(
+            LyricProjectionMessage.Snapshot(
+                snapshot(1, 10).copy(visible = true, playbackActive = true)
+            )
+        )
+
+        // Within the 15 s playback window the snapshot must not be cleared, so neither the
+        // lockscreen nor the AOD surface receives onLyricProjectionStale -> hideSurface()
+        // during a normal keepalive spacing gap.
+        assertFalse(harness.projection.expireIfStale(5_011L))
+        assertFalse(harness.projection.expireIfStale(14_999L))
+        assertEquals(0, subscriber.staleEvents)
+        assertNotNull(harness.projection.cachedSnapshot())
+
+        assertTrue(harness.projection.expireIfStale(15_011L))
+        assertEquals(1, subscriber.staleEvents)
+        assertNull(harness.projection.cachedSnapshot())
+    }
+
+    @Test
+    fun pausedSnapshotStillExpiresAtTightFiveSecondWindow() {
+        val harness = Harness()
+        val subscriber = RecordingSubscriber(LyricSurfaceKind.LOCKSCREEN)
+        harness.projection.attach(subscriber, null)
+        harness.projection.accept(
+            LyricProjectionMessage.Snapshot(
+                snapshot(1, 10).copy(visible = true, playbackActive = false)
+            )
+        )
+
+        // Non-playback (paused) snapshots keep the tight 5 s window so stale content is dropped
+        // promptly after playback actually stops.
+        assertFalse(harness.projection.expireIfStale(5_000L))
+        assertTrue(harness.projection.expireIfStale(5_011L))
+        assertEquals(1, subscriber.staleEvents)
     }
 
     @Test

@@ -784,7 +784,11 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         updateLifetimeGuard()
         val wakeRequired = isNewAodWakeSignal(lastWakeSignal, signal.wakeSignal)
         lastWakeSignal = signal.wakeSignal
-        if (!effectiveKeepAlive && !wakeRequired) return
+        // Playback-active keepalives must still pulse the draw wake even when the keepAlive flag
+        // is false: some producers report playbackActive without keepAlive, and the immediate
+        // pulse on each ~4 s keepalive complements the 2.75 s periodic renewal to keep the doze
+        // surface compositing a fresh frame while the screen is off.
+        if (!effectiveKeepAlive && !wakeRequired && !signal.playbackActive) return
         val directSurface = surface ?: return
         val root = rootRef.get() ?: return
         requestWakeIfAllowed(root, directSurface, wakeRequired)
@@ -990,16 +994,21 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
 
     private fun updateLifetimeGuard() {
         val snapshot = latestSnapshot
-        val active = XiaomiCapabilityResolver.hasCapability(
-            XiaomiCapability.AOD_LIFETIME_GUARD
-        ) && shouldRenewAodDraw(
+        // The draw-wake renewal pulses mWakeLock on the AOD root to force Xiaomi's doze
+        // surface to composite a fresh frame, which is what keeps synced-lyric highlights
+        // advancing while the screen is off. It must not be gated on the AOD_LIFETIME_GUARD
+        // capability: that symbol is independent of mWakeLock, and gating on it silently
+        // freezes AOD updates on versions where the probe fails. pulseDrawWakeLock is
+        // guarded by runCatching, so an absent field fails harmlessly.
+        val active = shouldRenewAodDraw(
             surfaceKind = surfaceKind,
             attached = rootRef.get() != null,
             sceneActive = isSceneActive(),
             effectivelyVisible = isSurfaceRenderActive() &&
                 snapshot != null && canRenderAod(snapshot),
             pendingStockMotion = pendingStockMotionUpdate != null,
-            keepAlive = snapshot?.keepAlive == true
+            keepAlive = snapshot?.keepAlive == true,
+            playbackActive = snapshot?.playbackActive == true
         )
         setDrawWakeRenewalActive(active)
     }

@@ -415,7 +415,9 @@ class LockscreenSurfaceControllerTest {
                 2_000
             )
         )
-        assertFalse(shouldRenderLockscreenSnapshot(snapshot, true, false, 6_001))
+        assertFalse(shouldRenderLockscreenSnapshot(snapshot, true, false, 16_001))
+        // Paused (non-playback) snapshots fall back to the tighter 5 s freshness window.
+        assertFalse(shouldRenderLockscreenSnapshot(snapshot.copy(playbackActive = false), true, false, 6_001))
     }
 
     @Test
