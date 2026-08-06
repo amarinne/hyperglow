@@ -49,6 +49,11 @@ resolves from Google's Maven repository and Maven Central.
 JAVA_HOME=/path/to/jdk21 ./gradlew :app:testDebugUnitTest :app:assembleDebug
 ```
 
+This source tree tracks development and is usually ahead of the latest release, so a build from
+`main` may contain changes that have not been through device testing yet. Releases are published
+after debugging settles or once enough feature work has accumulated; install those if you want the
+tested version.
+
 That produces an installable debug APK under `app/build/outputs/apk/debug/`. Released builds are
 signed with a private key that is not in this repository, so a build from source will not share the
 signing lineage of the published releases: installing your own build over a release requires

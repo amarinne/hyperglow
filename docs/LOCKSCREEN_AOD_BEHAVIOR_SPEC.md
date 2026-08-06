@@ -14,15 +14,28 @@ contract. This spec defines surface visibility, privacy, continuity, customizati
 - Stale expiry, Binder death, caller failure, or invalid payload hides every subscriber. A hidden
   state explicitly marked as a real Spotify pause may retain the last valid lyric snapshot under the
   shared bounded policy below. Terminal hidden state clears it.
+- Producer state is ordered by generation then sequence: an older generation, or a lower sequence
+  within the same generation, is discarded as out of order. A repeat of the current sequence is
+  discarded only when it carries the same displayed text. The same sequence with revised title,
+  artist, lyric, transliteration, or translation is a correction — the producer reprocessed the
+  playing song — and replaces the held state, so text cannot outlive the setting that produced it.
 - State/configuration carry the app user ID; a SystemUI user switch clears/rebinds and rejects the
   previous user's cached payload.
 - AOD keepalive and lockscreen screen-on policy remain independent. Neither can activate from the
   other surface alone.
-- `playbackActive` comes only from the UID-validated Spotify bridge and is transported explicitly.
-  Other media players cannot activate lyric keepalive.
+- `playbackActive` comes only from the active lyric source and is transported explicitly. A source is
+  a process whose identity the producer has validated — the Spicy bridge validates Spotify's caller
+  UID — and only a validated source can activate lyric keepalive. Validation is a property of the
+  source process, not of whichever player that process reports: a source that cannot establish its
+  own identity contributes nothing, and no media player reaches keepalive except through a validated
+  source.
+- Exactly one source is active at a time. Spotify is the default, and is the only source today.
+  Sources are never merged, and a source that disconnects or fails validation is never replaced —
+  a silent failover would leave the screen held awake by something the user did not choose.
+  Switching sources stops the outgoing producer before the incoming one starts.
 - Live lyrics require `playbackActive=true`. The one shared `After Spotify pauses` setting applies to
   lockscreen and AOD: clear immediately, 5 seconds, 10 seconds, 30 seconds, or keep indefinitely.
-  The default is 5 seconds. Other media players cannot start or extend the timer.
+  The default is 5 seconds. Only the active validated source can start or extend the timer.
 
 ## Lockscreen visibility and privacy
 
@@ -153,10 +166,25 @@ first, lyrics shrink to the bounded minimum, and insufficient/unknown geometry f
   frozen AOD scene and current managed clock placement only for the shared configured timeout.
 - A playing song-generation change starts an 8-second presentation lease and emits a wake event so
   synced and unsynced songs may briefly present song-change metadata. Presentation policy shows the
-  title and artist at lyric size for three seconds, then morphs or crossfades to persistent small song
-  info when enabled; otherwise it removes the title/artist. An active opening lyric or an opening gap
-  shorter than three seconds defers one full intro to the next interlude with at least three seconds
-  available. This state is generation-bound and consumed at most once per song. It does not alter
+  title and artist at lyric size for five seconds or until the opening interlude ends, whichever comes
+  first, then morphs or crossfades to persistent small song info when enabled; otherwise it removes
+  the title/artist. A song whose opening is already known to be an active lyric, or a gap shorter
+  than three seconds, presents no intro then and defers one full intro to the next interlude with at
+  least three seconds available. The opening is not known at the song change itself, because metadata
+  arrives before the timed document; the intro leads there rather than showing the placeholder note,
+  and that start is provisional. Only the timed document settles it. An interlude confirms it, and
+  the intro then runs its course and is consumed even if the first lyric ends it early. A
+  document-backed lyric already under way does not confirm it: the intro yields the row at once and
+  the full intro is still owed at the next qualifying interlude. Producer line text arriving before
+  the document does not settle anything, because at a song change it still describes the moment
+  before the change rather than this song's opening.
+- `Show song info on song change` turns the whole intro off. It is a presentation choice and changes
+  nothing else: the song-change lease, the wake event, keepalive, and AOD lifetime are unaffected,
+  and the lyric row simply carries its normal content through the opening.
+- An instrumental gap arrives as an `INTERLUDE` row rather than as an absence of rows, so a row
+  covering the playhead is not evidence of singing. Interlude rows are interludes for every intro
+  decision, and the length of an interlude is measured to the next sung row, not to the end of the
+  interlude row itself. This state is generation-bound and consumed at most once per song. It does not alter
   playback, pause retention, wake identity, keepalive, or AOD lifetime policy. The first accepted timed
   document for that generation emits a second wake event, allowing a synced track to restore AOD
   after an earlier unsynced track timed out. The exact verified wake broker calls Xiaomi's
@@ -186,6 +214,11 @@ first, lyrics shrink to the bounded minimum, and insufficient/unknown geometry f
   content capability and never gates lifetime policy. The next visible snapshot cancels the grace
   without replaying Xiaomi hide policy. Paused/non-playing state releases immediately. This prevents short
   producer/status gaps from turning AOD off mid-song; stale/disconnect still releases immediately.
+- A still-playing transport gap carries the session's existing keepalive intent, not a withdrawal.
+  Publishing playback without keepalive reads as a withdrawal at the SystemUI coordinator and
+  releases Xiaomi lifetime suppression for the length of the gap, which is what a song change must
+  never do. The coordinator's own power grace remains a backstop for that window rather than the
+  only defence. A confirmed pause or a lost session carries no intent and releases normally.
 - A non-playing `loading` edge during song replacement is projected as that bounded still-playing
   transport gap. Every other non-playing edge is provisional: Spotify reports the ending track as
   `ready`/not playing roughly a second before the next generation arrives, so the edge is first
@@ -290,7 +323,7 @@ first, lyrics shrink to the bounded minimum, and insufficient/unknown geometry f
 - Each surface profile stores metadata size from 50% to 200% and ruby-reading visibility. Ruby is
   shown by default and, when disabled, reserves no drawing or layout height.
 - During the generation-bound song intro, matching one-line title/artist text suppresses the duplicate
-  metadata row and morphs into the persistent metadata position and size after three seconds.
+  metadata row and morphs into the persistent metadata position and size when the intro ends.
   Incompatible or wrapped geometry uses bounded crossfade. Neither path changes whole-surface alpha,
   stock-clock brightness, or placement authority.
 - Imported data cannot name classes, resources, methods, paths, URLs, commands, or external bitmap
@@ -322,16 +355,23 @@ size regardless of user/imported values.
 ## Capability fallback
 
 The app displays explicit support state from the latest accepted capability report: no report,
-verified, verified with missing symbols, unsupported, experimental-eligible, or experimental-active.
-Configured surface preferences remain stored on unsupported profiles, but the app must describe them
-as unable to run and disable runtime-dependent controls. Appearance editors remain usable for preview
-and future configuration. The user can create a compatibility report containing package versions and
-bounded raw-symbol evidence.
+verified, verified with missing symbols, unsupported, or experimental-active. Configured surface
+preferences remain stored on unsupported profiles, but the app must describe them as unable to run and
+disable runtime-dependent controls. Appearance editors remain usable for preview and future
+configuration. The user can create a compatibility report containing package versions and bounded
+raw-symbol evidence.
+
+A capability is granted when its exact symbols resolve. A SystemUI/AOD version pair that does not
+match the owner-verified baseline does not withhold capabilities; that build runs what its symbols
+support and reports experimental-active, which is also the state that offers a compatibility report
+rather than a problem report. Fail-closed is per symbol: an unresolved seam removes its own capability
+and leaves the rest, and a build with no usable surface symbols is unsupported and runs nothing.
+Experimental-eligible is retired as a live state and is decoded only for reports written by an earlier
+build or sent by a SystemUI process that has not restarted.
 
 Capability report protocol v2 includes the report timestamp, effective profile state, experimental
 state, raw probe set, and resolved capability set. Protocol v1 remains accepted only for app/SystemUI
-update transition compatibility. Unknown profiles remain fail-closed; raw probe success alone does not
-install or enable a hook.
+update transition compatibility.
 
 Capabilities are independent:
 

@@ -404,4 +404,39 @@ class AodPositionUpdateTest {
 
         assertNull(decision)
     }
+    @Test
+    fun rememberedPhysicalBoundsOutrankTheManagedRequestWhenTheClockCannotBeMeasured() {
+        // The physical clock cannot be measured while the panel is dark, and the managed value is
+        // where the clock was asked to go rather than where it is. On this device those differ by
+        // hundreds of pixels, which put the lyrics at the top of the screen after every re-attach.
+        val resolved = resolvedAodClockBounds(
+            renderedBounds = null,
+            controlledTop = 263,
+            controlledBottom = 1266,
+            measuredTop = 0,
+            measuredBottom = 0,
+            exactPhysicalBounds = null,
+            rememberedPhysicalBounds = AodRenderedClockBounds(1015, 2019)
+        )
+
+        assertEquals(1015, resolved.top)
+        assertEquals(2019, resolved.bottom)
+    }
+
+    @Test
+    fun aLivePhysicalMeasurementStillOutranksTheRememberedOne() {
+        val resolved = resolvedAodClockBounds(
+            renderedBounds = null,
+            controlledTop = 263,
+            controlledBottom = 1266,
+            measuredTop = 0,
+            measuredBottom = 0,
+            exactPhysicalBounds = AodRenderedClockBounds(300, 1300),
+            rememberedPhysicalBounds = AodRenderedClockBounds(1015, 2019)
+        )
+
+        assertEquals(300, resolved.top)
+        assertEquals(1300, resolved.bottom)
+    }
+
 }

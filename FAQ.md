@@ -14,6 +14,12 @@ Current testing covers one device only:
 - Xiaomi AOD `DEV-2327.0.0.1-03022115` (`22327001`).
 
 Other Xiaomi models and software versions may behave differently. Compatibility is not guaranteed.
+
+HyperGlow attempts to run anyway. Each capability is enabled by finding the exact code it needs in
+your build, rather than by matching a known version, so a build that was never tested still works if
+it carries the same internals — and a part that is missing disables only itself. The support state in
+settings reports which parts were found. If something does not work, the compatibility report above
+is what makes it fixable.
 Submit the report above so support can be evaluated from the exact SystemUI and AOD versions.
 
 ### Requirements

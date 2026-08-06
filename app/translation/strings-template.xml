@@ -113,6 +113,7 @@
     <string name="choice_lyric_lines">Lyric lines</string>
     <string name="setting_keep_phrases_together">Keep phrases together</string>
     <string name="setting_show_song_info">Show song info</string>
+    <string name="setting_song_change_info">Show song info on song change</string>
     <string name="choice_song_info_position">Song info position</string>
     <string name="setting_song_info_size">Song info size</string>
     <string name="choice_text_weight">Text weight</string>

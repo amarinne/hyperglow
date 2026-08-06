@@ -183,9 +183,13 @@ and privacy-safe `HyperGlow` log events already governed by the logging contract
 
 Capability protocol v2 adds report time, effective profile state, experimental state, raw exact-symbol
 probe results, and the resolved capability set. The app accepts v1 during app/SystemUI process update
-transitions. Raw probes include the AOD host container and lockscreen controller/host/geometry seams;
-unknown profiles still resolve no runtime capabilities. Stored appearance preferences remain separate
-from compatibility state.
+transitions. Raw probes include the AOD host container and lockscreen controller/host/geometry seams.
+Capabilities resolve from those probes alone: a build whose SystemUI/AOD version pair does not match
+the owner-verified baseline still runs every capability its symbols support, and reports itself as
+experimental-active. The version match is reported, not enforced, because the same symbols appear on
+most builds and an unverified build otherwise produces no evidence at all. Fail-closed applies per
+symbol, so a missing seam removes its own capability and nothing else. Stored appearance preferences
+remain separate from compatibility state.
 
 Guided capture temporarily enables existing diagnostic logging and publishes the normal compiled
 configuration. Finish executes only fixed, bounded root commands with no user-controlled shell text.

@@ -25,11 +25,14 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
     private var lifetimeActive = false
     private var lifetimeActiveSinceElapsedMs = Long.MIN_VALUE
     private var hideRaceRecoveryPending = false
+    /** What last moved the guard. Reported with the transition so a release names its own cause. */
+    private var guardCause = "init"
     private val graceExpiry = Runnable {
         if (!graceActive) return@Runnable
         graceActive = false
         graceEligible = false
         keepAliveRequested = false
+        guardCause = "grace-expired"
         HookLogger.i(TAG, "AOD power grace expired")
         updateLifetimeGuard()
     }
@@ -37,6 +40,7 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
     fun onSurfaceAttached() {
         if (surfaceAttached) return
         surfaceAttached = true
+        guardCause = "surface-attached"
         updateLifetimeGuard()
     }
 
@@ -44,6 +48,7 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
         aodDisplayOff = false
         if (!surfaceAttached) return
         surfaceAttached = false
+        guardCause = "surface-detached"
         updateLifetimeGuard()
     }
 
@@ -75,6 +80,8 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
     }
 
     override fun onLyricSnapshot(snapshot: LyricSnapshot) {
+        guardCause = "snapshot visible=${snapshot.visible} playing=${snapshot.playbackActive} " +
+            "keepAlive=${snapshot.keepAlive} grace=$graceActive"
         if (snapshot.visible) {
             aodEnabled = snapshot.aodEnabled
             keepAliveRequested = snapshot.aodEnabled && snapshot.playbackActive && snapshot.keepAlive
@@ -101,6 +108,8 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
     }
 
     override fun onLyricKeepAlive(signal: LyricKeepAliveSignal) {
+        guardCause = "keepalive playing=${signal.playbackActive} keepAlive=${signal.keepAlive} " +
+            "grace=$graceActive"
         if (!signal.playbackActive) {
             cancelGrace()
             keepAliveRequested = false
@@ -143,6 +152,7 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
                 XiaomiCapability.AOD_LIFETIME_GUARD
             )
         )
+        AodLifetimeController.noteGuardCause(guardCause)
         if (active != lifetimeActive) {
             lifetimeActive = active
             lifetimeActiveSinceElapsedMs = if (active) SystemClock.elapsedRealtime() else Long.MIN_VALUE

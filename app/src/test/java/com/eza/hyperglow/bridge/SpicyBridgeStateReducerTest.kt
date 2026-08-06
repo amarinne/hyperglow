@@ -95,6 +95,31 @@ class SpicyBridgeStateReducerTest {
         assertTrue(reducer.accept(payload(generation = 3, sequence = 2), NOW_MS + 4_000))
     }
 
+    @Test
+    fun reprocessedTextOnTheSameSequenceReplacesHeldText() {
+        val reducer = SpicyBridgeStateReducer()
+        assertTrue(reducer.accept(payload(generation = 4, sequence = 8), NOW_MS))
+
+        // The producer reprocessed the playing song — transliteration mode changed, or its own
+        // cache was cleared — and republished the same logical update with revised text. Dropping
+        // this as stale left the old romanization on screen for the rest of the song.
+        assertTrue(
+            reducer.accept(
+                payload(generation = 4, sequence = 8, romanizedLine = "revised"),
+                NOW_MS
+            )
+        )
+        assertEquals("revised", reducer.current?.romanizedLine)
+
+        // An exact repeat is still a duplicate and is still dropped.
+        assertFalse(
+            reducer.accept(
+                payload(generation = 4, sequence = 8, romanizedLine = "revised"),
+                NOW_MS
+            )
+        )
+    }
+
     private fun payload(
         protocolVersion: Int = SpicyBridgeStore.PROTOCOL_VERSION,
         producerId: String = PRODUCER_ID,
@@ -103,6 +128,7 @@ class SpicyBridgeStateReducerTest {
         status: String = "ready",
         trackUri: String = "spotify:track:test",
         line: String = "line",
+        romanizedLine: String = "romanized",
         positionMs: Long = 1_000,
         sampledAtElapsedMs: Long = NOW_MS,
         speed: Float = 1f,
@@ -119,7 +145,7 @@ class SpicyBridgeStateReducerTest {
         album = "album",
         imageId = "image",
         line = line,
-        romanizedLine = "romanized",
+        romanizedLine = romanizedLine,
         translatedLine = "translated",
         lineIndex = 2,
         positionMs = positionMs,

@@ -66,12 +66,19 @@ object AodLifetimeController {
     private var pendingControllerGeneration = -1L
     private var pendingMethod: Method? = null
     private var pendingReplay: Runnable? = null
+    private var guardCause = "init"
+
+    /** Records what the coordinator last acted on, so a guard transition can name its own cause. */
+    @Synchronized
+    fun noteGuardCause(cause: String) {
+        guardCause = cause
+    }
 
     @Synchronized
     fun setLyricActive(active: Boolean) {
         if (lyricActive == active) return
         lyricActive = active
-        HookLogger.i(TAG, "Lyric lifetime guard active=$active")
+        HookLogger.i(TAG, "Lyric lifetime guard active=$active cause=$guardCause")
         if (active) {
             clearPendingHideLocked()
             activeController.get()?.let(::cancelPolicyTimeouts)

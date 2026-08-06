@@ -44,8 +44,8 @@ android {
         applicationId = "com.eza.hyperglow"
         minSdk = 33
         targetSdk = 37
-        versionCode = 64
-        versionName = "0.3.52"
+        versionCode = 77
+        versionName = "0.3.65"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField(
             "String",

@@ -85,13 +85,22 @@ internal fun resolveRenderedAodSceneZone(
     }
 }
 
+/**
+ * @param rememberedPhysicalBounds the last physical measurement taken on a root of the same height.
+ *   The physical clock cannot be measured while the panel is dark, so every re-attach in that state
+ *   falls through to the managed position — which is where the clock was asked to go, not where the
+ *   stock AOD clock actually is. On this device those differ by hundreds of pixels, so the lyrics
+ *   appeared far from their configured place until the panel lit and the real bounds resolved. A
+ *   measurement already taken is better evidence than a position we merely requested.
+ */
 internal fun resolvedAodClockBounds(
     renderedBounds: AodRenderedClockBounds?,
     controlledTop: Int?,
     controlledBottom: Int?,
     measuredTop: Int,
     measuredBottom: Int,
-    exactPhysicalBounds: AodRenderedClockBounds? = null
+    exactPhysicalBounds: AodRenderedClockBounds? = null,
+    rememberedPhysicalBounds: AodRenderedClockBounds? = null
 ): AodRenderedClockBounds {
     val controlled = if (controlledTop != null && controlledBottom != null) {
         AodRenderedClockBounds(controlledTop, controlledBottom)
@@ -101,8 +110,10 @@ internal fun resolvedAodClockBounds(
     val validRendered = renderedBounds?.takeIf { it.height > 0 }
     val validControlled = controlled?.takeIf { it.height > 0 }
     val validPhysical = exactPhysicalBounds?.takeIf { it.height > 0 }
+    val validRemembered = rememberedPhysicalBounds?.takeIf { it.height > 0 }
     return when {
         validPhysical != null -> validPhysical
+        validRemembered != null -> validRemembered
         validControlled != null -> validControlled
         validRendered != null -> validRendered
         else -> AodRenderedClockBounds(measuredTop, measuredBottom)
@@ -271,6 +282,9 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     private var lastSnapshotTrace: String? = null
     private var lastBrightClockMorphPhase: Boolean? = null
     private var lastClockGeometryAuthority: String? = null
+    private var rememberedPhysicalClockBounds: AodRenderedClockBounds? = null
+    private var rememberedPhysicalClockRootHeight = 0
+    private var rememberedPhysicalClockTranslationY = 0f
     @Volatile private var stockWidgetControlActive = false
     @Volatile private var burnInPattern = "static_bottom"
     private var burnInIntervalMs = 60_000L
@@ -1104,6 +1118,21 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
             systemUiClockBounds,
             aodControllerClockBounds
         )
+        if (physicalClockBounds != null && root.height > 0) {
+            rememberedPhysicalClockBounds = physicalClockBounds
+            rememberedPhysicalClockRootHeight = root.height
+            rememberedPhysicalClockTranslationY = environment.burnInTranslationY
+        }
+        // A remembered measurement only describes this layout. A different root height means a
+        // different display or configuration, and the old bounds say nothing about it.
+        //
+        // The bounds are used as measured. Carrying them by our own burn-in delta was tried and
+        // reverted: the container keeps its translation across a re-attach while `environment`
+        // resets to zero, so the delta is a phantom exactly when the remembered bounds are needed.
+        // It moved the lyrics 333 px off a position that was already correct. The two offsets stay
+        // in the log because they are what showed that.
+        val rememberedPhysicalClockBounds = rememberedPhysicalClockBounds
+            ?.takeIf { rememberedPhysicalClockRootHeight == root.height }
         val effectiveClockBounds = if (brightLinkage && physicalClockBounds == null) {
             brightLinkageClockBounds(root.height)
         } else {
@@ -1113,7 +1142,8 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
                 controlledClockBottom,
                 stockTop,
                 stockBottom,
-                physicalClockBounds
+                physicalClockBounds,
+                rememberedPhysicalClockBounds
             )
         }
         val effectiveClockTop = effectiveClockBounds.top
@@ -1122,6 +1152,7 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
             systemUiClockBounds != null -> "physical-systemui"
             aodControllerClockBounds != null -> "physical-aod"
             brightLinkage -> "bright-fallback"
+            rememberedPhysicalClockBounds != null -> "physical-remembered"
             controlledClockTop != null && controlledClockBottom != null -> "managed"
             renderedClockBounds != null -> "rendered-fallback"
             else -> "measured-fallback"
@@ -1132,7 +1163,9 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
                 TAG,
                 "Clock geometry authority=$clockGeometryAuthority bounds=" +
                     "$effectiveClockTop..$effectiveClockBottom managed=" +
-                    "${controlledClockTop ?: "?"}..${controlledClockBottom ?: "?"}"
+                    "${controlledClockTop ?: "?"}..${controlledClockBottom ?: "?"} burnInY=" +
+                    "${environment.burnInTranslationY.roundToInt()} rememberedAtY=" +
+                    "${rememberedPhysicalClockTranslationY.roundToInt()}"
             )
         }
         val layoutZone = if (brightLinkage || physicalClockBounds != null) {

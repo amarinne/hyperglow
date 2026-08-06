@@ -28,7 +28,8 @@ data class AodRenderConfig(
     val pauseLingerMs: Long = 5_000L,
     val lockscreenKeepAwake: Boolean = false,
     val raiseToAod: Boolean = false,
-    val suppressLockscreenEditorLongPress: Boolean = false
+    val suppressLockscreenEditorLongPress: Boolean = false,
+    val songChangeInfoEnabled: Boolean = true
 )
 
 internal fun normalizeAodAlignment(value: String?): String = when (value) {
@@ -117,6 +118,7 @@ object AodRenderPreferences {
     const val AOD_ENABLED = "aod_enabled"
     const val LOCKSCREEN_ENABLED = "lockscreen_enabled"
     const val SEAMLESS_TRANSITION_ENABLED = "seamless_transition_enabled"
+    const val SONG_CHANGE_INFO_ENABLED = "song_change_info_enabled"
     const val ALIGNMENT = "alignment"
     const val SECONDARY = "secondary"
     const val OVERFLOW = "overflow"
@@ -177,7 +179,8 @@ object AodRenderPreferences {
             normalizePauseLingerMs(prefs.getLong(PAUSE_LINGER_MS, 5_000L)),
             prefs.getBoolean(LOCKSCREEN_KEEP_AWAKE, false),
             prefs.getBoolean(RAISE_TO_AOD, false),
-            prefs.getBoolean(SUPPRESS_LOCKSCREEN_EDITOR_LONG_PRESS, false)
+            prefs.getBoolean(SUPPRESS_LOCKSCREEN_EDITOR_LONG_PRESS, false),
+            prefs.getBoolean(SONG_CHANGE_INFO_ENABLED, true)
         ).also { cachedConfig = it }
     }
 }

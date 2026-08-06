@@ -117,6 +117,38 @@ class AodProjectionLifecycleTest {
         )
     }
 
+    @Test
+    fun stillPlayingTransportGapKeepsTheKeepAliveIntentAsserted() {
+        // A song change publishes a release that is still playing. Dropping keepalive there let the
+        // SystemUI coordinator withdraw Xiaomi lifetime suppression for the length of the gap, and
+        // a long boundary lost the panel inside that window.
+        assertEquals(
+            true,
+            AodProjectionEngine.retainedTransportGapKeepAlive(
+                playbackActive = true,
+                lastKeepAliveIntent = true
+            )
+        )
+    }
+
+    @Test
+    fun aRealReleaseCarriesNoKeepAliveIntent() {
+        assertEquals(
+            false,
+            AodProjectionEngine.retainedTransportGapKeepAlive(
+                playbackActive = false,
+                lastKeepAliveIntent = true
+            )
+        )
+        assertEquals(
+            false,
+            AodProjectionEngine.retainedTransportGapKeepAlive(
+                playbackActive = true,
+                lastKeepAliveIntent = false
+            )
+        )
+    }
+
     private fun document(type: String, startMs: Long, endMs: Long) = SpicyBridgeDocument(
         producerId = "producer",
         generation = 7,

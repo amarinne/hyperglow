@@ -161,11 +161,20 @@ internal class SpicyBridgeStateReducer {
             if (isStale(accepted, now)) current = null
         }
         current?.let { accepted ->
-            if (payload.producerId == accepted.producerId &&
-                (payload.generation < accepted.generation ||
-                    payload.generation == accepted.generation &&
-                    payload.sequence <= accepted.sequence)
-            ) return false
+            if (payload.producerId == accepted.producerId) {
+                if (payload.generation < accepted.generation) return false
+                if (payload.generation == accepted.generation) {
+                    if (payload.sequence < accepted.sequence) return false
+                    // A repeat of the current sequence used to be dropped as stale. That is right
+                    // for a duplicate and wrong for a correction: when the producer reprocesses the
+                    // playing song — a transliteration or translation setting changed, its own cache
+                    // was cleared — it republishes the same logical update with revised text. Held
+                    // text then outlived the setting that produced it for the rest of the song.
+                    if (payload.sequence == accepted.sequence &&
+                        !revisesDisplayedText(payload, accepted)
+                    ) return false
+                }
+            }
         }
 
         if (!payload.trackUri.startsWith("spotify:track:") ||
@@ -250,6 +259,20 @@ internal class SpicyBridgeStateReducer {
 
     private fun isStale(state: SpicyBridgeState, now: Long): Boolean =
         now - state.receivedAtElapsedMs > SpicyBridgeStore.STALE_AFTER_MS
+
+    /**
+     * True when a same-sequence payload carries text the held state does not. Only the displayed
+     * strings count: a correction is a change of what the user reads, and everything else on the
+     * same sequence is a duplicate.
+     */
+    private fun revisesDisplayedText(
+        payload: SpicyBridgeStatePayload,
+        accepted: SpicyBridgeState
+    ): Boolean = payload.line != accepted.line ||
+        payload.romanizedLine != accepted.romanizedLine ||
+        payload.translatedLine != accepted.translatedLine ||
+        payload.title != accepted.title ||
+        payload.artist != accepted.artist
 
     companion object {
         private const val MAX_TEXT_LENGTH = 8_192

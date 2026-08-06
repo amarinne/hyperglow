@@ -74,56 +74,69 @@ class XiaomiCapabilityResolverTest {
     }
 
     @Test
-    fun unknownPackageProfileRejectsMutatingAodCapabilities() {
-        val capabilities = resolveXiaomiCapabilities(
-            XiaomiSymbolSnapshot(
-                aodSurface = true,
-                aodHostContainer = true,
-                aodPositionUpdates = true,
-                aodPositionTarget = true,
-                aodLifetimeGuard = true,
-                aodWakeBroker = true,
-                lockscreenHost = true,
-                lockscreenController = true,
-                lockscreenHostContainer = true,
-                lockscreenGeometry = true,
-                linkageDirection = true,
-                raiseToAod = true,
-                lockscreenEditorGesture = true
-            ),
-            verifiedRuntimeProfile = false
+    fun unverifiedBuildStillResolvesEverySymbolBackedCapability() {
+        val symbols = XiaomiSymbolSnapshot(
+            aodSurface = true,
+            aodHostContainer = true,
+            aodPositionUpdates = true,
+            aodPositionTarget = true,
+            aodLifetimeGuard = true,
+            aodWakeBroker = true,
+            lockscreenHost = true,
+            lockscreenController = true,
+            lockscreenHostContainer = true,
+            lockscreenGeometry = true,
+            linkageDirection = true,
+            raiseToAod = true,
+            lockscreenEditorGesture = true
         )
+        val capabilities = resolveXiaomiCapabilities(symbols)
 
-        assertFalse(XiaomiCapability.AOD_SURFACE in capabilities)
-        assertFalse(XiaomiCapability.AOD_LIFETIME_GUARD in capabilities)
-        assertFalse(XiaomiCapability.AOD_WAKE_BROKER in capabilities)
-        assertFalse(XiaomiCapability.AOD_POSITION_UPDATES in capabilities)
-        assertFalse(XiaomiCapability.LOCKSCREEN_HOST in capabilities)
-        assertFalse(XiaomiCapability.RAISE_TO_AOD in capabilities)
-        assertFalse(XiaomiCapability.LOCKSCREEN_EDITOR_GESTURE in capabilities)
+        assertTrue(XiaomiCapability.AOD_SURFACE in capabilities)
+        assertTrue(XiaomiCapability.AOD_LIFETIME_GUARD in capabilities)
+        assertTrue(XiaomiCapability.AOD_WAKE_BROKER in capabilities)
+        assertTrue(XiaomiCapability.AOD_POSITION_UPDATES in capabilities)
+        assertTrue(XiaomiCapability.LOCKSCREEN_HOST in capabilities)
+        assertTrue(XiaomiCapability.RAISE_TO_AOD in capabilities)
+        assertTrue(XiaomiCapability.LOCKSCREEN_EDITOR_GESTURE in capabilities)
+        assertEquals(
+            XiaomiProfileState.EXPERIMENTAL_ACTIVE,
+            resolveXiaomiProfileState(verifiedRuntimeProfile = false, capabilities = capabilities)
+        )
     }
 
     @Test
-    fun unverifiedSurfaceSymbolsAreReportableButRemainFailClosed() {
+    fun unverifiedSurfaceSymbolsRunButRemainFailClosedPerSymbol() {
         val symbols = XiaomiSymbolSnapshot(
             aodSurface = true,
             aodHostContainer = true
         )
-        val capabilities = resolveXiaomiCapabilities(
-            symbols,
-            verifiedRuntimeProfile = false
-        )
+        val capabilities = resolveXiaomiCapabilities(symbols)
 
-        assertEquals(emptySet<XiaomiCapability>(), capabilities)
+        assertEquals(setOf(XiaomiCapability.AOD_SURFACE), capabilities)
         assertEquals(
-            XiaomiProfileState.EXPERIMENTAL_ELIGIBLE,
-            resolveXiaomiProfileState(
-                symbols,
-                verifiedRuntimeProfile = false,
-                capabilities = capabilities
-            )
+            XiaomiProfileState.EXPERIMENTAL_ACTIVE,
+            resolveXiaomiProfileState(verifiedRuntimeProfile = false, capabilities = capabilities)
         )
         assertTrue(symbols.rawProbes().getValue(XiaomiSymbolProbe.AOD_HOST_CONTAINER))
+    }
+
+    @Test
+    fun unverifiedBuildWithoutAnySurfaceRemainsUnsupported() {
+        val capabilities = resolveXiaomiCapabilities(
+            XiaomiSymbolSnapshot(
+                aodSurface = true,
+                aodPositionUpdates = true,
+                lockscreenHost = true
+            )
+        )
+
+        assertFalse(XiaomiCapability.AOD_SURFACE in capabilities)
+        assertFalse(XiaomiCapability.LOCKSCREEN_GEOMETRY in capabilities)
+        assertEquals(
+            XiaomiProfileState.UNSUPPORTED_PROFILE,
+            resolveXiaomiProfileState(verifiedRuntimeProfile = false, capabilities = capabilities)
+        )
     }
 
     @Test
@@ -136,7 +149,7 @@ class XiaomiCapabilityResolverTest {
 
         assertEquals(
             XiaomiProfileState.VERIFIED_PROFILE_MISSING_SYMBOLS,
-            resolveXiaomiProfileState(symbols, true, capabilities)
+            resolveXiaomiProfileState(true, capabilities)
         )
     }
 

@@ -341,7 +341,7 @@ private fun HomeScreen(
                             ArrowPreference(
                                 title = if (supportState == XiaomiRuntimeSupportState.NO_SYSTEM_UI_REPORT ||
                                     supportState == XiaomiRuntimeSupportState.UNSUPPORTED_PROFILE ||
-                                    supportState == XiaomiRuntimeSupportState.EXPERIMENTAL_ELIGIBLE
+                                    supportState == XiaomiRuntimeSupportState.EXPERIMENTAL_ACTIVE
                                 ) {
                                     stringResource(R.string.action_send_compatibility_report)
                                 } else {
@@ -957,6 +957,10 @@ private fun LyricLayoutScreen(
     }
     var activeChoice by remember { mutableStateOf<AodChoice?>(null) }
     var showResetDialog by remember { mutableStateOf(false) }
+    val renderPrefs = remember { context.getSharedPreferences(AodRenderPreferences.PREFS, 0) }
+    var songChangeInfo by remember {
+        mutableStateOf(AodRenderPreferences.read(context).songChangeInfoEnabled)
+    }
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -1164,6 +1168,17 @@ private fun LyricLayoutScreen(
                         selectedProfile.metadataVisible,
                         { visible -> updateSelected { withMetadataVisible(it, visible) } },
                         stringResource(R.string.setting_show_song_info)
+                    )
+                    SwitchPreference(
+                        songChangeInfo,
+                        { enabled ->
+                            renderPrefs.edit().putBoolean(
+                                AodRenderPreferences.SONG_CHANGE_INFO_ENABLED,
+                                enabled
+                            ).apply()
+                            songChangeInfo = enabled
+                        },
+                        stringResource(R.string.setting_song_change_info)
                     )
                     if (selectedProfile.metadataVisible) {
                         AodChoiceRow(AodChoiceKind.SONG_INFO_POSITION, selectedProfile.metadataAnchor) {
