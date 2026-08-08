@@ -6,6 +6,10 @@ Animated lock screen and always-on display lyrics for HyperOS 3.
 
 Requires root, LSPosed and [Spicy EX](https://github.com/amarinne/spicy-ex).
 
+<img src="assets/aod-clock.gif" width="240" alt="AOD lyrics with the stock clock">
+<img src="assets/aod-image.gif" width="240" alt="AOD lyrics with a custom image">
+<img src="assets/lockscreen.gif" width="240" alt="Lock screen lyrics">
+
 </div>
 
 ## Features

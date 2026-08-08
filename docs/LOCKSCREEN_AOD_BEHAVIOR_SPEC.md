@@ -255,7 +255,7 @@ first, lyrics shrink to the bounded minimum, and insufficient/unknown geometry f
 ## Lockscreen customization gestures
 
 - `Block lock screen customization` is off by default and independent of lyric visibility.
-- On the exact verified Xiaomi profile, suppression is limited to
+- When those exact Xiaomi symbols resolve, suppression is limited to
   `KeyguardEditorHelper.onTouchEvent(MotionEvent)`, the final `tryStartEditActivity()` launch gate,
   and `LockScreenMagazineController.handleSingleClickEvent()`.
 - The setting blocks the editor long press and the wallpaper-carousel single-tap preview.
@@ -267,7 +267,7 @@ first, lyrics shrink to the bounded minimum, and insufficient/unknown geometry f
 
 - HyperOS `Raise to wake` remains the sensor master switch. The module does not force-enable it and
   does not register a second pickup sensor.
-- When `Raise to show AOD` is enabled on the exact verified profile, only SystemUI wake calls whose
+- When `Raise to show AOD` is enabled and the raise-to-AOD capability resolved, only SystemUI wake calls whose
   detail is `com.android.systemui:PICK_UP` are remapped. The module first requests AOD through the
   verified Xiaomi `DozeHost.fireAodState(true, "reason_keycode_goto")` state-machine seam, then
   always suppresses the full wake. If AOD is already sustained by active lyrics, the request is
@@ -354,20 +354,26 @@ size regardless of user/imported values.
 
 ## Capability fallback
 
-The app displays explicit support state from the latest accepted capability report: no report,
-verified, verified with missing symbols, unsupported, or experimental-active. Configured surface
+The app displays explicit support state from the latest accepted capability report: no report, the
+resolved capability count as `<n>/<total> hooks available`, or unsupported. Configured surface
 preferences remain stored on unsupported profiles, but the app must describe them as unable to run and
 disable runtime-dependent controls. Appearance editors remain usable for preview and future
 configuration. The user can create a compatibility report containing package versions and bounded
-raw-symbol evidence.
+raw-symbol evidence, offered whenever the count is short of the total.
 
-A capability is granted when its exact symbols resolve. A SystemUI/AOD version pair that does not
-match the owner-verified baseline does not withhold capabilities; that build runs what its symbols
-support and reports experimental-active, which is also the state that offers a compatibility report
-rather than a problem report. Fail-closed is per symbol: an unresolved seam removes its own capability
-and leaves the rest, and a build with no usable surface symbols is unsupported and runs nothing.
-Experimental-eligible is retired as a live state and is decoded only for reports written by an earlier
-build or sent by a SystemUI process that has not restarted.
+A capability is granted when its exact symbols resolve, and nothing else gates it. The app does not
+compare a build's SystemUI/AOD version pair against a reference device: a survey across five AOD
+builds, four phone models, and a tablet found the pair predicted nothing the probes do not establish
+directly, and could not separate a tablet shipping no AOD implementation from a phone, because both
+report the same SystemUI version. Every build attempts its hooks and is described by what resolved.
+
+Fail-closed is per symbol: an unresolved seam removes its own capability and leaves the rest, and a
+build with no usable surface symbols is unsupported and runs nothing. A tablet that resolves the
+lockscreen seams but no AOD seam therefore runs lockscreen lyrics and reports AOD as unavailable.
+
+Verified, verified-with-missing-symbols, experimental-eligible, and experimental-active are retired
+as live states. They are decoded only for reports written by an earlier build or sent by a SystemUI
+process that has not restarted, and are treated as runnable when they appear.
 
 Capability report protocol v2 includes the report timestamp, effective profile state, experimental
 state, raw probe set, and resolved capability set. Protocol v1 remains accepted only for app/SystemUI

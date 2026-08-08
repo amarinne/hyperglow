@@ -40,15 +40,22 @@ internal enum class XiaomiSymbolProbe {
 }
 
 internal enum class XiaomiProfileState(val wireValue: String) {
-    VERIFIED_PROFILE("verified_profile"),
-    VERIFIED_PROFILE_MISSING_SYMBOLS("verified_profile_missing_symbols"),
+    /** A usable surface resolved. How much works is the resolved capability count, not this state. */
+    AVAILABLE("available"),
+
+    /** No usable surface resolved, so nothing can run. */
     UNSUPPORTED_PROFILE("unsupported_profile"),
 
     /**
-     * No longer produced. Capabilities used to wait behind a verified version match, and this was
-     * the waiting state. Kept so reports persisted by an older build, or sent by a hook process that
-     * has not restarted yet, still decode instead of being rejected.
+     * No longer produced. These described a build by how its SystemUI/AOD version pair compared
+     * against the owner's device. A survey across five AOD builds, four phone models and a tablet
+     * found the pair tracked nothing the symbol probes do not establish directly, and could not even
+     * separate a tablet with no AOD implementation from a phone, so the comparison was retired.
+     * Kept so reports persisted by an older build, or sent by a hook process that has not restarted
+     * yet, still decode instead of being rejected.
      */
+    VERIFIED_PROFILE("verified_profile"),
+    VERIFIED_PROFILE_MISSING_SYMBOLS("verified_profile_missing_symbols"),
     EXPERIMENTAL_ELIGIBLE("experimental_eligible"),
     EXPERIMENTAL_ACTIVE("experimental_active");
 
@@ -134,42 +141,21 @@ internal fun resolveXiaomiCapabilities(symbols: XiaomiSymbolSnapshot): Set<Xiaom
     }
 
 /**
- * Reports how much confidence the current build carries. An unverified build that resolved a usable
- * surface is [XiaomiProfileState.EXPERIMENTAL_ACTIVE]: it is running, and the report is what tells
- * the owner and the user what it is running on.
+ * Whether anything can run at all. A build with a usable surface is [XiaomiProfileState.AVAILABLE];
+ * how much of it works is the resolved capability count, which the app reports as a ratio rather
+ * than collapsing into a confidence label.
  */
 internal fun resolveXiaomiProfileState(
-    verifiedRuntimeProfile: Boolean,
     capabilities: Set<XiaomiCapability>
 ): XiaomiProfileState {
-    if (verifiedRuntimeProfile) {
-        return if (VERIFIED_BASELINE_CAPABILITIES.all(capabilities::contains)) {
-            XiaomiProfileState.VERIFIED_PROFILE
-        } else {
-            XiaomiProfileState.VERIFIED_PROFILE_MISSING_SYMBOLS
-        }
-    }
     val surfaceAvailable = XiaomiCapability.AOD_SURFACE in capabilities ||
         XiaomiCapability.LOCKSCREEN_GEOMETRY in capabilities
     return if (surfaceAvailable) {
-        XiaomiProfileState.EXPERIMENTAL_ACTIVE
+        XiaomiProfileState.AVAILABLE
     } else {
         XiaomiProfileState.UNSUPPORTED_PROFILE
     }
 }
-
-private val VERIFIED_BASELINE_CAPABILITIES = setOf(
-    XiaomiCapability.AOD_SURFACE,
-    XiaomiCapability.AOD_POSITION_UPDATES,
-    XiaomiCapability.AOD_LIFETIME_GUARD,
-    XiaomiCapability.AOD_WAKE_BROKER,
-    XiaomiCapability.LOCKSCREEN_HOST,
-    XiaomiCapability.LOCKSCREEN_GEOMETRY,
-    XiaomiCapability.LINKAGE_DIRECTION,
-    XiaomiCapability.LINKAGE_GEOMETRY,
-    XiaomiCapability.RAISE_TO_AOD,
-    XiaomiCapability.LOCKSCREEN_EDITOR_GESTURE
-)
 
 internal data class XiaomiCapabilityReport(
     val protocolVersion: Int = 2,
@@ -186,8 +172,9 @@ internal data class XiaomiCapabilityReport(
     fun summary(): String = buildString {
         append("systemui=").append(systemUiVersion)
         append(" aod=").append(aodVersion)
-        append(" verified=").append(if (verifiedRuntimeProfile) 1 else 0)
         append(" state=").append(profileState.wireValue)
+        append(" available=").append(capabilities.size)
+            .append('/').append(XiaomiCapability.entries.size)
         append(" capabilities=")
         append(
             XiaomiCapability.entries.joinToString(",") { capability ->
@@ -362,22 +349,21 @@ internal object XiaomiCapabilityResolver {
             fullAod = defaultSymbols.fullAod && aodSymbols.fullAod,
             videoDepth = defaultSymbols.videoDepth
         )
-        val verifiedRuntimeProfile = isVerifiedRuntimeProfile(systemUiVersion, aodVersion)
         val capabilities = resolveXiaomiCapabilities(symbols)
-        val profileState = resolveXiaomiProfileState(
-            verifiedRuntimeProfile = verifiedRuntimeProfile,
-            capabilities = capabilities
-        )
+        val profileState = resolveXiaomiProfileState(capabilities)
         return XiaomiCapabilityReport(
             protocolVersion = 2,
             reportedAtUtcMillis = System.currentTimeMillis(),
             systemUiVersion = systemUiVersion,
             aodVersion = aodVersion,
             symbols = symbols,
-            verifiedRuntimeProfile = verifiedRuntimeProfile,
+            // Both flags describe the retired version comparison. They stay on the wire at
+            // protocol v2 so a hook process that has not restarted still decodes, and are
+            // always false now that no build is measured against the owner's version pair.
+            verifiedRuntimeProfile = false,
             capabilities = capabilities,
             profileState = profileState,
-            experimentalModeActive = profileState == XiaomiProfileState.EXPERIMENTAL_ACTIVE,
+            experimentalModeActive = false,
             rawProbes = symbols.rawProbes()
         )
     }
@@ -469,10 +455,4 @@ internal object XiaomiCapabilityResolver {
     private const val POWER_MANAGER = "android.os.PowerManager"
     private const val FULL_AOD_MANAGER = "com.miui.interfaces.keyguard.IMiuiFullAodManager"
     private const val VIDEO_DEPTH_SURFACE_HOLDER = "com.miui.keyguard.VideoDepthSurfaceHolder"
-    private const val VERIFIED_SYSTEM_UI_VERSION_CODE = 202501210L
-    private const val VERIFIED_AOD_VERSION_CODE = 22327001L
-
-    internal fun isVerifiedRuntimeProfile(systemUiVersion: String, aodVersion: String): Boolean =
-        systemUiVersion.endsWith("($VERIFIED_SYSTEM_UI_VERSION_CODE)") &&
-            aodVersion.endsWith("($VERIFIED_AOD_VERSION_CODE)")
 }

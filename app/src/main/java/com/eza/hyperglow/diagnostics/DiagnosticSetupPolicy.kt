@@ -11,6 +11,19 @@ internal data class HyperGlowSetupInput(
     val spotifyPackagePresent: Boolean
 )
 
+/**
+ * States whose build runs what its symbols support. Only a build with no usable surface is
+ * unsupported. `available` is the current state; the rest were produced by the retired version
+ * comparison and stay here so a report from an older build still classifies. Keep this in parity
+ * with the runtime gate in MainActivity.
+ */
+private val RUNNABLE_PROFILE_STATES = setOf(
+    "available",
+    "verified_profile",
+    "verified_profile_missing_symbols",
+    "experimental_active"
+)
+
 internal fun resolveHyperGlowSetupChecks(input: HyperGlowSetupInput): HyperGlowSetupChecks {
     val failures = mutableListOf<String>()
     var hardFailure = false
@@ -31,7 +44,7 @@ internal fun resolveHyperGlowSetupChecks(input: HyperGlowSetupInput): HyperGlowS
         failures += "systemui_hook"
         hardFailure = true
     }
-    val profileSupported = input.profileState == "verified_profile"
+    val profileSupported = input.profileState in RUNNABLE_PROFILE_STATES
     if (input.capabilityReportPresent && !profileSupported) {
         failures += "unsupported_profile"
         hardFailure = true

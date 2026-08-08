@@ -60,7 +60,7 @@ All accepted report data is retained indefinitely until a maintainer manually de
 - capability protocol/age, effective profile state, raw symbol probes, resolved capabilities;
 - configured surface flags, callback presence, and privacy-safe Spotify producer status/age;
 - capture outcome, root status, command failures, and truncation flags.
-- bounded setup state and failure keys for root, SystemUI hook/report, verified profile, Spotify
+- bounded setup state and failure keys for root, SystemUI hook/report, profile support, Spotify
   producer bridge, and required package presence/version metadata.
 - current Spotify track URI, title, artist, album, lyric provider/source, detected language, timing
   type, current line index, and bounded original/transliterated/translated lyric lines when present;
@@ -118,12 +118,14 @@ probes, and resolved capabilities. The app accepts v1 while app and SystemUI pro
 Runtime status is one of:
 
 - `No SystemUI report`;
-- `Verified profile`;
-- `Verified profile missing symbols`;
-- `Unsupported profile`;
-- `Experimental eligible`;
-- `Experimental active`.
+- `<n>/<total> hooks available`, the resolved capability count, reported as `available`;
+- `Unsupported profile`.
+
+A build is described by how much of it resolved rather than by how its SystemUI/AOD version pair
+compares against any reference device. `Verified profile`, `Verified profile missing symbols`,
+`Experimental eligible`, and `Experimental active` were produced by that comparison, which is
+retired. They remain decodable so a report written by an older build, or sent by a hook process that
+has not restarted, still classifies, and they still count as runnable.
 
 Unsupported surfaces preserve stored configuration but cannot present it as active. Runtime-dependent
-controls are disabled; appearance editors remain available. Experimental hook activation is outside
-this checkpoint and remains fail-closed until the staged rollout prerequisites are satisfied.
+controls are disabled; appearance editors remain available.

@@ -217,7 +217,8 @@ private fun HomeScreen(
     val aodSupported = capabilityReport.has(XiaomiCapability.AOD_SURFACE)
     val lockscreenSupported = capabilityReport.has(XiaomiCapability.LOCKSCREEN_HOST) &&
         capabilityReport.has(XiaomiCapability.LOCKSCREEN_GEOMETRY)
-    val runtimeProfileAvailable = supportState == XiaomiRuntimeSupportState.VERIFIED_PROFILE ||
+    val runtimeProfileAvailable = supportState == XiaomiRuntimeSupportState.AVAILABLE ||
+        supportState == XiaomiRuntimeSupportState.VERIFIED_PROFILE ||
         supportState == XiaomiRuntimeSupportState.VERIFIED_PROFILE_MISSING_SYMBOLS ||
         supportState == XiaomiRuntimeSupportState.EXPERIMENTAL_ACTIVE
     val positionFollowingSupported = capabilityReport.has(XiaomiCapability.AOD_POSITION_UPDATES)
@@ -299,7 +300,12 @@ private fun HomeScreen(
                         SettingsCard {
                             BasicComponent(
                                 title = stringResource(R.string.label_compatibility),
-                                summary = supportStateLabel(context, supportState)
+                                summary = supportStateLabel(
+                                    context,
+                                    supportState,
+                                    capabilityReport.availableCapabilityCount,
+                                    capabilityReport.totalCapabilityCount
+                                )
                             )
                             BasicComponent(
                                 title = stringResource(R.string.label_systemui_aod),
@@ -341,7 +347,9 @@ private fun HomeScreen(
                             ArrowPreference(
                                 title = if (supportState == XiaomiRuntimeSupportState.NO_SYSTEM_UI_REPORT ||
                                     supportState == XiaomiRuntimeSupportState.UNSUPPORTED_PROFILE ||
-                                    supportState == XiaomiRuntimeSupportState.EXPERIMENTAL_ACTIVE
+                                    supportState == XiaomiRuntimeSupportState.EXPERIMENTAL_ACTIVE ||
+                                    capabilityReport.availableCapabilityCount <
+                                    capabilityReport.totalCapabilityCount
                                 ) {
                                     stringResource(R.string.action_send_compatibility_report)
                                 } else {
@@ -853,18 +861,25 @@ private fun runtimeSurfaceSummary(
 
 private fun supportStateLabel(
     context: android.content.Context,
-    state: XiaomiRuntimeSupportState
-): String = context.getString(
-    when (state) {
-        XiaomiRuntimeSupportState.NO_SYSTEM_UI_REPORT -> R.string.status_no_systemui_report
-        XiaomiRuntimeSupportState.VERIFIED_PROFILE -> R.string.status_verified_profile
-        XiaomiRuntimeSupportState.VERIFIED_PROFILE_MISSING_SYMBOLS ->
-            R.string.status_verified_profile_missing_symbols
-        XiaomiRuntimeSupportState.UNSUPPORTED_PROFILE -> R.string.status_unsupported_profile
-        XiaomiRuntimeSupportState.EXPERIMENTAL_ELIGIBLE -> R.string.status_experimental_eligible
-        XiaomiRuntimeSupportState.EXPERIMENTAL_ACTIVE -> R.string.status_experimental_active
-    }
-)
+    state: XiaomiRuntimeSupportState,
+    availableCapabilities: Int,
+    totalCapabilities: Int
+): String = when (state) {
+    // A build that runs is described by how much of it resolved, not by a confidence word.
+    XiaomiRuntimeSupportState.AVAILABLE ->
+        context.getString(R.string.status_available, availableCapabilities, totalCapabilities)
+    else -> context.getString(
+        when (state) {
+            XiaomiRuntimeSupportState.NO_SYSTEM_UI_REPORT -> R.string.status_no_systemui_report
+            XiaomiRuntimeSupportState.VERIFIED_PROFILE -> R.string.status_verified_profile
+            XiaomiRuntimeSupportState.VERIFIED_PROFILE_MISSING_SYMBOLS ->
+                R.string.status_verified_profile_missing_symbols
+            XiaomiRuntimeSupportState.UNSUPPORTED_PROFILE -> R.string.status_unsupported_profile
+            XiaomiRuntimeSupportState.EXPERIMENTAL_ELIGIBLE -> R.string.status_experimental_eligible
+            else -> R.string.status_experimental_active
+        }
+    )
+}
 
 private fun burnInPatternLabel(context: android.content.Context, value: String): String =
     context.getString(

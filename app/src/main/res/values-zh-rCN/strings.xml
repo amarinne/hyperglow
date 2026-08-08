@@ -72,6 +72,7 @@
     <string name="dialog_keep_aod_duration_summary">限制一次连续播放会话。暂停 Spotify 后，下次播放会开始新会话。</string>
 
     <string name="status_no_systemui_report">没有系统界面报告</string>
+    <string name="status_available">%1$d/%2$d 个挂钩可用</string>
     <string name="status_verified_profile">已验证配置</string>
     <string name="status_verified_profile_missing_symbols">已验证配置缺少符号</string>
     <string name="status_unsupported_profile">不受支持的配置</string>

@@ -9,9 +9,12 @@ import com.eza.hyperglow.root.capability.XiaomiSymbolProbe
 
 internal enum class XiaomiRuntimeSupportState(val displayName: String) {
     NO_SYSTEM_UI_REPORT("No SystemUI report"),
+    AVAILABLE("Available"),
+    UNSUPPORTED_PROFILE("Unsupported profile"),
+
+    /** Retired with the version pin; still decoded for reports an older build persisted or sent. */
     VERIFIED_PROFILE("Verified profile"),
     VERIFIED_PROFILE_MISSING_SYMBOLS("Verified profile missing symbols"),
-    UNSUPPORTED_PROFILE("Unsupported profile"),
     EXPERIMENTAL_ELIGIBLE("Experimental eligible"),
     EXPERIMENTAL_ACTIVE("Experimental active")
 }
@@ -35,6 +38,7 @@ internal data class StoredXiaomiCapabilityReport(
 
     fun supportState(): XiaomiRuntimeSupportState = when {
         !hasReport -> XiaomiRuntimeSupportState.NO_SYSTEM_UI_REPORT
+        profileState == XiaomiProfileState.AVAILABLE -> XiaomiRuntimeSupportState.AVAILABLE
         profileState == XiaomiProfileState.VERIFIED_PROFILE ->
             XiaomiRuntimeSupportState.VERIFIED_PROFILE
         profileState == XiaomiProfileState.VERIFIED_PROFILE_MISSING_SYMBOLS ->
@@ -45,6 +49,16 @@ internal data class StoredXiaomiCapabilityReport(
             XiaomiRuntimeSupportState.EXPERIMENTAL_ACTIVE
         else -> XiaomiRuntimeSupportState.UNSUPPORTED_PROFILE
     }
+
+    /** How many capabilities resolved, out of the full set. The app shows this instead of a label. */
+    val availableCapabilityCount: Int
+        get() = if (hasReport) {
+            capabilities.count { name -> XiaomiCapability.entries.any { it.name == name } }
+        } else {
+            0
+        }
+
+    val totalCapabilityCount: Int get() = XiaomiCapability.entries.size
 }
 
 internal object XiaomiCapabilityStore {
@@ -240,11 +254,16 @@ internal object XiaomiCapabilityBundleCodec {
 
     private fun boundedVersion(value: String): String = value.take(MAX_VERSION_CHARS)
 
+    // The verified/experimental flags described the retired version comparison. A current report
+    // carries neither, and the retired states keep their original pairing so an older report still
+    // validates instead of being dropped.
     private fun isConsistentProfileState(
         state: XiaomiProfileState,
         verifiedRuntimeProfile: Boolean,
         experimentalModeActive: Boolean
     ): Boolean = when (state) {
+        XiaomiProfileState.AVAILABLE ->
+            !verifiedRuntimeProfile && !experimentalModeActive
         XiaomiProfileState.VERIFIED_PROFILE,
         XiaomiProfileState.VERIFIED_PROFILE_MISSING_SYMBOLS ->
             verifiedRuntimeProfile && !experimentalModeActive

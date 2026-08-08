@@ -100,8 +100,8 @@ class XiaomiCapabilityResolverTest {
         assertTrue(XiaomiCapability.RAISE_TO_AOD in capabilities)
         assertTrue(XiaomiCapability.LOCKSCREEN_EDITOR_GESTURE in capabilities)
         assertEquals(
-            XiaomiProfileState.EXPERIMENTAL_ACTIVE,
-            resolveXiaomiProfileState(verifiedRuntimeProfile = false, capabilities = capabilities)
+            XiaomiProfileState.AVAILABLE,
+            resolveXiaomiProfileState(capabilities)
         )
     }
 
@@ -115,8 +115,8 @@ class XiaomiCapabilityResolverTest {
 
         assertEquals(setOf(XiaomiCapability.AOD_SURFACE), capabilities)
         assertEquals(
-            XiaomiProfileState.EXPERIMENTAL_ACTIVE,
-            resolveXiaomiProfileState(verifiedRuntimeProfile = false, capabilities = capabilities)
+            XiaomiProfileState.AVAILABLE,
+            resolveXiaomiProfileState(capabilities)
         )
         assertTrue(symbols.rawProbes().getValue(XiaomiSymbolProbe.AOD_HOST_CONTAINER))
     }
@@ -135,37 +135,27 @@ class XiaomiCapabilityResolverTest {
         assertFalse(XiaomiCapability.LOCKSCREEN_GEOMETRY in capabilities)
         assertEquals(
             XiaomiProfileState.UNSUPPORTED_PROFILE,
-            resolveXiaomiProfileState(verifiedRuntimeProfile = false, capabilities = capabilities)
+            resolveXiaomiProfileState(capabilities)
         )
     }
 
     @Test
-    fun verifiedProfileMissingRequiredSeamReportsMissingSymbols() {
-        val symbols = XiaomiSymbolSnapshot(
-            aodSurface = true,
-            aodHostContainer = false
-        )
-        val capabilities = resolveXiaomiCapabilities(symbols)
-
-        assertEquals(
-            XiaomiProfileState.VERIFIED_PROFILE_MISSING_SYMBOLS,
-            resolveXiaomiProfileState(true, capabilities)
-        )
-    }
-
-    @Test
-    fun packageVersionPairMustMatchVerifiedLiveBuild() {
-        assertTrue(
-            XiaomiCapabilityResolver.isVerifiedRuntimeProfile(
-                "16.03.251211.r(202501210)",
-                "DEV-2327.0.0.1-03022115(22327001)"
+    fun aBuildIsDescribedByResolvedCapabilitiesNotByItsVersionPair() {
+        // The seam is missing, so AOD_SURFACE never resolves and only the lockscreen runs.
+        // This is the tablet case: usable, partial, and not a failure.
+        val capabilities = resolveXiaomiCapabilities(
+            XiaomiSymbolSnapshot(
+                aodSurface = true,
+                aodHostContainer = false,
+                lockscreenHost = true,
+                lockscreenController = true,
+                lockscreenHostContainer = true,
+                lockscreenGeometry = true
             )
         )
-        assertFalse(
-            XiaomiCapabilityResolver.isVerifiedRuntimeProfile(
-                "unknown",
-                "DEV-2327.0.0.1-03022115(22327001)"
-            )
-        )
+
+        assertFalse(XiaomiCapability.AOD_SURFACE in capabilities)
+        assertTrue(XiaomiCapability.LOCKSCREEN_GEOMETRY in capabilities)
+        assertEquals(XiaomiProfileState.AVAILABLE, resolveXiaomiProfileState(capabilities))
     }
 }

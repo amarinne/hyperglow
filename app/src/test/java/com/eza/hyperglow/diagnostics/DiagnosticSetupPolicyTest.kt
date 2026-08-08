@@ -32,6 +32,52 @@ class DiagnosticSetupPolicyTest {
     }
 
     @Test
+    fun experimentalActiveProfileIsReadyNotAnUnsupportedFailure() {
+        val result = resolveHyperGlowSetupChecks(
+            completeInput().copy(profileState = "experimental_active")
+        )
+
+        assertEquals("ready", result.setupState)
+        assertTrue(result.setupFailures.isEmpty())
+        assertTrue(result.profileSupported)
+    }
+
+    @Test
+    fun verifiedProfileMissingSymbolsIsReadyNotAnUnsupportedFailure() {
+        val result = resolveHyperGlowSetupChecks(
+            completeInput().copy(profileState = "verified_profile_missing_symbols")
+        )
+
+        assertEquals("ready", result.setupState)
+        assertTrue(result.profileSupported)
+    }
+
+    @Test
+    fun retiredExperimentalEligibleProfileStillFailsClosed() {
+        val result = resolveHyperGlowSetupChecks(
+            completeInput().copy(profileState = "experimental_eligible")
+        )
+
+        assertEquals("failed", result.setupState)
+        assertTrue(result.setupFailures.contains("unsupported_profile"))
+        assertFalse(result.profileSupported)
+    }
+
+    @Test
+    fun absentCapabilityReportDoesNotAlsoReportUnsupportedProfile() {
+        val result = resolveHyperGlowSetupChecks(
+            completeInput().copy(
+                capabilityReportPresent = false,
+                profileState = "no_systemui_report"
+            )
+        )
+
+        assertEquals("failed", result.setupState)
+        assertTrue(result.setupFailures.contains("capability_report"))
+        assertFalse(result.setupFailures.contains("unsupported_profile"))
+    }
+
+    @Test
     fun absentSpotifyProducerIsWarningNotFalseCompatibilityFailure() {
         val result = resolveHyperGlowSetupChecks(
             completeInput().copy(spotifyProducerBridgePresent = false)
