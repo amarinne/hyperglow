@@ -5,6 +5,7 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import com.eza.hyperglow.root.HookLogger
+import com.eza.hyperglow.root.hierarchyField
 import com.eza.hyperglow.root.capability.XiaomiCapability
 import com.eza.hyperglow.root.capability.XiaomiCapabilityResolver
 import io.github.libxposed.api.XposedInterface.Chain
@@ -31,8 +32,8 @@ internal object AodWakeBroker {
     fun install(module: XposedModule, classLoader: ClassLoader) {
         val triggersClass = runCatching { classLoader.loadClass(DOZE_TRIGGERS_CLASS) }.getOrNull()
             ?: return
-        val hostField = triggersClass.getDeclaredField("mHost").apply { isAccessible = true }
-        val contextField = triggersClass.getDeclaredField("mContext").apply { isAccessible = true }
+        val hostField = hierarchyField(triggersClass, "mHost") ?: return
+        val contextField = hierarchyField(triggersClass, "mContext") ?: return
         val fireAodState = classLoader.loadClass(DOZE_HOST_CLASS).getDeclaredMethod(
             "fireAodState",
             Boolean::class.javaPrimitiveType,

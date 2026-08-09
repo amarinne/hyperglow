@@ -28,6 +28,10 @@
     <string name="action_report_problem">报告问题</string>
     <string name="action_restart_systemui">重启系统界面</string>
 
+    <string name="update_available_title">有可用更新</string>
+    <string name="update_available_summary">最新版本为 %1$s，当前为 %2$s。</string>
+    <string name="diagnostic_outdated_warning">当前版本为 %1$s，最新版本为 %2$s。请先更新，问题可能已修复。</string>
+
     <string name="section_spotify_integration">Spotify 集成</string>
     <string name="action_download_spicy_ex">下载 Spicy EX</string>
     <string name="action_open_spotify">打开 Spotify</string>

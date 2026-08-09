@@ -46,6 +46,8 @@ import com.eza.hyperglow.BuildConfig
 import com.eza.hyperglow.R
 import com.eza.hyperglow.aod.AodStateBridge
 import com.eza.hyperglow.aod.XiaomiCapabilityStore
+import com.eza.hyperglow.update.UpdateAvailability
+import com.eza.hyperglow.update.UpdateChecker
 import com.eza.hyperglow.diagnostics.DiagnosticCaptureManager
 import com.eza.hyperglow.diagnostics.DiagnosticDraftStore
 import com.eza.hyperglow.diagnostics.DiagnosticGitHubIssue
@@ -111,6 +113,12 @@ internal fun DiagnosticsScreen(onBack: () -> Unit) {
     var pendingExportJson by remember { mutableStateOf<String?>(null) }
     var capabilityReportPresent by remember {
         mutableStateOf(XiaomiCapabilityStore.read(context).hasReport)
+    }
+    var updateAvailability by remember {
+        mutableStateOf<UpdateAvailability>(UpdateAvailability.Unknown)
+    }
+    LaunchedEffect(Unit) {
+        updateAvailability = UpdateChecker().refresh(context)
     }
     DisposableEffect(context) {
         val capabilityPrefs = context.getSharedPreferences(XiaomiCapabilityStore.PREFS, 0)
@@ -302,6 +310,18 @@ internal fun DiagnosticsScreen(onBack: () -> Unit) {
                 }
                 item {
                     SettingsCard {
+                        // Warns but never blocks: an outdated build can still be the first to hit
+                        // a genuinely new bug, and refusing the report would lose that signal.
+                        (updateAvailability as? UpdateAvailability.UpdateAvailable)?.let { available ->
+                            Text(
+                                text = stringResource(
+                                    R.string.diagnostic_outdated_warning,
+                                    BuildConfig.VERSION_NAME,
+                                    available.latest.versionName
+                                ),
+                                modifier = Modifier.padding(16.dp)
+                            )
+                        }
                         if (guidedCapture) {
                             Text(
                                 text = stringResource(R.string.diagnostic_capture_explanation),

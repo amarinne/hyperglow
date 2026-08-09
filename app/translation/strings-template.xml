@@ -32,6 +32,10 @@
     <string name="action_send_compatibility_report">Send compatibility report</string>
     <string name="action_report_problem">Report a problem</string>
     <string name="action_restart_systemui">Restart System UI</string>
+
+    <string name="update_available_title">Update available</string>
+    <string name="update_available_summary">Latest is %1$s. You have %2$s.</string>
+    <string name="diagnostic_outdated_warning">You are on %1$s and the latest is %2$s. Update first — the problem may already be fixed.</string>
     <string name="section_spotify_integration">Spotify integration</string>
     <string name="action_download_spicy_ex">Download Spicy EX</string>
     <string name="action_open_spotify">Open Spotify</string>

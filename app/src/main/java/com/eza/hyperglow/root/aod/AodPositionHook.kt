@@ -6,6 +6,8 @@ import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import com.eza.hyperglow.root.HookLogger
+import com.eza.hyperglow.root.hierarchyField
+import com.eza.hyperglow.root.readHierarchyField
 import io.github.libxposed.api.XposedInterface.Chain
 import io.github.libxposed.api.XposedInterface.Hooker
 import io.github.libxposed.api.XposedModule
@@ -69,11 +71,7 @@ internal object AodPositionHook {
     }
 
     fun observeAodRoot(root: Any) {
-        val controller = runCatching {
-            root.javaClass.getDeclaredField("mPositionController").apply {
-                isAccessible = true
-            }.get(root)
-        }.getOrNull() ?: return
+        val controller = readHierarchyField(root, "mPositionController") ?: return
         synchronized(controllerStates) {
             controllerStates.getOrPut(controller) { ControllerState() }
             lastControllerRef = WeakReference(controller)
@@ -385,31 +383,25 @@ internal object AodPositionHook {
         )
     }.getOrNull()
 
+    /** Throws when the field is absent anywhere in the hierarchy; every caller reads under a guard. */
+    private fun requireField(owner: Any, name: String) =
+        hierarchyField(owner.javaClass, name) ?: throw NoSuchFieldException(name)
+
     private fun readIntField(controller: Any, name: String): Int =
-        controller.javaClass.getDeclaredField(name).apply { isAccessible = true }.getInt(controller)
+        requireField(controller, name).getInt(controller)
 
     private fun readFloatField(controller: Any, name: String): Float =
-        controller.javaClass.getDeclaredField(name).apply { isAccessible = true }.getFloat(controller)
+        requireField(controller, name).getFloat(controller)
 
     private fun readFodSafeBottom(controller: Any?): Int? = runCatching {
         controller ?: return null
-        val shown = controller.javaClass.getDeclaredField("mIsGxzwIconShow").apply {
-            isAccessible = true
-        }.getBoolean(controller)
-        val y = controller.javaClass.getDeclaredField("mGxzwIconY").apply {
-            isAccessible = true
-        }.getInt(controller)
+        val shown = requireField(controller, "mIsGxzwIconShow").getBoolean(controller)
+        val y = requireField(controller, "mGxzwIconY").getInt(controller)
         y.takeIf { shown && it > 0 }
     }.getOrNull()
 
     private fun captureTargetView(controller: Any) {
-        val target = try {
-            controller.javaClass.getDeclaredField("mTargetView").apply {
-                isAccessible = true
-            }.get(controller) as? View
-        } catch (_: Exception) {
-            null
-        }
+        val target = readHierarchyField(controller, "mTargetView") as? View
         val previous = targetViewRef.get()
         if (previous === target) return
         targetViewRef = WeakReference(target)

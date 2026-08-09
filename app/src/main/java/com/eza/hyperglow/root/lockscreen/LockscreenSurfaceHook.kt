@@ -3,6 +3,7 @@ package com.eza.hyperglow.root.lockscreen
 import android.view.View
 import android.view.ViewGroup
 import com.eza.hyperglow.root.HookLogger
+import com.eza.hyperglow.root.readHierarchyField
 import io.github.libxposed.api.XposedInterface.Chain
 import io.github.libxposed.api.XposedInterface.Hooker
 import io.github.libxposed.api.XposedModule
@@ -100,11 +101,8 @@ internal object LockscreenSurfaceHook {
         }
     }
 
-    private fun readController(section: Any?): Any? = runCatching {
-        section ?: return null
-        section.javaClass.getDeclaredField("keyguardViewController").apply { isAccessible = true }
-            .get(section)
-    }.getOrNull()
+    private fun readController(section: Any?): Any? =
+        readHierarchyField(section, "keyguardViewController")
 
     private fun hookOptional(
         module: XposedModule,

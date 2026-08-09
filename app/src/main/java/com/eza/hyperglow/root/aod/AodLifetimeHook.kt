@@ -3,6 +3,7 @@ package com.eza.hyperglow.root.aod
 import android.os.Handler
 import android.os.Looper
 import com.eza.hyperglow.root.HookLogger
+import com.eza.hyperglow.root.readHierarchyField
 import io.github.libxposed.api.XposedInterface.Chain
 import io.github.libxposed.api.XposedInterface.Hooker
 import io.github.libxposed.api.XposedModule
@@ -166,10 +167,7 @@ object AodLifetimeController {
     private fun cancelPolicyTimeouts(controller: Any) {
         var cancelled = 0
         for (fieldName in POLICY_TIMEOUT_FIELDS) {
-            val timeout = runCatching {
-                controller.javaClass.getDeclaredField(fieldName).apply { isAccessible = true }
-                    .get(controller)
-            }.getOrNull() ?: continue
+            val timeout = readHierarchyField(controller, fieldName) ?: continue
             if (runCatching {
                     timeout.javaClass.getMethod("cancel").invoke(timeout)
                 }.isSuccess) {

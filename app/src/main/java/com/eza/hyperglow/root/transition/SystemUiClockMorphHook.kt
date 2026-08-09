@@ -4,6 +4,7 @@ import android.graphics.Rect
 import android.view.View
 import android.view.ViewGroup
 import com.eza.hyperglow.root.HookLogger
+import com.eza.hyperglow.root.hierarchyField
 import com.eza.hyperglow.root.aod.AodRenderedClockBounds
 import io.github.libxposed.api.XposedInterface.Chain
 import io.github.libxposed.api.XposedInterface.Hooker
@@ -25,14 +26,12 @@ internal object SystemUiClockMorphHook {
             Boolean::class.javaPrimitiveType,
             Boolean::class.javaPrimitiveType
         ).apply { isAccessible = true }
-        val clockAnimationField = helperClass.getDeclaredField("mClockAnima").apply {
-            isAccessible = true
-        }
-        val clockViewField = helperClass.getDeclaredField("mClockView").apply {
-            isAccessible = true
-        }
-        val allContainerField = classLoader.loadClass(CLOCK_BASE_ANIMATION_CLASS)
-            .getDeclaredField("mAllContainer").apply { isAccessible = true }
+        val clockAnimationField = hierarchyField(helperClass, "mClockAnima") ?: return
+        val clockViewField = hierarchyField(helperClass, "mClockView") ?: return
+        val allContainerField = hierarchyField(
+            classLoader.loadClass(CLOCK_BASE_ANIMATION_CLASS),
+            "mAllContainer"
+        ) ?: return
         module.deoptimize(method)
         module.hook(method).intercept(
             AnimationHooker(clockAnimationField, clockViewField, allContainerField)

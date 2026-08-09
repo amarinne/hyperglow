@@ -8,6 +8,7 @@ import com.eza.hyperglow.root.aod.AodPositionHook
 import com.eza.hyperglow.root.aod.AodDisplayStateHook
 import com.eza.hyperglow.root.aod.AodWakeBroker
 import com.eza.hyperglow.root.capability.XiaomiCapabilityResolver
+import com.eza.hyperglow.root.capability.missingProbeNames
 import com.eza.hyperglow.root.lockscreen.LockscreenSurfaceHook
 import com.eza.hyperglow.root.lockscreen.LockscreenEditorGestureHook
 import com.eza.hyperglow.root.lockscreen.RaiseToAodHook
@@ -51,7 +52,9 @@ class HookEntry : XposedModule() {
         HookLogger.bootstrap(
             TAG,
             "systemui_capability_probes_default_loader probes=$presentProbes/" +
-                "${capabilityReport.rawProbes.size} profile=${capabilityReport.profileState.wireValue}"
+                "${capabilityReport.rawProbes.size} " +
+                "profile=${capabilityReport.profileState.wireValue} " +
+                "missing=${missingProbeNames(capabilityReport.rawProbes)}"
         )
         try {
             SystemUiLifecycleHook.install(this, param.defaultClassLoader)

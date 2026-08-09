@@ -157,6 +157,16 @@ internal fun resolveXiaomiProfileState(
     }
 }
 
+/**
+ * Which probes did not resolve, for the bootstrap log. A ratio says how much is missing but never
+ * what, so a `probes=9/16` in a field report cost a round trip to answer a question the hook process
+ * already knew the answer to.
+ */
+internal fun missingProbeNames(rawProbes: Map<XiaomiSymbolProbe, Boolean>): String =
+    rawProbes.filterValues { !it }.keys
+        .joinToString(",") { it.name }
+        .ifEmpty { "none" }
+
 internal data class XiaomiCapabilityReport(
     val protocolVersion: Int = 2,
     val reportedAtUtcMillis: Long = 0L,
@@ -397,18 +407,37 @@ internal object XiaomiCapabilityResolver {
         methodName: String
     ): Boolean = hasMethod(classLoader, className, methodName)
 
-    private fun hasField(
+    /**
+     * Walks the superclass chain, because that is how the fields are actually read: a value lives
+     * on whatever class declares it, and `LockscreenSurfaceController.readHierarchyField` already
+     * hand-rolls this same walk at the point of use. Stopping at the named class made a field
+     * hoisted into a base class by a ROM refactor read as absent, and an absent probe is
+     * indistinguishable from a ROM that never had the feature.
+     */
+    internal fun hasField(
         classLoader: ClassLoader,
         className: String,
         fieldName: String,
         expectedTypeName: String? = null
-    ): Boolean = runCatching {
-        val field = classLoader.loadClass(className).getDeclaredField(fieldName)
-        val expectedType = expectedTypeName?.let(classLoader::loadClass) ?: return@runCatching true
-        expectedType.isAssignableFrom(field.type)
-    }.getOrDefault(false)
+    ): Boolean {
+        val field = searchHierarchy(classLoader, className) { owner ->
+            runCatching { owner.getDeclaredField(fieldName) }.getOrNull()
+        } ?: return false
+        if (expectedTypeName == null) return true
+        val expectedType = runCatching { classLoader.loadClass(expectedTypeName) }.getOrNull()
+            ?: return false
+        return expectedType.isAssignableFrom(field.type)
+    }
 
-    private fun hasMethod(
+    /**
+     * Deliberately does NOT walk the superclass chain, unlike [hasField]. These probes gate hook
+     * installation, and a hook binds to the exact declaring method: `AodSurfaceHook` resolves
+     * `AODView.getDeclaredMethod("onAttachedToWindow")` and hooks that Method. Walking would report
+     * the probe present via `android.view.View`, where the hook site would then either fail to
+     * resolve or — far worse — bind `View.onAttachedToWindow` for every view in SystemUI. The probe
+     * must answer the same question the hook site asks.
+     */
+    internal fun hasMethod(
         classLoader: ClassLoader,
         className: String,
         methodName: String,
@@ -420,6 +449,20 @@ internal object XiaomiCapabilityResolver {
         }.toTypedArray()
         owner.getDeclaredMethod(methodName, *parameterTypes)
     }.isSuccess
+
+    private fun <T : Any> searchHierarchy(
+        classLoader: ClassLoader,
+        className: String,
+        select: (Class<*>) -> T?
+    ): T? {
+        var type = runCatching { classLoader.loadClass(className) }.getOrNull()
+        while (type != null) {
+            val current = type
+            select(current)?.let { return it }
+            type = current.superclass
+        }
+        return null
+    }
 
     private fun primitiveClass(name: String): Class<*>? = when (name) {
         "boolean" -> Boolean::class.javaPrimitiveType

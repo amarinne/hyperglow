@@ -17,6 +17,7 @@ import com.eza.hyperglow.aod.IAodLyricCallback
 import com.eza.hyperglow.aod.XiaomiCapabilityBundleCodec
 import com.eza.hyperglow.root.HookLogger
 import com.eza.hyperglow.root.capability.XiaomiCapabilityResolver
+import com.eza.hyperglow.root.capability.missingProbeNames
 import com.eza.hyperglow.root.customization.CompiledCustomizationBundleCodec
 import com.eza.hyperglow.root.customization.CompiledCustomizationBundleCodec.WirePayload
 import com.eza.hyperglow.root.projection.LyricProjectionClient
@@ -374,7 +375,8 @@ internal class AodLyricClient(
                 HookLogger.bootstrap(
                     TAG,
                     "capability_report_sent probes=$present/${snapshot.rawProbes.size} " +
-                        "profile=${snapshot.profileState.wireValue}"
+                        "profile=${snapshot.profileState.wireValue} " +
+                        "missing=${missingProbeNames(snapshot.rawProbes)}"
                 )
             }
         } catch (error: Exception) {

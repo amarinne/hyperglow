@@ -13,6 +13,7 @@ import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.widget.FrameLayout
 import com.eza.hyperglow.root.HookLogger
+import com.eza.hyperglow.root.readHierarchyField
 import com.eza.hyperglow.customization.CompiledCustomization
 import com.eza.hyperglow.customization.CompiledSurfaceProfile
 import com.eza.hyperglow.customization.SceneCompiler
@@ -705,7 +706,7 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
 
     fun attach(controller: Any, root: ViewGroup?) {
         mainHandler.post {
-            val candidateRoot = root ?: readField(controller, "keyguardRootView") as? ViewGroup
+            val candidateRoot = root ?: readHierarchyField(controller, "keyguardRootView") as? ViewGroup
                 ?: return@post
             XiaomiCapabilityResolver.observeContext(candidateRoot.context)
             val supported = XiaomiCapabilityResolver.hasCapability(XiaomiCapability.LOCKSCREEN_HOST) &&
@@ -1177,9 +1178,9 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
     }
 
     private fun resolveClockBottom(controller: Any, host: ViewGroup): Int {
-        val injector = readField(controller, "keyguardClockInjector")
+        val injector = readHierarchyField(controller, "keyguardClockInjector")
         val preferred = invokeNoArgInt(injector, "getClockBottom")
-        val clockView = readField(injector, "keyguardClockView") as? View
+        val clockView = readHierarchyField(injector, "keyguardClockView") as? View
         val direct = invokeNoArgInt(clockView, "getClockBottom")
         val root = rootRef.get() ?: host
         val clockContainer = root.findViewById<View>(
@@ -1214,7 +1215,7 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
     ): LockscreenNotificationBounds? {
         val hasNotification = readBoolean(controller, "hasNotification", false)
         val notification = if (hasNotification) {
-            readField(controller, "notificationStackScrollLayout") as? ViewGroup
+            readHierarchyField(controller, "notificationStackScrollLayout") as? ViewGroup
         } else {
             null
         }
@@ -1341,7 +1342,7 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
         geometry: LockscreenNotificationGeometry,
         childTraces: List<String>
     ) {
-        val injector = readField(controller, "notificationStackScrollLayoutControllerInjector")
+        val injector = readHierarchyField(controller, "notificationStackScrollLayoutControllerInjector")
         val visibleCount = invokePublicNoArgInt(injector, "getVisibleNotificationCount")
         val stackTrace = notification?.let { stack ->
             val hostLocation = IntArray(2)
@@ -1480,9 +1481,9 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
         observedViews.clear()
         observedViews += root
         observedViews += host
-        val injector = readField(controller, "keyguardClockInjector")
-        (readField(injector, "keyguardClockView") as? View)?.let(observedViews::add)
-        (readField(controller, "notificationStackScrollLayout") as? ViewGroup)?.let {
+        val injector = readHierarchyField(controller, "keyguardClockInjector")
+        (readHierarchyField(injector, "keyguardClockView") as? View)?.let(observedViews::add)
+        (readHierarchyField(controller, "notificationStackScrollLayout") as? ViewGroup)?.let {
             observedViews += it
             setNotificationMotionView(it)
         }
@@ -1732,7 +1733,7 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
     private fun hasStockMediaPlayer(controller: Any?): Boolean {
         controller ?: return false
         if (!readBoolean(controller, "hasNotification", false)) return false
-        val notification = readField(controller, "notificationStackScrollLayout") as? ViewGroup
+        val notification = readHierarchyField(controller, "notificationStackScrollLayout") as? ViewGroup
             ?: return false
         for (index in 0 until notification.childCount) {
             val child = notification.getChildAt(index)
@@ -1746,7 +1747,7 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
     private fun isStockMediaPlayerVisible(controller: Any?): Boolean {
         controller ?: return false
         if (!readBoolean(controller, "hasNotification", false)) return false
-        val notification = readField(controller, "notificationStackScrollLayout") as? ViewGroup
+        val notification = readHierarchyField(controller, "notificationStackScrollLayout") as? ViewGroup
             ?: return false
         for (index in 0 until notification.childCount) {
             val child = notification.getChildAt(index)
@@ -1780,7 +1781,7 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
     }
 
     private fun findHost(controller: Any, root: ViewGroup): FrameLayout? {
-        (readField(controller, "keyguardTranslationInfo") as? FrameLayout)?.let { return it }
+        (readHierarchyField(controller, "keyguardTranslationInfo") as? FrameLayout)?.let { return it }
         val id = root.resources.getIdentifier(
             "keyguard_translation_info",
             "id",
@@ -1789,44 +1790,25 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
         return root.findViewById(id)
     }
 
-    private fun readField(owner: Any?, name: String): Any? = runCatching {
-        owner ?: return null
-        owner.javaClass.getDeclaredField(name).apply { isAccessible = true }.get(owner)
-    }.getOrNull()
-
-    private fun readHierarchyField(owner: Any?, name: String): Any? {
-        owner ?: return null
-        var type: Class<*>? = owner.javaClass
-        while (type != null) {
-            val currentType = type
-            val value = runCatching {
-                currentType.getDeclaredField(name).apply { isAccessible = true }.get(owner)
-            }.getOrNull()
-            if (value != null) return value
-            type = currentType.superclass
-        }
-        return null
-    }
-
     private fun invokePublicNoArgInt(owner: Any?, name: String): Int = runCatching {
         owner ?: return -1
         (owner.javaClass.getMethod(name).invoke(owner) as? Number)?.toInt() ?: -1
     }.getOrDefault(-1)
 
     private fun readBoolean(owner: Any, name: String, fallback: Boolean): Boolean =
-        (readField(owner, name) as? Boolean) ?: fallback
+        (readHierarchyField(owner, name) as? Boolean) ?: fallback
 
     private fun readFloat(owner: Any, name: String, fallback: Float): Float =
-        (readField(owner, name) as? Number)?.toFloat() ?: fallback
+        (readHierarchyField(owner, name) as? Number)?.toFloat() ?: fallback
 
     private fun isSecurityOrEditorObscured(controller: Any): Boolean {
-        val editorState = readField(controller, "editorState")?.toString()
-        val keyguardStateController = readField(controller, "keyguardStateController")
-        val quickSettingsController = readField(controller, "quickSettingsControllerImpl")
+        val editorState = readHierarchyField(controller, "editorState")?.toString()
+        val keyguardStateController = readHierarchyField(controller, "keyguardStateController")
+        val quickSettingsController = readHierarchyField(controller, "quickSettingsControllerImpl")
         return readBoolean(controller, "keyguardBouncerShowing", true) ||
             readFloat(controller, "keyguardBouncerFraction", 1f) > 0.01f ||
             (editorState != null && editorState != "IDEL") ||
-            (readField(keyguardStateController, "mKeyguardGoingAway") as? Boolean) == true ||
+            (readHierarchyField(keyguardStateController, "mKeyguardGoingAway") as? Boolean) == true ||
             invokeNoArgBoolean(quickSettingsController, "getExpanded", false)
     }
 

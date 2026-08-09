@@ -71,6 +71,8 @@ import com.eza.hyperglow.root.projection.LyricRuby
 import com.eza.hyperglow.root.projection.LyricSnapshot
 import com.eza.hyperglow.root.projection.currentProcessUserId
 import com.eza.hyperglow.root.surface.PlacementEngine
+import com.eza.hyperglow.update.UpdateAvailability
+import com.eza.hyperglow.update.UpdateChecker
 import com.eza.hyperglow.root.surface.PlacementEnvironment
 import com.eza.hyperglow.root.surface.PlacementRect
 import com.eza.hyperglow.root.surface.ResolvedPlacement
@@ -211,6 +213,12 @@ private fun HomeScreen(
         capabilityPrefs.registerOnSharedPreferenceChangeListener(listener)
         onDispose { capabilityPrefs.unregisterOnSharedPreferenceChangeListener(listener) }
     }
+    var updateAvailability by remember {
+        mutableStateOf<UpdateAvailability>(UpdateAvailability.Unknown)
+    }
+    LaunchedEffect(Unit) {
+        updateAvailability = UpdateChecker().refresh(context)
+    }
     val initialConfig = remember { AodRenderPreferences.read(context) }
     val initialDocument = remember { CustomizationRepository.loadDocument(context) }
     val supportState = capabilityReport.supportState()
@@ -295,6 +303,21 @@ private fun HomeScreen(
             ) {
                 when (SettingsTab.entries[page]) {
                 SettingsTab.OVERVIEW -> {
+                    (updateAvailability as? UpdateAvailability.UpdateAvailable)?.let { available ->
+                        item {
+                            SettingsCard {
+                                ArrowPreference(
+                                    title = stringResource(R.string.update_available_title),
+                                    summary = stringResource(
+                                        R.string.update_available_summary,
+                                        available.latest.versionName,
+                                        BuildConfig.VERSION_NAME
+                                    ),
+                                    onClick = { openExternalUrl(context, GITHUB_RELEASES_URL) }
+                                )
+                            }
+                        }
+                    }
                     item { SmallTitle(text = stringResource(R.string.section_runtime_status)) }
                     item {
                         SettingsCard {
@@ -801,6 +824,7 @@ private enum class SettingsTab {
 
 private const val DIAGNOSTICS_DESTINATION = "__diagnostics__"
 private const val GITHUB_URL = "https://github.com/amarinne/hyperglow"
+private const val GITHUB_RELEASES_URL = "https://github.com/amarinne/hyperglow/releases/latest"
 private const val SPICY_EX_GITHUB_URL = "https://github.com/amarinne/spicy-ex/releases"
 
 private fun currentUiLanguage(context: android.content.Context): UiLanguage {
