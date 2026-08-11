@@ -297,6 +297,7 @@ internal object DiagnosticReportCodec {
 
     private val PROFILE_STATES = setOf(
         "no_systemui_report",
+        "available",
         "verified_profile",
         "verified_profile_missing_symbols",
         "unsupported_profile",

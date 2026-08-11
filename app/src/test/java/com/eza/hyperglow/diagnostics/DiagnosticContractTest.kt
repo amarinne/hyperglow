@@ -62,6 +62,16 @@ class DiagnosticContractTest {
     }
 
     @Test
+    fun reportCodecAcceptsAvailableProfileState() {
+        val report = sampleReport().let {
+            it.copy(productMetadata = it.productMetadata.copy(profileState = "available"))
+        }
+
+        assertTrue(DiagnosticReportCodec.isValidReport(report))
+        DiagnosticReportCodec.encode(report)
+    }
+
+    @Test
     fun encodedReportContainsMediaEvidenceButNoCredentialFields() {
         val encoded = DiagnosticReportCodec.encode(sampleReport())
 
