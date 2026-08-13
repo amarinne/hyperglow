@@ -21,11 +21,14 @@ import com.eza.hyperglow.root.capability.XiaomiCapability
 import com.eza.hyperglow.root.capability.XiaomiCapabilityResolver
 import com.eza.hyperglow.root.projection.LyricKeepAliveSignal
 import com.eza.hyperglow.root.projection.LyricRenderContent
+import com.eza.hyperglow.root.projection.LyricRetentionAnchor
 import com.eza.hyperglow.root.projection.LyricSnapshot
 import com.eza.hyperglow.root.projection.LyricSurfaceKind
 import com.eza.hyperglow.root.projection.SystemUiLyricProjectionRuntime
 import com.eza.hyperglow.root.projection.SystemUiLyricSubscriber
+import com.eza.hyperglow.root.projection.edgeFor
 import com.eza.hyperglow.root.projection.freezeAt
+import com.eza.hyperglow.root.projection.nextLyricRetentionAnchor
 import com.eza.hyperglow.root.projection.isAuthorizedForPresentation
 import com.eza.hyperglow.root.projection.pauseLingerRemainingMs
 import com.eza.hyperglow.root.projection.shouldRenewAodDraw
@@ -65,6 +68,18 @@ internal data class AodRenderedClockBounds(
 ) {
     val height: Int get() = bottom - top
 }
+
+internal enum class AodDrawWakePulseResult {
+    SUCCESS,
+    MISSING_WAKE_LOCK,
+    MISSING_METHOD,
+    INVOCATION_FAILED
+}
+
+internal fun shouldLogDrawWakePulseResult(
+    previous: AodDrawWakePulseResult?,
+    current: AodDrawWakePulseResult
+): Boolean = previous != current
 
 private const val BRIGHT_LINKAGE_CLOCK_RESERVE_FRACTION = 0.35f
 
@@ -207,6 +222,7 @@ internal fun retainedAodSnapshotAfterUpdate(
     incoming: LyricSnapshot,
     lastVisible: LyricSnapshot?,
     retained: LyricSnapshot?,
+    anchor: LyricRetentionAnchor?,
     mediaPlayerPresent: Boolean,
     nowElapsedMs: Long,
     pauseLingerMs: Long = 5_000L
@@ -214,7 +230,10 @@ internal fun retainedAodSnapshotAfterUpdate(
     incoming.visible -> null
     !mediaPlayerPresent -> null
     incoming.pauseRetentionEligible -> {
-        val pauseAtElapsedMs = incoming.updatedAtElapsedMs.coerceIn(0L, nowElapsedMs)
+        val pauseAtElapsedMs = anchor.edgeFor(
+            pauseRetentionEligible = true,
+            fallbackElapsedMs = incoming.updatedAtElapsedMs.coerceIn(0L, nowElapsedMs)
+        )
         val candidate = retained?.takeIf { it.pauseRetentionEligible } ?: lastVisible?.freezeAt(
             pauseAtElapsedMs,
             keepAliveWhileFrozen = false
@@ -224,11 +243,19 @@ internal fun retainedAodSnapshotAfterUpdate(
         }
     }
     incoming.playbackActive -> {
+        val gapAtElapsedMs = anchor.edgeFor(
+            pauseRetentionEligible = false,
+            fallbackElapsedMs = nowElapsedMs
+        )
         val candidate = retained?.takeIf { it.playbackActive } ?: lastVisible?.freezeAt(
-            nowElapsedMs,
+            gapAtElapsedMs,
             keepAliveWhileFrozen = lastVisible.keepAlive
         )?.copy(playbackActive = true, pauseRetentionEligible = false)
-        candidate?.let { expirePausedAodKeepAlive(it, nowElapsedMs) }
+        // A still-playing hidden edge is a transport gap, and the gap's own bound is the power
+        // grace. Without it the frozen lyric outlived every timer whenever the producer kept
+        // republishing the gap, because nothing else measures a snapshot that never stops arriving.
+        candidate?.takeIf { nowElapsedMs - gapAtElapsedMs < PAUSED_AOD_KEEP_ALIVE_MS }
+            ?.let { expirePausedAodKeepAlive(it, nowElapsedMs) }
     }
     else -> null
 }
@@ -271,6 +298,7 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     private var latestSnapshot: LyricSnapshot? = null
     private var lastVisibleSnapshot: LyricSnapshot? = null
     private var retainedMediaSnapshot: LyricSnapshot? = null
+    private var retentionAnchor: LyricRetentionAnchor? = null
     private var stockMediaPlayerPresent = false
     private var customization: CompiledCustomization? = null
     private var runtimeProfile: CompiledSurfaceProfile? = null
@@ -283,6 +311,11 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     private var lastSnapshotTrace: String? = null
     private var lastBrightClockMorphPhase: Boolean? = null
     private var lastClockGeometryAuthority: String? = null
+    private var lastDrawWakePulseResult: AodDrawWakePulseResult? = null
+    private var lastDrawWakeRuntimeClass = ""
+    private var postHandoffDiagnosticGeneration = 0L
+    private var postHandoffEarlyGeneration = -1L
+    private var postHandoffLateGeneration = -1L
     private var rememberedPhysicalClockBounds: AodRenderedClockBounds? = null
     private var rememberedPhysicalClockRootHeight = 0
     private var rememberedPhysicalClockTranslationY = 0f
@@ -460,6 +493,12 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
             pulseDrawWakeLock(root)
             mainHandler.postDelayed(this, DRAW_WAKE_RENEW_INTERVAL_MS)
         }
+    }
+    private val postHandoffDiagnosticEarly = Runnable {
+        logPostHandoffSurfaceState("+1s", postHandoffEarlyGeneration)
+    }
+    private val postHandoffDiagnosticLate = Runnable {
+        logPostHandoffSurfaceState("+7s", postHandoffLateGeneration)
     }
     private val initialRevealFrame = object : Runnable {
         override fun run() {
@@ -689,12 +728,19 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         else if (lastVisibleSnapshot == null) {
             lastVisibleSnapshot = SystemUiLyricProjectionRuntime.projection.cachedVisibleSnapshot()
         }
+        val nowElapsedMs = SystemClock.elapsedRealtime()
+        retentionAnchor = nextLyricRetentionAnchor(
+            incomingSnapshot,
+            retentionAnchor,
+            nowElapsedMs
+        )
         retainedMediaSnapshot = retainedAodSnapshotAfterUpdate(
             incomingSnapshot,
             lastVisibleSnapshot,
             retainedMediaSnapshot,
+            retentionAnchor,
             stockMediaPlayerPresent,
-            SystemClock.elapsedRealtime(),
+            nowElapsedMs,
             customization?.pauseLingerMs ?: 5_000L
         )
         schedulePausedKeepAliveExpiry(retainedMediaSnapshot)
@@ -811,6 +857,7 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         latestSnapshot = null
         lastVisibleSnapshot = null
         retainedMediaSnapshot = null
+        retentionAnchor = null
         customization = null
         runtimeProfile = null
         setStockWidgetControlActive(false)
@@ -823,6 +870,7 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         latestSnapshot = null
         lastVisibleSnapshot = null
         retainedMediaSnapshot = null
+        retentionAnchor = null
         setStockWidgetControlActive(false)
         hideSurfaceOnly(pulse = false)
     }
@@ -915,6 +963,7 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         mainHandler.removeCallbacks(stockMotionSettleTimeout)
         mainHandler.removeCallbacks(managedBurnInStart)
         mainHandler.removeCallbacks(managedBurnInAdvance)
+        cancelPostHandoffDiagnostics()
         cancelPausedKeepAliveExpiry()
         cancelPauseLingerExpiry()
         pendingStockMotionUpdate = null
@@ -949,6 +998,7 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         latestSnapshot = null
         lastVisibleSnapshot = null
         retainedMediaSnapshot = null
+        retentionAnchor = null
         stockMediaPlayerPresent = false
         customization = null
         runtimeProfile = null
@@ -965,6 +1015,8 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         lastSnapshotTrace = null
         lastBrightClockMorphPhase = null
         lastClockGeometryAuthority = null
+        lastDrawWakePulseResult = null
+        lastDrawWakeRuntimeClass = ""
         sceneZone = AodSceneZone.STOCK
         controlledClockTop = null
         controlledClockBottom = null
@@ -1457,12 +1509,14 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     }
 
     override fun setHandoffActive(active: Boolean) {
+        val wasActive = handoffActive
         handoffActive = active
         if (active) {
             initialRevealPending = false
             finishInitialReveal()
         }
         lyricCanvas?.setHandoffActive(active)
+        if (wasActive && !active && isSceneActive()) schedulePostHandoffDiagnostics()
     }
 
     override fun animateFrom(
@@ -1622,13 +1676,82 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     }
 
     private fun pulseDrawWakeLock(root: ViewGroup) {
-        runCatching {
-            val wakeLock = readHierarchyField(root, "mWakeLock") ?: return
+        val wakeLock = readHierarchyField(root, "mWakeLock")
+        if (wakeLock == null) {
+            reportDrawWakePulse(AodDrawWakePulseResult.MISSING_WAKE_LOCK, "")
+            return
+        }
+        val runtimeClass = wakeLock.javaClass.name
+        val setMaximum = runCatching {
             wakeLock.javaClass.getMethod("setMaxAcquireTime", Long::class.javaPrimitiveType)
-                .invoke(wakeLock, DRAW_WAKE_LOCK_MS)
+        }.getOrNull()
+        val acquire = runCatching {
             wakeLock.javaClass.getMethod("acquire", String::class.java)
-                .invoke(wakeLock, "HyperGlowUpdate")
-        }.onFailure { HookLogger.w(TAG, "Draw pulse failed", it) }
+        }.getOrNull()
+        if (setMaximum == null || acquire == null) {
+            reportDrawWakePulse(AodDrawWakePulseResult.MISSING_METHOD, runtimeClass)
+            return
+        }
+        try {
+            setMaximum.invoke(wakeLock, DRAW_WAKE_LOCK_MS)
+            acquire.invoke(wakeLock, "HyperGlowUpdate")
+            reportDrawWakePulse(AodDrawWakePulseResult.SUCCESS, runtimeClass)
+        } catch (error: Exception) {
+            reportDrawWakePulse(AodDrawWakePulseResult.INVOCATION_FAILED, runtimeClass, error)
+        }
+    }
+
+    private fun reportDrawWakePulse(
+        result: AodDrawWakePulseResult,
+        runtimeClass: String,
+        error: Exception? = null
+    ) {
+        if (!shouldLogDrawWakePulseResult(lastDrawWakePulseResult, result) &&
+            runtimeClass == lastDrawWakeRuntimeClass
+        ) return
+        lastDrawWakePulseResult = result
+        lastDrawWakeRuntimeClass = runtimeClass
+        val message = "Draw wake pulse result=${result.name.lowercase()} " +
+            "class=${runtimeClass.ifEmpty { "none" }}"
+        if (result == AodDrawWakePulseResult.SUCCESS) HookLogger.i(TAG, message)
+        else HookLogger.w(TAG, message, error)
+    }
+
+    private fun schedulePostHandoffDiagnostics() {
+        postHandoffDiagnosticGeneration++
+        postHandoffEarlyGeneration = postHandoffDiagnosticGeneration
+        postHandoffLateGeneration = postHandoffDiagnosticGeneration
+        mainHandler.removeCallbacks(postHandoffDiagnosticEarly)
+        mainHandler.removeCallbacks(postHandoffDiagnosticLate)
+        mainHandler.postDelayed(postHandoffDiagnosticEarly, POST_HANDOFF_EARLY_MS)
+        mainHandler.postDelayed(postHandoffDiagnosticLate, POST_HANDOFF_LATE_MS)
+    }
+
+    private fun cancelPostHandoffDiagnostics() {
+        postHandoffDiagnosticGeneration++
+        postHandoffEarlyGeneration = -1L
+        postHandoffLateGeneration = -1L
+        mainHandler.removeCallbacks(postHandoffDiagnosticEarly)
+        mainHandler.removeCallbacks(postHandoffDiagnosticLate)
+    }
+
+    private fun logPostHandoffSurfaceState(label: String, generation: Long) {
+        if (!HookLogger.traceEnabled || generation != postHandoffDiagnosticGeneration) return
+        val root = rootRef.get()
+        val directSurface = surface
+        val canvas = lyricCanvas
+        HookLogger.i(
+            TAG,
+            "Post-handoff $label role=$sceneRole handoff=$handoffActive " +
+                "display=${root?.display?.state ?: -1} " +
+                "root=${root?.width}x${root?.height} attached=${directSurface?.isAttachedToWindow} " +
+                "surface=${directSurface?.visibility} alpha=${directSurface?.alpha}/" +
+                "${directSurface?.transitionAlpha} rect=${directSurface?.left},${directSurface?.top}.." +
+                "${directSurface?.right},${directSurface?.bottom} scale=${directSurface?.scaleX}/" +
+                "${directSurface?.scaleY} translation=${directSurface?.translationX}/" +
+                "${directSurface?.translationY} canvas=${canvas?.visibility} " +
+                "render=${latestSnapshot?.let(::canRenderAod)} wake=$lastDrawWakePulseResult"
+        )
     }
 
     private fun wakeAodSurface(root: ViewGroup, directSurface: View) {
@@ -1643,6 +1766,8 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
 
     private const val DRAW_WAKE_LOCK_MS = 5_500L
     private const val DRAW_WAKE_RENEW_INTERVAL_MS = DRAW_WAKE_LOCK_MS / 2L
+    private const val POST_HANDOFF_EARLY_MS = 1_000L
+    private const val POST_HANDOFF_LATE_MS = 7_000L
     private const val AOD_ANIMATION_FRAME_MS = 16L
     private const val SURFACE_MARGIN_DP = 12f
     private const val MIN_LYRIC_HEIGHT_DP = 96f

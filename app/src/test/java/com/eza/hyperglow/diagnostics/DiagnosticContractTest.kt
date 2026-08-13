@@ -1,5 +1,6 @@
 package com.eza.hyperglow.diagnostics
 
+import com.eza.hyperglow.root.capability.XiaomiProfileState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -62,13 +63,22 @@ class DiagnosticContractTest {
     }
 
     @Test
-    fun reportCodecAcceptsAvailableProfileState() {
-        val report = sampleReport().let {
-            it.copy(productMetadata = it.productMetadata.copy(profileState = "available"))
-        }
+    fun reportCodecAcceptsEveryXiaomiProfileState() {
+        // Regression coverage for the whole enum, not just one value: PROFILE_STATES fell out of
+        // sync with XiaomiProfileState once already (missing "available") and broke report
+        // submission on every fully-compatible device. This walks every current member so a future
+        // hand-copied omission fails here instead of in the field.
+        XiaomiProfileState.entries.forEach { state ->
+            val report = sampleReport().let {
+                it.copy(productMetadata = it.productMetadata.copy(profileState = state.wireValue))
+            }
 
-        assertTrue(DiagnosticReportCodec.isValidReport(report))
-        DiagnosticReportCodec.encode(report)
+            assertTrue(
+                "profileState=${state.wireValue} should validate",
+                DiagnosticReportCodec.isValidReport(report)
+            )
+            DiagnosticReportCodec.encode(report)
+        }
     }
 
     @Test
@@ -107,6 +117,8 @@ class DiagnosticContractTest {
         assertTrue(issue.body.contains(HYPERGLOW_DIAGNOSTIC_DATA_POLICY_URL))
         assertFalse(issue.body.contains("PRIVATE_LOG_SENTINEL"))
         assertFalse(issue.body.contains("keepAodActive"))
+        assertTrue(issue.body.contains("1.58.113-full"))
+        assertTrue(issue.body.contains("9.1.72.1891"))
         assertTrue(issue.body.contains("Test song"))
         assertTrue(issue.body.contains("spotify:track:test"))
         assertFalse(issue.body.contains("Current lyric"))
@@ -172,7 +184,9 @@ class DiagnosticContractTest {
             locales = listOf("en-US"),
             packageVersions = mapOf(
                 "systemui" to DiagnosticPackageVersion(true, "16.0", 1L),
-                "xiaomi_aod" to DiagnosticPackageVersion(true, "3.0", 2L)
+                "xiaomi_aod" to DiagnosticPackageVersion(true, "3.0", 2L),
+                "spicy_ex" to DiagnosticPackageVersion(true, "1.58.113-full", 388L),
+                "spotify" to DiagnosticPackageVersion(true, "9.1.72.1891", 144716725L)
             )
         ),
         productMetadata = HyperGlowProductMetadata(

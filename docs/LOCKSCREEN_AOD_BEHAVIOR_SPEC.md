@@ -75,8 +75,13 @@ projection disconnect/stale/invalid state -> discard frozen card
 
 The frozen card projects playback position once at eligible Spotify pause receipt, then uses
 `speed=0`. A 0-second timeout clears immediately. Finite timers use the original pause edge and are
-not extended by replayed hidden messages or another player. Indefinite retention still clears on the
-terminal conditions above.
+not extended by replayed hidden messages or another player. The pause edge is the first hidden edge
+of the retention episode, held by each surface until a visible snapshot or a terminal hidden state
+ends the episode; the publish time carried by each message is not that edge, because the producer
+republishes the same paused state whenever Spotify revises it. A still-playing hidden edge opens its
+own episode and its frozen card expires on the 30-second transport-gap bound, so a gap the producer
+keeps republishing cannot present indefinitely. Indefinite retention still clears on the terminal
+conditions above.
 Lockscreen may suppress automatic dim/sleep only when its explicit keep-awake setting is enabled,
 the keyguard lyric scene and stock Spotify media player are visible, playback is active, and the
 bouncer/authentication UI is absent. Pause, player removal, bouncer entry, surface loss, transition

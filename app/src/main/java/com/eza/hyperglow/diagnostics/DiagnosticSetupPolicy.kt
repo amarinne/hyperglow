@@ -8,6 +8,7 @@ internal data class HyperGlowSetupInput(
     val spotifyProducerBridgePresent: Boolean,
     val systemUiPackagePresent: Boolean,
     val xiaomiAodPackagePresent: Boolean,
+    val spicyExPackagePresent: Boolean,
     val spotifyPackagePresent: Boolean
 )
 
@@ -57,6 +58,10 @@ internal fun resolveHyperGlowSetupChecks(input: HyperGlowSetupInput): HyperGlowS
         failures += "xiaomi_aod_package"
         hardFailure = true
     }
+    if (!input.spicyExPackagePresent) {
+        failures += "spicy_ex_package"
+        hardFailure = true
+    }
     if (!input.spotifyPackagePresent) {
         failures += "spotify_package"
         hardFailure = true
@@ -75,7 +80,9 @@ internal fun resolveHyperGlowSetupChecks(input: HyperGlowSetupInput): HyperGlowS
         systemUiHookActive = input.systemUiCallbackPresent,
         profileSupported = profileSupported,
         spotifyProducerBridgePresent = input.spotifyProducerBridgePresent,
+        spicyExPackagePresent = input.spicyExPackagePresent,
         requiredPackagesPresent = input.systemUiPackagePresent &&
-            input.xiaomiAodPackagePresent && input.spotifyPackagePresent
+            input.xiaomiAodPackagePresent && input.spicyExPackagePresent &&
+            input.spotifyPackagePresent
     )
 }

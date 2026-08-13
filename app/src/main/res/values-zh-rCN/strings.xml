@@ -204,16 +204,15 @@
 
     <string name="diagnostic_section_problem">问题</string>
     <string name="diagnostic_category">类别</string>
+    <string name="diagnostic_category_hint">选择最接近的类别即可。所有类别收集的内容相同，这只是为了方便分类处理，不会影响所捕获的内容。</string>
     <string name="diagnostic_description">描述发生的情况</string>
     <string name="diagnostic_byte_count">%1$d/%2$d</string>
     <string name="diagnostic_guided_capture">引导捕获</string>
-    <string name="diagnostic_capture_active">捕获正在进行。现在重启系统界面，复现问题，然后返回并完成捕获。</string>
+    <string name="diagnostic_capture_active">捕获正在进行。如需更完整的报告，请先重启系统界面并复现问题——但现在点击"完成捕获"也可以，仍会提交有用的内容。</string>
     <string name="diagnostic_finish_capture">完成捕获</string>
     <string name="diagnostic_finishing">正在完成…</string>
-    <string name="diagnostic_section_report">报告</string>
-    <string name="diagnostic_capture_explanation">暂时捕获筛选后的诊断信息。完成时会检查 Root。</string>
+    <string name="diagnostic_capture_explanation">暂时捕获筛选后的诊断信息。您可以立即完成，也可以先复现问题后再完成——两种方式都能生成可用的报告。完成时会检查 Root。</string>
     <string name="diagnostic_start_capture">开始捕获</string>
-    <string name="diagnostic_prepare_report">准备报告</string>
     <string name="diagnostic_section_review">检查</string>
     <string name="diagnostic_preview_json">报告 JSON</string>
     <string name="diagnostic_data_policy">数据政策</string>
@@ -237,6 +236,7 @@
     <string name="diagnostic_check_root">Root 权限</string>
     <string name="diagnostic_check_systemui">SystemUI 注入</string>
     <string name="diagnostic_check_profile">兼容配置</string>
+    <string name="diagnostic_check_spicy_ex">已安装 Spicy EX</string>
     <string name="diagnostic_check_spotify_bridge">Spotify 桥接</string>
     <string name="diagnostic_check_packages">必需应用</string>
 
@@ -255,7 +255,6 @@
     <string name="diagnostic_status_prepare_failed">无法准备报告。</string>
     <string name="diagnostic_status_capture_remains_active">无法恢复诊断日志，捕获仍在进行。</string>
     <string name="diagnostic_status_start_failed">无法开始捕获。</string>
-    <string name="diagnostic_status_report_ready">报告已准备好，可以预览。</string>
     <string name="diagnostic_status_discarded">报告已丢弃。</string>
     <string name="diagnostic_status_draft_expired">报告草稿已过期，请准备新报告。</string>
 

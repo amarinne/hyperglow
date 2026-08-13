@@ -19,6 +19,7 @@ import com.eza.hyperglow.customization.CompiledSurfaceProfile
 import com.eza.hyperglow.customization.SceneCompiler
 import com.eza.hyperglow.root.aod.AodLyricCanvasView
 import com.eza.hyperglow.root.aod.AodCanvasVerticalAlignment
+import com.eza.hyperglow.root.aod.PAUSED_AOD_KEEP_ALIVE_MS
 import com.eza.hyperglow.root.aod.metadataWidgetHeightDp
 import com.eza.hyperglow.root.aod.textSizeModeMultiplier
 import com.eza.hyperglow.root.aod.toAodCanvasContent
@@ -33,6 +34,9 @@ import com.eza.hyperglow.root.projection.SystemUiLyricProjectionRuntime
 import com.eza.hyperglow.root.projection.SystemUiLyricSubscriber
 import com.eza.hyperglow.root.projection.freezeAt
 import com.eza.hyperglow.root.projection.isAuthorizedForPresentation
+import com.eza.hyperglow.root.projection.LyricRetentionAnchor
+import com.eza.hyperglow.root.projection.edgeFor
+import com.eza.hyperglow.root.projection.nextLyricRetentionAnchor
 import com.eza.hyperglow.root.projection.pauseLingerRemainingMs
 import com.eza.hyperglow.root.aod.AodSurfaceController
 import com.eza.hyperglow.root.transition.LinkageSceneRole
@@ -226,12 +230,16 @@ internal fun retainedLockscreenSnapshotAfterUpdate(
     incoming: LyricSnapshot,
     lastVisible: LyricSnapshot?,
     retained: LyricSnapshot?,
+    anchor: LyricRetentionAnchor?,
     nowElapsedMs: Long,
     pauseLingerMs: Long = 5_000L
 ): LyricSnapshot? = if (incoming.visible) {
     null
 } else if (incoming.pauseRetentionEligible) {
-    val pauseAtElapsedMs = incoming.updatedAtElapsedMs.coerceIn(0L, nowElapsedMs)
+    val pauseAtElapsedMs = anchor.edgeFor(
+        pauseRetentionEligible = true,
+        fallbackElapsedMs = incoming.updatedAtElapsedMs.coerceIn(0L, nowElapsedMs)
+    )
     val candidate = retained ?: lastVisible?.let {
         freezeLockscreenSnapshot(it, pauseAtElapsedMs)
     }
@@ -239,10 +247,15 @@ internal fun retainedLockscreenSnapshotAfterUpdate(
         pauseLingerRemainingMs(it.sampledAtElapsedMs, pauseLingerMs, nowElapsedMs) != null
     }
 } else if (incoming.playbackActive) {
-    retained?.takeIf { it.playbackActive } ?: lastVisible?.freezeAt(
-        nowElapsedMs,
+    val gapAtElapsedMs = anchor.edgeFor(
+        pauseRetentionEligible = false,
+        fallbackElapsedMs = nowElapsedMs
+    )
+    (retained?.takeIf { it.playbackActive } ?: lastVisible?.freezeAt(
+        gapAtElapsedMs,
         keepAliveWhileFrozen = false
-    )?.copy(playbackActive = true, pauseRetentionEligible = false)
+    )?.copy(playbackActive = true, pauseRetentionEligible = false))
+        ?.takeIf { nowElapsedMs - gapAtElapsedMs < PAUSED_AOD_KEEP_ALIVE_MS }
 } else {
     null
 }
@@ -616,6 +629,7 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
     private var latestSnapshot: LyricSnapshot? = null
     private var lastVisibleSnapshot: LyricSnapshot? = null
     private var retainedMediaSnapshot: LyricSnapshot? = null
+    private var retentionAnchor: LyricRetentionAnchor? = null
     private val pauseLingerExpiry = object : Runnable {
         override fun run() {
             val retained = retainedMediaSnapshot ?: return
@@ -787,6 +801,11 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
     override fun onLyricSnapshot(snapshot: LyricSnapshot) {
         val resolvedSnapshot = LinkageTransitionCoordinator.resolveSnapshot(snapshot)
         latestSnapshot = resolvedSnapshot
+        retentionAnchor = nextLyricRetentionAnchor(
+            resolvedSnapshot,
+            retentionAnchor,
+            SystemClock.elapsedRealtime()
+        )
         if (resolvedSnapshot.visible) {
             lastVisibleSnapshot = resolvedSnapshot
             retainedMediaSnapshot = null
@@ -801,6 +820,7 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
                 resolvedSnapshot,
                 lastVisibleSnapshot,
                 retainedMediaSnapshot,
+                retentionAnchor,
                 SystemClock.elapsedRealtime(),
                 customization?.pauseLingerMs ?: 5_000L
             )
@@ -826,6 +846,7 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
         latestSnapshot = null
         lastVisibleSnapshot = null
         retainedMediaSnapshot = null
+        retentionAnchor = null
         cancelPauseLingerExpiry()
         customization = null
         runtimeProfile = null
@@ -838,6 +859,7 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
         latestSnapshot = null
         lastVisibleSnapshot = null
         retainedMediaSnapshot = null
+        retentionAnchor = null
         cancelPauseLingerExpiry()
         cancelFreshnessExpiry()
         hideSurface()
@@ -1604,6 +1626,7 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
         latestSnapshot = null
         lastVisibleSnapshot = null
         retainedMediaSnapshot = null
+        retentionAnchor = null
         stockMediaPlayerObserved = false
         cancelPauseLingerExpiry()
         customization = null

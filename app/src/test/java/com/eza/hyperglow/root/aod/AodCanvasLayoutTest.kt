@@ -649,6 +649,23 @@ class AodCanvasLayoutTest {
     }
 
     @Test
+    fun drawWakePulseResultLogsOnlyOnOutcomeChange() {
+        assertTrue(shouldLogDrawWakePulseResult(null, AodDrawWakePulseResult.SUCCESS))
+        assertFalse(
+            shouldLogDrawWakePulseResult(
+                AodDrawWakePulseResult.SUCCESS,
+                AodDrawWakePulseResult.SUCCESS
+            )
+        )
+        assertTrue(
+            shouldLogDrawWakePulseResult(
+                AodDrawWakePulseResult.SUCCESS,
+                AodDrawWakePulseResult.INVOCATION_FAILED
+            )
+        )
+    }
+
+    @Test
     fun exitTransitionDrivesFramesForUntimedIncomingUntilSettled() {
         assertEquals(16L, frameIntervalForTiming(true, false, true))
         assertEquals(0L, frameIntervalForTiming(true, false, false))

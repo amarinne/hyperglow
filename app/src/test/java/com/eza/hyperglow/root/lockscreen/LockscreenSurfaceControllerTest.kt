@@ -489,15 +489,15 @@ class LockscreenSurfaceControllerTest {
             pauseRetentionEligible = true,
             updatedAtElapsedMs = 3_000L
         )
-        val first = retainedLockscreenSnapshotAfterUpdate(hidden, live, null, 3_000L, 10_000L)!!
-        val replayed = retainedLockscreenSnapshotAfterUpdate(hidden, live, first, 8_000L, 10_000L)
+        val first = retainedLockscreenSnapshotAfterUpdate(hidden, live, null, null, 3_000L, 10_000L)!!
+        val replayed = retainedLockscreenSnapshotAfterUpdate(hidden, live, first, null, 8_000L, 10_000L)
 
         assertEquals(first, replayed)
         assertEquals(6_000L, replayed!!.positionMs)
         assertEquals(0f, replayed.speed)
         assertEquals(
             null,
-            retainedLockscreenSnapshotAfterUpdate(hidden, live, null, 13_000L, 10_000L)
+            retainedLockscreenSnapshotAfterUpdate(hidden, live, null, null, 13_000L, 10_000L)
         )
     }
 
@@ -522,6 +522,7 @@ class LockscreenSurfaceControllerTest {
             retainedLockscreenSnapshotAfterUpdate(
                 paused.copy(visible = false),
                 live.copy(playbackActive = true),
+                null,
                 null,
                 3_000L,
                 0L

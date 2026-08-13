@@ -11,10 +11,12 @@ accepts server-controlled hook configuration.
 1. The user opens `Report a problem`, selects a category, and enters a nonblank description bounded
    to 4,000 UTF-8 bytes. The multiline field is top-aligned, uses a disappearing task placeholder,
    and shows a live compact byte counter at its bottom end.
-2. Compatibility reports run a fixed root-access check and use current metadata immediately when
-   setup is healthy. If setup is failed because `capability_report` or `systemui_hook` is missing,
-   Compatibility starts the same guided capture as runtime failures:
-   start, reproduce outside HyperGlow, reopen diagnostics, then finish.
+2. Every category, including Compatibility, runs the same guided capture: start, reproduce outside
+   HyperGlow, reopen diagnostics, then finish. No category prepares an instant metadata-only report.
+   Category selection is a description of the problem, not a signal that changes what gets collected
+   — most reporters do not read the category list closely enough for that distinction to hold, and a
+   metadata-only Compatibility report from an otherwise fully-working device has already cost one
+   diagnosis (root-cause data that would have shown why lyrics did not render simply was not there).
 3. The app shows a readable, pretty-printed view of the included JSON plus a concise link to the
    public diagnostic data policy before upload.
 4. The user accepts retention and manually uploads once. A manual retry reuses the same random
@@ -56,12 +58,16 @@ All accepted report data is retained indefinitely until a maintainer manually de
 - HyperGlow version/build type;
 - manufacturer, brand, model, device, product, Android build/security/fingerprint, locales;
 - fixed-allowlist Xiaomi properties;
-- HyperGlow, SystemUI, Xiaomi AOD, and Spotify package versions;
+- HyperGlow, SystemUI, Xiaomi AOD, Spicy EX, and Spotify package versions. Spicy EX is detected by
+  the exact installed package `com.eza.spicyex`; the report records presence, `versionName`, and
+  `versionCode`. This proves installation/version only, not LSPosed activation, Spotify scope, or
+  the `Publish lyrics to HyperGlow` setting;
 - capability protocol/age, effective profile state, raw symbol probes, resolved capabilities;
 - configured surface flags, callback presence, and privacy-safe Spotify producer status/age;
 - capture outcome, root status, command failures, and truncation flags.
 - bounded setup state and failure keys for root, SystemUI hook/report, profile support, Spotify
-  producer bridge, and required package presence/version metadata.
+  producer bridge, and required package presence/version metadata. Missing Spicy EX is a hard setup
+  failure because it is the only shipped lyric producer;
 - current Spotify track URI, title, artist, album, lyric provider/source, detected language, timing
   type, current line index, and bounded original/transliterated/translated lyric lines when present;
 - user description;
@@ -86,8 +92,12 @@ Screenshots may be attached manually to the separately opened public GitHub issu
 Capture stores wall and elapsed start times plus the previous diagnostic-logging state. It enables
 the existing runtime logging flag and publishes configuration to SystemUI. The active-capture
 instruction tells the user to restart SystemUI inside the capture window so boot markers are
-included. A non-exported alarm
-expires the capture after 30 minutes; process startup also handles timeout or elapsed-clock reset.
+included, but reproducing the problem is best-effort, not required: Finish is enabled the moment
+capture starts and still produces a usable report immediately, since the logs section is the newest
+tail of the current buffer rather than something that only exists after reproduction. This matters
+because a capture nobody finishes is worse than a thin one — it expires after 30 minutes and submits
+nothing at all. A non-exported alarm expires the capture after 30 minutes; process startup also
+handles timeout or elapsed-clock reset.
 
 Finish runs only fixed root commands. User text never enters a command. Each command has a five-second
 timeout:

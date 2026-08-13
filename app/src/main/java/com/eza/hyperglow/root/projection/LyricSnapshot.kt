@@ -173,6 +173,54 @@ internal fun LyricSnapshot.freezeAt(
     )
 }
 
+/**
+ * The hidden edge a retention episode is measured from, and which kind of retention it opened.
+ *
+ * The published `updatedAtElapsedMs` is the time the producer sent the message, not the time
+ * playback stopped, and the producer republishes the same paused state whenever Spotify revises it —
+ * a position update, another app taking the media session. Anchoring the frozen snapshot to each
+ * arriving message therefore restarted the finite timer forever: a lyric paused long ago reappeared
+ * for another full linger every time something else touched the session, which is how a stale
+ * Spotify lyric ended up drawn over an AOD showing a different player. The episode keeps its first
+ * edge until a visible snapshot or a terminal hidden state ends it.
+ */
+internal data class LyricRetentionAnchor(
+    val pauseRetentionEligible: Boolean,
+    val atElapsedMs: Long
+)
+
+internal fun nextLyricRetentionAnchor(
+    incoming: LyricSnapshot,
+    anchor: LyricRetentionAnchor?,
+    nowElapsedMs: Long
+): LyricRetentionAnchor? {
+    if (incoming.visible) return null
+    val eligible = when {
+        incoming.pauseRetentionEligible -> true
+        incoming.playbackActive -> false
+        else -> return null
+    }
+    return anchor?.takeIf { it.pauseRetentionEligible == eligible }
+        ?: LyricRetentionAnchor(
+            eligible,
+            incoming.updatedAtElapsedMs.coerceIn(0L, nowElapsedMs)
+        )
+}
+
+internal fun LyricRetentionAnchor?.edgeFor(
+    pauseRetentionEligible: Boolean,
+    fallbackElapsedMs: Long
+): Long = this?.takeIf { it.pauseRetentionEligible == pauseRetentionEligible }?.atElapsedMs
+    ?: fallbackElapsedMs
+
+/**
+ * A hidden state carrying neither playback nor pause retention. The shared snapshot contract calls
+ * this terminal: nothing may be presented from it, and the cached visible snapshot it would have
+ * been rebuilt from is dropped with it.
+ */
+internal fun LyricSnapshot.isTerminalHidden(): Boolean =
+    !visible && !playbackActive && !pauseRetentionEligible
+
 internal fun pauseLingerRemainingMs(
     pausedAtElapsedMs: Long,
     configuredDurationMs: Long,

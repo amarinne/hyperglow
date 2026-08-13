@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,8 +43,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.eza.hyperglow.BuildConfig
 import com.eza.hyperglow.R
-import com.eza.hyperglow.aod.AodStateBridge
-import com.eza.hyperglow.aod.XiaomiCapabilityStore
 import com.eza.hyperglow.update.UpdateAvailability
 import com.eza.hyperglow.update.UpdateChecker
 import com.eza.hyperglow.diagnostics.DiagnosticCaptureManager
@@ -111,31 +108,14 @@ internal fun DiagnosticsScreen(onBack: () -> Unit) {
     var showCategoryDialog by remember { mutableStateOf(false) }
     var showPreviewDialog by remember { mutableStateOf(false) }
     var pendingExportJson by remember { mutableStateOf<String?>(null) }
-    var capabilityReportPresent by remember {
-        mutableStateOf(XiaomiCapabilityStore.read(context).hasReport)
-    }
     var updateAvailability by remember {
         mutableStateOf<UpdateAvailability>(UpdateAvailability.Unknown)
     }
     LaunchedEffect(Unit) {
         updateAvailability = UpdateChecker().refresh(context)
     }
-    DisposableEffect(context) {
-        val capabilityPrefs = context.getSharedPreferences(XiaomiCapabilityStore.PREFS, 0)
-        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
-            capabilityReportPresent = XiaomiCapabilityStore.read(context).hasReport
-        }
-        capabilityPrefs.registerOnSharedPreferenceChangeListener(listener)
-        onDispose { capabilityPrefs.unregisterOnSharedPreferenceChangeListener(listener) }
-    }
     val category = HyperGlowReportCategory.entries.firstOrNull { it.name == categoryName }
         ?: HyperGlowReportCategory.COMPATIBILITY
-    val compatibilityCaptureRequired = category == HyperGlowReportCategory.COMPATIBILITY &&
-        DiagnosticReportFactory.requiresCompatibilityGuidedCapture(
-            capabilityReportPresent = capabilityReportPresent,
-            systemUiCallbackPresent = AodStateBridge.hasSystemUiCallback()
-        )
-    val guidedCapture = category.requiresCapture || compatibilityCaptureRequired
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
@@ -300,14 +280,7 @@ internal fun DiagnosticsScreen(onBack: () -> Unit) {
                     }
                 }
             } else if (draft == null && success == null) {
-                item {
-                    SmallTitle(
-                        text = stringResource(
-                            if (guidedCapture) R.string.diagnostic_guided_capture
-                            else R.string.diagnostic_section_report
-                        )
-                    )
-                }
+                item { SmallTitle(text = stringResource(R.string.diagnostic_guided_capture)) }
                 item {
                     SettingsCard {
                         // Warns but never blocks: an outdated build can still be the first to hit
@@ -322,17 +295,12 @@ internal fun DiagnosticsScreen(onBack: () -> Unit) {
                                 modifier = Modifier.padding(16.dp)
                             )
                         }
-                        if (guidedCapture) {
-                            Text(
-                                text = stringResource(R.string.diagnostic_capture_explanation),
-                                modifier = Modifier.padding(16.dp)
-                            )
-                        }
+                        Text(
+                            text = stringResource(R.string.diagnostic_capture_explanation),
+                            modifier = Modifier.padding(16.dp)
+                        )
                         TextButton(
-                            text = stringResource(
-                                if (guidedCapture) R.string.diagnostic_start_capture
-                                else R.string.diagnostic_prepare_report
-                            ),
+                            text = stringResource(R.string.diagnostic_start_capture),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp, vertical = 12.dp),
@@ -340,44 +308,17 @@ internal fun DiagnosticsScreen(onBack: () -> Unit) {
                             colors = ButtonDefaults.textButtonColorsPrimary(),
                             onClick = {
                                 statusMessage = ""
-                                if (guidedCapture) {
-                                    val session = DiagnosticCaptureManager.start(
-                                        context,
-                                        category,
-                                        description,
-                                        forceCapture = compatibilityCaptureRequired
-                                    )
-                                    if (session != null) {
-                                        activeCapture = session
-                                    } else {
-                                        statusMessage = context.getString(
-                                            R.string.diagnostic_status_start_failed
-                                        )
-                                    }
+                                val session = DiagnosticCaptureManager.start(
+                                    context,
+                                    category,
+                                    description
+                                )
+                                if (session != null) {
+                                    activeCapture = session
                                 } else {
-                                    busy = true
-                                    scope.launch {
-                                        val report = runCatching {
-                                            DiagnosticReportFactory.createCompatibilityReport(
-                                                context,
-                                                category,
-                                                description
-                                            )
-                                        }.getOrNull()
-                                        if (report != null &&
-                                            DiagnosticDraftStore.save(context, report)
-                                        ) {
-                                            draft = report
-                                            statusMessage = context.getString(
-                                                R.string.diagnostic_status_report_ready
-                                            )
-                                        } else {
-                                            statusMessage = context.getString(
-                                                R.string.diagnostic_status_prepare_failed
-                                            )
-                                        }
-                                        busy = false
-                                    }
+                                    statusMessage = context.getString(
+                                        R.string.diagnostic_status_start_failed
+                                    )
                                 }
                             }
                         )
@@ -565,6 +506,11 @@ internal fun DiagnosticsScreen(onBack: () -> Unit) {
             onDismissRequest = { showCategoryDialog = false }
         ) {
             Column {
+                Text(
+                    text = stringResource(R.string.diagnostic_category_hint),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    fontSize = 13.sp
+                )
                 HyperGlowReportCategory.entries.forEach { option ->
                     RadioButtonPreference(
                         categoryLabel(context, option),
@@ -748,6 +694,10 @@ private fun DiagnosticSetupChecklist(checks: HyperGlowSetupChecks) {
             stringResource(R.string.diagnostic_check_profile)
         ),
         checklistLine(
+            checks.spicyExPackagePresent,
+            stringResource(R.string.diagnostic_check_spicy_ex)
+        ),
+        checklistLine(
             checks.spotifyProducerBridgePresent,
             stringResource(R.string.diagnostic_check_spotify_bridge),
             warning = true
@@ -795,16 +745,6 @@ private fun categoryLabel(context: Context, category: HyperGlowReportCategory): 
             HyperGlowReportCategory.OTHER -> R.string.diagnostic_category_other
         }
     )
-
-private fun profileStateLabel(context: Context, value: String): String = context.getString(
-    when (value) {
-        "verified_profile" -> R.string.status_verified_profile
-        "verified_profile_missing_symbols" -> R.string.status_verified_profile_missing_symbols
-        "experimental_eligible" -> R.string.status_experimental_eligible
-        "experimental_active" -> R.string.status_experimental_active
-        else -> R.string.status_unsupported_profile
-    }
-)
 
 private fun uploadFailureMessage(
     context: Context,

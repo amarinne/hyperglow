@@ -3,9 +3,8 @@
 Status: canonical implementation guide
 
 This guide codifies the dominant safe patterns in the module. It is subordinate to
-`docs/ARCHITECTURE.md`, `docs/private/PARITY-SPEC.md`, and `docs/LOCKSCREEN_AOD_BEHAVIOR_SPEC.md`.
-Those documents define behavior; this document defines how that behavior is implemented and
-reviewed.
+`docs/ARCHITECTURE.md` and `docs/LOCKSCREEN_AOD_BEHAVIOR_SPEC.md`. Those documents define behavior;
+this document defines how that behavior is implemented and reviewed.
 
 The strictest rules apply to code loaded into `com.android.systemui`: failures there can affect the
 lockscreen, AOD, authentication flow, memory pressure, and device power. Do not mass-format or
@@ -379,14 +378,13 @@ and repeated notification geometry callbacks.
   override architecture or behavior contracts.
 - Update `docs/ARCHITECTURE.md` for package/process ownership, Binder flow, trust boundaries,
   capability gates, surface attachment, lifetime policy, or customization schema changes.
-- Update `docs/private/PARITY-SPEC.md` for renderer behavior or sanctioned AOD deltas.
 - Update `docs/LOCKSCREEN_AOD_BEHAVIOR_SPEC.md` for visibility, privacy, collision, continuity,
   keepalive, fallback, or customization-policy changes.
 - Update the relevant research/diagnostic record for Xiaomi symbol, hook, geometry, or version findings.
   Mark historical diagnostics as superseded rather than presenting them as current architecture.
-- `docs/private/LOCKSCREEN_AOD_IMPLEMENTATION_STATUS.md` records exact host-test count/result, build result,
-  APK SHA-256, install time, device/serial, SystemUI PID/restart reason, capability summary, observed
-  behavior, crash/OOM/safe-mode result, and remaining device gates.
+- Private implementation status records exact host-test count/result, build result, APK SHA-256,
+  install time, device/serial, SystemUI PID/restart reason, capability summary, observed behavior,
+  crash/OOM/safe-mode result, and remaining device gates.
 - Use evidence labels precisely:
   - `unit-tested` / `host-verified`: deterministic local tests only;
   - `trace-observed`: supported by runtime logs/trace, not necessarily visually confirmed;

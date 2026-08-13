@@ -1,6 +1,7 @@
 package com.eza.hyperglow.diagnostics
 
 import com.eza.hyperglow.root.capability.XiaomiCapability
+import com.eza.hyperglow.root.capability.XiaomiProfileState
 import com.eza.hyperglow.root.capability.XiaomiSymbolProbe
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -42,16 +43,15 @@ internal data class DiagnosticMediaEvidence(
 
 internal enum class HyperGlowReportCategory(
     val wireValue: String,
-    val displayName: String,
-    val requiresCapture: Boolean
+    val displayName: String
 ) {
-    COMPATIBILITY("compatibility", "Compatibility", false),
-    AOD_SURFACE("aod_surface", "AOD surface", true),
-    LOCKSCREEN_SURFACE("lockscreen_surface", "Lock screen surface", true),
-    PLAYBACK_BRIDGE("playback_bridge", "Spotify bridge", true),
-    SYSTEM_UI_FAILURE("systemui_failure", "System UI crash or restart", true),
-    CONFIGURATION("configuration", "Configuration", true),
-    OTHER("other", "Other", true);
+    COMPATIBILITY("compatibility", "Compatibility"),
+    AOD_SURFACE("aod_surface", "AOD surface"),
+    LOCKSCREEN_SURFACE("lockscreen_surface", "Lock screen surface"),
+    PLAYBACK_BRIDGE("playback_bridge", "Spotify bridge"),
+    SYSTEM_UI_FAILURE("systemui_failure", "System UI crash or restart"),
+    CONFIGURATION("configuration", "Configuration"),
+    OTHER("other", "Other");
 
     companion object {
         fun fromWireValue(value: String): HyperGlowReportCategory? = entries.firstOrNull {
@@ -117,6 +117,7 @@ internal data class HyperGlowSetupChecks(
     val systemUiHookActive: Boolean = false,
     val profileSupported: Boolean = false,
     val spotifyProducerBridgePresent: Boolean = false,
+    val spicyExPackagePresent: Boolean = false,
     val requiredPackagesPresent: Boolean = false
 )
 
@@ -295,15 +296,12 @@ internal object DiagnosticReportCodec {
         }
     }
 
-    private val PROFILE_STATES = setOf(
-        "no_systemui_report",
-        "available",
-        "verified_profile",
-        "verified_profile_missing_symbols",
-        "unsupported_profile",
-        "experimental_eligible",
-        "experimental_active"
-    )
+    // "no_systemui_report" is a synthetic sentinel DiagnosticReportFactory sends when there is no
+    // capability report at all; it has no XiaomiProfileState counterpart. Every other value is
+    // derived from the enum rather than hand-copied, so a new profile state is accepted here the
+    // moment it exists instead of needing this set remembered and updated separately.
+    private val PROFILE_STATES = XiaomiProfileState.entries.mapTo(hashSetOf()) { it.wireValue } +
+        "no_systemui_report"
     private val PRODUCER_STATUSES = setOf("absent", "loading", "ready", "no_lyrics")
     private val ROOT_ACCESS_STATES = setOf("not_checked", "granted", "denied", "error")
     private val SETUP_STATES = setOf("ready", "warning", "failed")
@@ -315,6 +313,7 @@ internal object DiagnosticReportCodec {
         "unsupported_profile",
         "systemui_package",
         "xiaomi_aod_package",
+        "spicy_ex_package",
         "spotify_package",
         "spotify_bridge"
     )
@@ -324,7 +323,13 @@ internal object DiagnosticReportCodec {
         "partial_capture",
         "metadata_only_root_denied"
     )
-    private val PACKAGE_KEYS = setOf("hyperglow", "systemui", "xiaomi_aod", "spotify")
+    private val PACKAGE_KEYS = setOf(
+        "hyperglow",
+        "systemui",
+        "xiaomi_aod",
+        "spicy_ex",
+        "spotify"
+    )
     private val XIAOMI_PROPERTY_KEYS = setOf(
         "ro.mi.os.version.name",
         "ro.mi.os.version.incremental",
@@ -524,6 +529,8 @@ internal fun buildHyperGlowGitHubIssue(report: DiagnosticReportEnvelope): Diagno
         ?: "Problem report"
     val systemUi = product.packageVersions["systemui"]?.versionName ?: "unknown"
     val aod = product.packageVersions["xiaomi_aod"]?.versionName ?: "unknown"
+    val spicyEx = product.packageVersions["spicy_ex"]?.versionName ?: "unknown"
+    val spotify = product.packageVersions["spotify"]?.versionName ?: "unknown"
     val media = compatibility.currentMediaEvidence
     return DiagnosticGitHubIssue(
         title = "[HyperGlow] $category — ${report.reportId}",
@@ -542,7 +549,9 @@ internal fun buildHyperGlowGitHubIssue(report: DiagnosticReportEnvelope): Diagno
                 .append(" (").append(compatibility.resolvedCapabilities.size)
                 .append(" capabilities)\n")
             append("- **System UI / AOD:** `").append(markdownText(systemUi))
-                .append("` / `").append(markdownText(aod)).append("`\n\n")
+                .append("` / `").append(markdownText(aod)).append("`\n")
+            append("- **Spicy EX / Spotify:** `").append(markdownText(spicyEx))
+                .append("` / `").append(markdownText(spotify)).append("`\n\n")
             if (media.present) {
                 append("## Song evidence\n\n")
                 append("- **Song:** ").append(markdownText(media.title)).append(" — ")

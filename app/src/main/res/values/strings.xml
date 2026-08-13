@@ -204,16 +204,15 @@
 
     <string name="diagnostic_section_problem">Problem</string>
     <string name="diagnostic_category">Category</string>
+    <string name="diagnostic_category_hint">Pick the closest match. Every category collects the same details, so this only helps with routing — it will not change what gets captured.</string>
     <string name="diagnostic_description">Describe what happened</string>
     <string name="diagnostic_byte_count">%1$d/%2$d</string>
     <string name="diagnostic_guided_capture">Guided capture</string>
-    <string name="diagnostic_capture_active">Capture active. Restart System UI now, reproduce the problem, then return and finish.</string>
+    <string name="diagnostic_capture_active">Capture active. For the fullest report, restart System UI and reproduce the problem first — but Finish works right now too and still submits something useful.</string>
     <string name="diagnostic_finish_capture">Finish capture</string>
     <string name="diagnostic_finishing">Finishing…</string>
-    <string name="diagnostic_section_report">Report</string>
-    <string name="diagnostic_capture_explanation">Temporarily captures filtered diagnostics. Root is checked when you finish.</string>
+    <string name="diagnostic_capture_explanation">Temporarily captures filtered diagnostics. You can finish immediately or after reproducing the problem — either way produces a usable report. Root is checked when you finish.</string>
     <string name="diagnostic_start_capture">Start capture</string>
-    <string name="diagnostic_prepare_report">Prepare report</string>
     <string name="diagnostic_section_review">Review</string>
     <string name="diagnostic_preview_json">Report JSON</string>
     <string name="diagnostic_data_policy">Data policy</string>
@@ -237,6 +236,7 @@
     <string name="diagnostic_check_root">Root access</string>
     <string name="diagnostic_check_systemui">SystemUI hook</string>
     <string name="diagnostic_check_profile">Compatible profile</string>
+    <string name="diagnostic_check_spicy_ex">Spicy EX installed</string>
     <string name="diagnostic_check_spotify_bridge">Spotify bridge</string>
     <string name="diagnostic_check_packages">Required apps</string>
 
@@ -255,7 +255,6 @@
     <string name="diagnostic_status_prepare_failed">Could not prepare the report.</string>
     <string name="diagnostic_status_capture_remains_active">Could not restore diagnostic logging. Capture remains active.</string>
     <string name="diagnostic_status_start_failed">Could not start capture.</string>
-    <string name="diagnostic_status_report_ready">Report ready for preview.</string>
     <string name="diagnostic_status_discarded">Report discarded.</string>
     <string name="diagnostic_status_draft_expired">Report draft expired. Prepare a new report.</string>
 

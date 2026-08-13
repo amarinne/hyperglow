@@ -87,6 +87,18 @@ class DiagnosticSetupPolicyTest {
         assertEquals(listOf("spotify_bridge"), result.setupFailures)
     }
 
+    @Test
+    fun absentSpicyExIsHardRequirementFailure() {
+        val result = resolveHyperGlowSetupChecks(
+            completeInput().copy(spicyExPackagePresent = false)
+        )
+
+        assertEquals("failed", result.setupState)
+        assertEquals(listOf("spicy_ex_package"), result.setupFailures)
+        assertFalse(result.spicyExPackagePresent)
+        assertFalse(result.requiredPackagesPresent)
+    }
+
     private fun completeInput() = HyperGlowSetupInput(
         rootAccessStatus = "granted",
         capabilityReportPresent = true,
@@ -95,6 +107,7 @@ class DiagnosticSetupPolicyTest {
         spotifyProducerBridgePresent = true,
         systemUiPackagePresent = true,
         xiaomiAodPackagePresent = true,
+        spicyExPackagePresent = true,
         spotifyPackagePresent = true
     )
 }

@@ -249,7 +249,7 @@ class SystemUiLyricProjectionTest {
     }
 
     @Test
-    fun hiddenSnapshotKeepsLastVisibleContentForSurfaceReattachment() {
+    fun pauseHiddenSnapshotKeepsLastVisibleContentButTerminalHiddenClearsIt() {
         val harness = Harness()
         val first = RecordingSubscriber(LyricSurfaceKind.AOD)
         harness.projection.attach(first, null)
@@ -257,12 +257,28 @@ class SystemUiLyricProjectionTest {
         harness.projection.accept(LyricProjectionMessage.Snapshot(visible))
         harness.projection.accept(
             LyricProjectionMessage.Snapshot(
-                snapshot(2, 20).copy(visible = false, original = "", keepAlive = false)
+                snapshot(2, 20).copy(
+                    visible = false,
+                    pauseRetentionEligible = true,
+                    original = "",
+                    keepAlive = false
+                )
             )
         )
 
         assertFalse(harness.projection.cachedSnapshot()!!.visible)
         assertEquals("retained line", harness.projection.cachedVisibleSnapshot()?.original)
+
+        // Terminal hidden state clears it. A surface that attaches later rebuilds its own
+        // last-visible slot from this cache, so a session that has really ended must not leave a
+        // lyric here for it to find.
+        harness.projection.accept(
+            LyricProjectionMessage.Snapshot(
+                snapshot(3, 30).copy(visible = false, original = "", keepAlive = false)
+            )
+        )
+
+        assertNull(harness.projection.cachedVisibleSnapshot())
     }
 
     @Test

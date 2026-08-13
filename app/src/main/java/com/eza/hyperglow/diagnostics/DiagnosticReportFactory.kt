@@ -19,37 +19,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 internal object DiagnosticReportFactory {
-    fun requiresCompatibilityGuidedCapture(
-        capabilityReportPresent: Boolean,
-        systemUiCallbackPresent: Boolean
-    ): Boolean = !capabilityReportPresent || !systemUiCallbackPresent
-
-    suspend fun createCompatibilityReport(
-        context: Context,
-        category: HyperGlowReportCategory,
-        description: String,
-        reportId: String = DiagnosticReportId.generate()
-    ): DiagnosticReportEnvelope = withContext(Dispatchers.IO) {
-        create(
-            context = context,
-            reportId = reportId,
-            category = category,
-            description = description,
-            startedAtUtcMillis = null,
-            finishedAtUtcMillis = System.currentTimeMillis(),
-            previousDiagnosticLogging = null,
-            captured = CapturedDiagnosticData(
-                outcome = "not_requested",
-                rootAccessStatus = checkDiagnosticRootAccess(DiagnosticRootProcessRunner),
-                logs = "",
-                crashExcerpt = "",
-                lsposedLines = "",
-                commandFailures = emptyList(),
-                truncationFlags = emptyMap()
-            )
-        )
-    }
-
     suspend fun createCapturedReport(
         context: Context,
         capture: FinishedDiagnosticCapture
@@ -110,6 +79,8 @@ internal object DiagnosticReportFactory {
                 systemUiPackagePresent = commonMetadata.packageVersions["systemui"]?.present == true,
                 xiaomiAodPackagePresent =
                     commonMetadata.packageVersions["xiaomi_aod"]?.present == true,
+                spicyExPackagePresent =
+                    commonMetadata.packageVersions["spicy_ex"]?.present == true,
                 spotifyPackagePresent = commonMetadata.packageVersions["spotify"]?.present == true
             )
         )
@@ -228,6 +199,7 @@ internal object DiagnosticReportFactory {
                 "hyperglow" to packageVersion(context, context.packageName),
                 "systemui" to packageVersion(context, "com.android.systemui"),
                 "xiaomi_aod" to packageVersion(context, "com.miui.aod"),
+                "spicy_ex" to packageVersion(context, SPICY_EX_PACKAGE),
                 "spotify" to packageVersion(context, "com.spotify.music")
             )
         )
@@ -267,6 +239,8 @@ internal object DiagnosticReportFactory {
         "ro.product.mod_device",
         "ro.miui.build.region"
     )
+
+    private const val SPICY_EX_PACKAGE = "com.eza.spicyex"
     private const val PROPERTY_TIMEOUT_MS = 500L
 
     private fun emptyMediaEvidence() = DiagnosticMediaEvidence(

@@ -164,6 +164,11 @@ internal class SystemUiLyricProjection(
                 lastUpdatedAt = message.updatedAtElapsedMs
                 latestSnapshot = message.value
                 if (message.value.visible) latestVisibleSnapshot = message.value
+                // Terminal hidden state clears the cached visible snapshot. Keeping it made the
+                // cache an unbounded rebuild source: a surface attaching much later refilled its
+                // own last-visible slot from here and could present a lyric whose session had
+                // already ended.
+                else if (message.value.isTerminalHidden()) latestVisibleSnapshot = null
                 scheduleExpiry(message.value)
                 subscribers.keys.toList().forEach { it.onLyricSnapshot(message.value) }
                 true
