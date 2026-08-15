@@ -21,6 +21,7 @@ internal enum class LyricSurfaceKind { LOCKSCREEN, AOD }
 
 internal const val LYRIC_SNAPSHOT_FRESH_MS = 5_000L
 private const val MAX_WIRE_FUTURE_SKEW_MS = 1_000L
+private const val TAG = "SystemUiProjection"
 
 internal fun isPlausibleWireTimestamp(updatedAtElapsedMs: Long, nowElapsedMs: Long): Boolean =
     updatedAtElapsedMs >= 0L && nowElapsedMs >= 0L &&
@@ -116,6 +117,7 @@ internal class SystemUiLyricProjection(
     private var latestConfiguration: CompiledCustomization? = null
     private var lastRevision = -1L
     private var lastUpdatedAt = -1L
+    private var lastRejection = ""
     private var bindingContext: Context? = null
     private var clientBound = false
     private var bootstrapped = false
@@ -153,29 +155,36 @@ internal class SystemUiLyricProjection(
 
     @Synchronized
     internal fun accept(message: LyricProjectionMessage): Boolean {
-        if (expectedUserId?.let { it != message.userId } == true) return false
-        if (message.revision < lastRevision) return false
+        if (expectedUserId?.let { it != message.userId } == true) {
+            return rejected("user=${message.userId} expected=$expectedUserId")
+        }
+        if (message.revision < lastRevision) {
+            return rejected("revision=${message.revision} held=$lastRevision")
+        }
         if (message.revision == lastRevision && message.updatedAtElapsedMs <= lastUpdatedAt) {
-            return false
+            return rejected("stamp=${message.updatedAtElapsedMs} held=$lastUpdatedAt")
         }
         return when (message) {
             is LyricProjectionMessage.Snapshot -> {
                 lastRevision = message.revision
                 lastUpdatedAt = message.updatedAtElapsedMs
-                latestSnapshot = message.value
-                if (message.value.visible) latestVisibleSnapshot = message.value
+                val acceptedSnapshot = stampTransportGapEdge(latestSnapshot, message.value)
+                latestSnapshot = acceptedSnapshot
+                if (acceptedSnapshot.visible) latestVisibleSnapshot = acceptedSnapshot
                 // Terminal hidden state clears the cached visible snapshot. Keeping it made the
                 // cache an unbounded rebuild source: a surface attaching much later refilled its
                 // own last-visible slot from here and could present a lyric whose session had
                 // already ended.
-                else if (message.value.isTerminalHidden()) latestVisibleSnapshot = null
-                scheduleExpiry(message.value)
-                subscribers.keys.toList().forEach { it.onLyricSnapshot(message.value) }
+                else if (acceptedSnapshot.isTerminalHidden()) latestVisibleSnapshot = null
+                scheduleExpiry(acceptedSnapshot)
+                subscribers.keys.toList().forEach { it.onLyricSnapshot(acceptedSnapshot) }
                 true
             }
             is LyricProjectionMessage.KeepAlive -> {
-                if (message.revision != lastRevision) return false
-                val current = latestSnapshot ?: return false
+                if (message.revision != lastRevision) {
+                    return rejected("keepalive revision=${message.revision} held=$lastRevision")
+                }
+                val current = latestSnapshot ?: return rejected("keepalive with no snapshot")
                 lastUpdatedAt = message.updatedAtElapsedMs
                 latestSnapshot = current.copy(
                     updatedAtElapsedMs = message.updatedAtElapsedMs,
@@ -212,6 +221,12 @@ internal class SystemUiLyricProjection(
         ) {
             return false
         }
+        HookLogger.i(
+            TAG,
+            "Projection expired age=${nowElapsedMs - snapshot.updatedAtElapsedMs}ms " +
+                "revision=$lastRevision visible=${snapshot.visible} " +
+                "playing=${snapshot.playbackActive} keepAlive=${snapshot.keepAlive}"
+        )
         latestSnapshot = null
         latestVisibleSnapshot = null
         expiryScheduler.cancel()
@@ -276,6 +291,21 @@ internal class SystemUiLyricProjection(
         latestConfiguration = null
         lastRevision = -1L
         lastUpdatedAt = -1L
+    }
+
+    /**
+     * Reports a dropped message once per distinct reason.
+     *
+     * <p>A message the projection refuses is indistinguishable from a producer that stopped
+     * publishing: both end with the projection expiring a few seconds later and the AOD lifetime
+     * guard withdrawing. Only the reason separates them.
+     */
+    private fun rejected(reason: String): Boolean {
+        if (reason != lastRejection) {
+            lastRejection = reason
+            HookLogger.i(TAG, "Projection message rejected $reason")
+        }
+        return false
     }
 
     private fun ensureBound() {

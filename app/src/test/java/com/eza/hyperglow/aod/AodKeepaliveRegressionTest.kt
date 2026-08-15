@@ -47,6 +47,16 @@ class AodKeepaliveRegressionTest {
     }
 
     @Test
+    fun sameSessionTimedDocumentSurvivesAProducerStateGap() {
+        val policy = AodPowerSessionPolicy()
+        val timedDocument = document("Syllable")
+        assertTrue(project(timedDocument, 1_000L, policy = policy).keepAlive)
+
+        assertFalse(AodProjectionEngine.shouldClearMismatchedDocument(timedDocument, state()))
+        assertTrue(project(timedDocument, 60_000L, policy = policy).keepAlive)
+    }
+
+    @Test
     fun noLyricsAndInvalidTimingExpireUnlessTheExplicitOverrideIsEnabled() {
         val candidates = listOf<SpicyBridgeDocument?>(
             null,

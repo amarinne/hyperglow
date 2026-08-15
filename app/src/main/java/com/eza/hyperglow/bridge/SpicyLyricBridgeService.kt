@@ -46,7 +46,7 @@ class SpicyLyricBridgeService : Service() {
             try {
                 documentExecutor.execute {
                     try {
-                        val accepted = try {
+                        val rejection = try {
                             SpicyBridgeDocumentStore.accept(
                                 metadata = ownedMetadata,
                                 descriptor = document,
@@ -54,12 +54,19 @@ class SpicyLyricBridgeService : Service() {
                             )
                         } catch (error: Exception) {
                             AppLog.w(TAG, "Rejected malformed document", error)
-                            false
+                            "parse-failed"
                         }
-                        if (accepted) {
+                        if (rejection == null) {
                             AppLog.i(TAG, "Accepted document generation=${ownedMetadata.generation}")
                         } else {
-                            AppLog.w(TAG, "Rejected stale or invalid document")
+                            // A rejected document is never re-sent, so the song runs without timed
+                            // rows and keepalive falls back to the song-change lease. The reason is
+                            // the only way to tell which side lost it.
+                            AppLog.w(
+                                TAG,
+                                "Rejected document generation=${ownedMetadata.generation} " +
+                                    "track=${ownedMetadata.trackUri} reason=$rejection"
+                            )
                         }
                     } finally {
                         runCatching { document.close() }

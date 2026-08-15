@@ -96,19 +96,63 @@ data class SpicyBridgeDocument(
         return lead ?: other
     }
 }
+/**
+ * Which identity field stops a held document from belonging to the producer state, or null when it
+ * still matches. Duration is reported last because it is the field that diverges without any visible
+ * song change: a document parsed before the track metadata settled keeps a stale duration and is
+ * discarded for the rest of the song.
+ */
+internal fun spicyBridgeDocumentMismatch(
+    document: SpicyBridgeDocument,
+    state: SpicyBridgeState
+): String? = when {
+    document.matches(state) -> null
+    document.producerId != state.producerId ->
+        "producer document=${document.producerId} state=${state.producerId}"
+    document.generation != state.generation ->
+        "generation document=${document.generation} state=${state.generation}"
+    document.trackUri != state.trackUri ->
+        "track document=${document.trackUri} state=${state.trackUri}"
+    else -> "duration document=${document.durationMs} state=${state.durationMs} " +
+        "track=${state.trackUri}"
+}
+
 internal fun isValidSpicyBridgeDocumentTiming(
     document: SpicyBridgeDocument,
     acceptedDurationMs: Long
-): Boolean {
-    if (acceptedDurationMs <= 0L || document.durationMs != acceptedDurationMs) return false
-    return document.rows.all { row ->
-        row.startMs >= 0L &&
-            row.endMs in row.startMs..acceptedDurationMs &&
-            row.fillEndMs in row.startMs..row.endMs &&
-            row.words.all { word ->
-                word.startMs >= 0L && word.endMs in word.startMs..acceptedDurationMs
-            }
+): Boolean = spicyBridgeDocumentTimingFault(document, acceptedDurationMs) == null
+
+/**
+ * Why a document's timing cannot be trusted against the accepted state, or null when it can.
+ *
+ * The reason is reported rather than folded into a boolean because a rejected document is dropped
+ * for the rest of the song: nothing re-requests it, so the difference between "the producer sent a
+ * duration the state does not agree with" and "one row runs past the end of the track" is the whole
+ * diagnosis when keepalive silently falls back to the song-change lease.
+ */
+internal fun spicyBridgeDocumentTimingFault(
+    document: SpicyBridgeDocument,
+    acceptedDurationMs: Long
+): String? {
+    if (acceptedDurationMs <= 0L) return "state-duration=$acceptedDurationMs"
+    if (document.durationMs != acceptedDurationMs) {
+        return "duration document=${document.durationMs} state=$acceptedDurationMs"
     }
+    document.rows.forEachIndexed { index, row ->
+        if (row.startMs < 0L || row.endMs !in row.startMs..acceptedDurationMs) {
+            return "row[$index] start=${row.startMs} end=${row.endMs} duration=$acceptedDurationMs"
+        }
+        if (row.fillEndMs !in row.startMs..row.endMs) {
+            return "row[$index] fillEnd=${row.fillEndMs} window=${row.startMs}..${row.endMs}"
+        }
+        row.words.forEachIndexed { wordIndex, word ->
+            if (word.startMs < 0L || word.endMs !in word.startMs..acceptedDurationMs) {
+                return "row[$index].word[$wordIndex] start=${word.startMs} end=${word.endMs} " +
+                    "duration=$acceptedDurationMs"
+            }
+        }
+    }
+    return null
 }
 
 internal data class SpicyBridgeDocumentMetadata(
@@ -230,22 +274,27 @@ object SpicyBridgeDocumentStore {
     val state = mutableState.asStateFlow()
     private val commitOrder = SpicyDocumentCommitOrder()
 
+    /** Null when the document was committed; otherwise why it was dropped. */
     internal fun accept(
         metadata: SpicyBridgeDocumentMetadata,
         descriptor: ParcelFileDescriptor,
         arrivalRevision: Long
-    ): Boolean {
+    ): String? {
         descriptor.use { fd ->
             if (metadata.documentVersion !in MIN_DOCUMENT_VERSION..DOCUMENT_VERSION ||
                 metadata.compressedBytes !in 1..MAX_COMPRESSED_BYTES
-            ) return false
+            ) return "metadata version=${metadata.documentVersion} bytes=${metadata.compressedBytes}"
             val producerId = metadata.producerId
             val generation = metadata.generation
             val trackUri = metadata.trackUri
 
-            val bridgeState = SpicyBridgeStore.state.value ?: return false
+            val bridgeState = SpicyBridgeStore.state.value
+                ?: return "no-state generation=$generation track=$trackUri"
             if (bridgeState.producerId != producerId || bridgeState.generation != generation ||
-                bridgeState.trackUri != trackUri) return false
+                bridgeState.trackUri != trackUri) {
+                return "state-mismatch document=$generation:$trackUri " +
+                    "state=${bridgeState.generation}:${bridgeState.trackUri}"
+            }
 
             val bytes = readBoundedSpicyDocumentGzip(
                 ParcelFileDescriptor.AutoCloseInputStream(fd),
@@ -256,24 +305,28 @@ object SpicyBridgeDocumentStore {
             if (documentVersion != metadata.documentVersion ||
                 root.requiredString("producerId") != producerId ||
                 root.requiredInt("generation") != generation ||
-                root.requiredString("trackUri") != trackUri) return false
+                root.requiredString("trackUri") != trackUri) return "payload-identity-mismatch"
 
-            val rowsJson = root["rows"]?.jsonArray ?: return false
-            if (rowsJson.size > MAX_ROWS) return false
+            val rowsJson = root["rows"]?.jsonArray ?: return "malformed rows-missing"
+            if (rowsJson.size > MAX_ROWS) return "oversized rows=${rowsJson.size}"
             var wordCount = 0
             var layoutGroupCount = 0
             val rows = rowsJson.map { element ->
                 val row = element.jsonObject
                 val wordsJson = row["words"]?.jsonArray ?: JsonArray(emptyList())
                 wordCount += wordsJson.size
-                if (wordCount > MAX_WORDS) return false
+                if (wordCount > MAX_WORDS) return "oversized words=$wordCount"
                 val startMs = row.requiredLong("startMs")
                 val endMs = row.requiredLong("endMs")
                 val fillEndMs = row.requiredLong("fillEndMs")
-                if (startMs < 0L || endMs < startMs || fillEndMs < startMs) return false
+                if (startMs < 0L || endMs < startMs || fillEndMs < startMs) {
+                    return "malformed row start=$startMs end=$endMs fillEnd=$fillEndMs"
+                }
                 SpicyBridgeRow(
                     role = row.requiredString("role").also {
-                        if (it !in setOf("LEAD", "BACKGROUND", "INTERLUDE")) return false
+                        if (it !in setOf("LEAD", "BACKGROUND", "INTERLUDE")) {
+                            return "malformed role=$it"
+                        }
                     },
                     startMs = startMs,
                     endMs = endMs,
@@ -286,7 +339,9 @@ object SpicyBridgeDocumentStore {
                         val word = wordElement.jsonObject
                         val wordStart = word.requiredLong("startMs")
                         val wordEnd = word.requiredLong("endMs")
-                        if (wordStart < 0L || wordEnd < wordStart) return false
+                        if (wordStart < 0L || wordEnd < wordStart) {
+                            return "malformed word start=$wordStart end=$wordEnd"
+                        }
                         val sourceRange = normalizeSpicySourceRange(
                             row.requiredString("text").length,
                             word.optionalInt("sourceStart", -1),
@@ -301,7 +356,7 @@ object SpicyBridgeDocumentStore {
                                 documentVersion,
                                 word["boundaryAfter"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull(),
                                 word["partOfWord"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull()
-                            ) ?: return false,
+                            ) ?: return "malformed word-boundary",
                             sourceRange.first,
                             sourceRange.second
                         )
@@ -310,16 +365,20 @@ object SpicyBridgeDocumentStore {
                         val ruby = rubyElement.jsonObject
                         val start = ruby.requiredInt("start")
                         val end = ruby.requiredInt("end")
-                        if (start < 0 || end < start) return false
+                        if (start < 0 || end < start) return "malformed furigana $start..$end"
                         SpicyBridgeRuby(start, end, ruby.boundedString("reading"))
                     },
                     layoutGroups = (row["layoutGroups"]?.jsonArray ?: JsonArray(emptyList())).map { groupElement ->
                         layoutGroupCount++
-                        if (layoutGroupCount > MAX_LAYOUT_GROUPS) return false
+                        if (layoutGroupCount > MAX_LAYOUT_GROUPS) {
+                            return "oversized layoutGroups=$layoutGroupCount"
+                        }
                         val group = groupElement.jsonObject
                         val start = group.requiredInt("start")
                         val end = group.requiredInt("end")
-                        if (start < 0 || end <= start || end > row.requiredString("text").length) return false
+                        if (start < 0 || end <= start ||
+                            end > row.requiredString("text").length
+                        ) return "malformed layoutGroup $start..$end"
                         SpicyBridgeLayoutGroup(
                             start,
                             end,
@@ -351,16 +410,24 @@ object SpicyBridgeDocumentStore {
         metadata: SpicyBridgeDocumentMetadata,
         arrivalRevision: Long,
         document: SpicyBridgeDocument
-    ): Boolean {
-        val current = SpicyBridgeStore.state.value ?: return false
+    ): String? {
+        val current = SpicyBridgeStore.state.value
+            ?: return "commit-no-state generation=${metadata.generation}"
         if (current.producerId != metadata.producerId ||
             current.generation != metadata.generation ||
-            current.trackUri != metadata.trackUri ||
-            !isValidSpicyBridgeDocumentTiming(document, current.durationMs) ||
-            !commitOrder.accept(metadata.sessionIdentity, arrivalRevision)
-        ) return false
+            current.trackUri != metadata.trackUri
+        ) {
+            return "commit-state-mismatch document=${metadata.generation}:${metadata.trackUri} " +
+                "state=${current.generation}:${current.trackUri}"
+        }
+        spicyBridgeDocumentTimingFault(document, current.durationMs)?.let {
+            return "commit-timing $it"
+        }
+        if (!commitOrder.accept(metadata.sessionIdentity, arrivalRevision)) {
+            return "commit-order revision=$arrivalRevision"
+        }
         mutableState.value = document
-        return true
+        return null
     }
 
     @Synchronized

@@ -89,6 +89,14 @@ class AodStateBridgeTest {
     }
 
     @Test
+    fun fullSnapshotIsRepublishedOnItsOwnCadence() {
+        assertTrue(shouldRepublishFullSnapshot(nowElapsedMs = 10L, lastFullPublishAtElapsedMs = Long.MIN_VALUE))
+        assertFalse(shouldRepublishFullSnapshot(nowElapsedMs = 4_000L, lastFullPublishAtElapsedMs = 0L))
+        assertTrue(shouldRepublishFullSnapshot(nowElapsedMs = 4_500L, lastFullPublishAtElapsedMs = 0L))
+        assertTrue(shouldRepublishFullSnapshot(nowElapsedMs = 9_000L, lastFullPublishAtElapsedMs = 0L))
+    }
+
+    @Test
     fun aggregateOverflowPublishesHiddenFailClosedRevision() {
         val normalized = normalizeAodDisplayState(
             state().copy(

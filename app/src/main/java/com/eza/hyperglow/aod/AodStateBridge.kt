@@ -100,6 +100,7 @@ object AodStateBridge {
     private var latestConfiguration: Bundle? = null
     private var lastConfigurationHash = ""
     private var lastPublished: AodDisplayState? = null
+    private var lastFullPublishAtElapsedMs = Long.MIN_VALUE
 
     @Synchronized
     fun register(callback: IAodLyricCallback) {
@@ -140,6 +141,7 @@ object AodStateBridge {
         )
         latestMessage = publication.message
         latest = AodStateWireBundleCodec.toBundle(publication.envelope)
+        lastFullPublishAtElapsedMs = publication.message.updatedAtElapsedMs
         broadcast(latest)
     }
 
@@ -167,8 +169,10 @@ object AodStateBridge {
     fun refreshVisibleState() {
         val current = latestMessage as? AodStateWireMessage.Snapshot ?: return
         val updatedAt = SystemClock.elapsedRealtime()
-        latestMessage = refreshAodStateWireSnapshot(current, updatedAt)
-        val keepAlive = AodStateWireMessage.KeepAlive(
+        val refreshed = refreshAodStateWireSnapshot(current, updatedAt)
+        latestMessage = refreshed
+        val republish = shouldRepublishFullSnapshot(updatedAt, lastFullPublishAtElapsedMs)
+        val message: AodStateWireMessage = if (republish) refreshed else AodStateWireMessage.KeepAlive(
             revision = current.revision,
             userId = current.userId,
             updatedAtElapsedMs = updatedAt,
@@ -177,7 +181,8 @@ object AodStateBridge {
             playbackActive = current.playbackActive,
             pauseRetentionEligible = current.pauseRetentionEligible
         )
-        val envelope = AodStateWireCodec.encode(keepAlive) ?: return
+        val envelope = AodStateWireCodec.encode(message) ?: return
+        if (republish) lastFullPublishAtElapsedMs = updatedAt
         broadcast(AodStateWireBundleCodec.toBundle(envelope))
     }
 
@@ -186,6 +191,12 @@ object AodStateBridge {
 
     private fun broadcast(state: Bundle) {
         val count = callbacks.beginBroadcast()
+        // Publishing into an empty room looks identical to publishing normally from this side, and
+        // the consumer's projection expires a few seconds later as if the app had gone quiet.
+        if (count != lastBroadcastCount) {
+            lastBroadcastCount = count
+            AppLog.i(TAG, "State subscribers=$count")
+        }
         try {
             for (index in 0 until count) {
                 try {
@@ -199,6 +210,8 @@ object AodStateBridge {
         }
     }
 
+    private var lastBroadcastCount = -1
+
     private const val TAG = "AodStateBridge"
 }
 
@@ -206,6 +219,24 @@ internal data class AodStatePublication(
     val message: AodStateWireMessage,
     val envelope: AodStateWireEnvelope
 )
+
+/**
+ * Whether a heartbeat should carry the whole snapshot instead of a keepalive.
+ *
+ * A keepalive can only renew a projection the consumer still holds: one that expired has no
+ * revision to match and rejects every heartbeat, so the consumer stays dark until the song happens
+ * to change a line. Re-sending the full snapshot on a slow cadence bounds that recovery without
+ * paying the payload on every beat.
+ */
+internal fun shouldRepublishFullSnapshot(
+    nowElapsedMs: Long,
+    lastFullPublishAtElapsedMs: Long,
+    intervalMs: Long = FULL_SNAPSHOT_REPUBLISH_MS
+): Boolean = lastFullPublishAtElapsedMs == Long.MIN_VALUE ||
+    nowElapsedMs - lastFullPublishAtElapsedMs >= intervalMs
+
+/** Three heartbeats of margin against the consumer's freshness window. */
+internal const val FULL_SNAPSHOT_REPUBLISH_MS = 4_500L
 
 internal fun refreshAodStateWireSnapshot(
     snapshot: AodStateWireMessage.Snapshot,

@@ -118,7 +118,9 @@ X sweep across every visible lyric row. Word/syllable timing remains unchanged.
 - The producer retains at most one bounded immutable state and one compressed document for the
   current session. Each Binder connection receives state first, then document, once; normal service
   process death uses Android's existing automatic reconnect without creating a duplicate bind.
-  Explicit clear, generation retirement, and disable discard both retained payloads.
+  Explicit clear, generation retirement, and disable discard both retained payloads. A null
+  state edge may retain the current document in app memory for one bounded 30-second transport
+  grace; only the exact returning producer/generation/track/duration identity may reuse it.
 - App-to-SystemUI lyric state keeps the `onState(Bundle)` ABI but carries a versioned scalar envelope; full snapshots use one encoded body bounded to 48 KiB aggregate UTF-8 text and 64 KiB encoded bytes. Hidden and keepalive messages remain scalar-only.
 - The scalar envelope carries Spotify `playbackActive` explicitly. Power policy never infers pause
   from lyric visibility, media rows, another media player, or renderer state.
@@ -132,7 +134,12 @@ X sweep across every visible lyric row. Word/syllable timing remains unchanged.
   when the producer stays non-playing on the same session past the bounded confirmation window, which
   keeps a song change from releasing lifetime between two tracks. Other media players cannot start or
   extend either policy. Media-player removal, stale state, invalid data, Binder death, detach, or
-  missing Xiaomi symbols clears output and restores stock AOD placement.
+  missing Xiaomi symbols clears output and restores stock AOD placement. State loss may keep the
+  bounded document memory-only during transport grace; it cannot remain visible or assert power.
+  SystemUI measures frozen transport presentation from one absolute hidden edge. Expiry clears the
+  retained scene and managed placement together; hidden keepalive traffic cannot extend that edge.
+  Detached AOD recovery is bounded to one retry per wake identity so OEM teardown cannot become an
+  attach/position loop; a new content-phase identity re-arms one attempt.
 - Lockscreen lyrics require explicit opt-in and hide for unsupported/custom themes, secondary
   displays, bouncer/auth entry, stale state, or insufficient safe geometry.
 - While visible playback is active, including loading/no-lyrics fallback, a 4-second bounded heartbeat

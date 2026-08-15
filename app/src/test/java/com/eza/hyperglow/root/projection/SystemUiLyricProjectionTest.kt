@@ -398,6 +398,31 @@ class SystemUiLyricProjectionTest {
     }
 
     @Test
+    fun keepAliveRefreshDoesNotMoveTheCachedTransportGapEdge() {
+        val harness = Harness()
+        val gap = snapshot(4, 1_000L).copy(
+            visible = false,
+            playbackActive = true,
+            original = ""
+        )
+        harness.projection.accept(LyricProjectionMessage.Snapshot(gap))
+        harness.projection.accept(
+            LyricProjectionMessage.KeepAlive(
+                LyricKeepAliveSignal(
+                    revision = 4L,
+                    updatedAtElapsedMs = 20_000L,
+                    keepAlive = true,
+                    wakeSignal = 8L,
+                    playbackActive = true
+                )
+            )
+        )
+
+        assertEquals(20_000L, harness.projection.cachedSnapshot()?.updatedAtElapsedMs)
+        assertEquals(1_000L, harness.projection.cachedSnapshot()?.transportGapStartedAtElapsedMs)
+    }
+
+    @Test
     fun userChangeClearsAndRebindsSingleClient() {
         val harness = Harness()
         val subscriber = RecordingSubscriber(LyricSurfaceKind.AOD)

@@ -2,9 +2,11 @@ package com.eza.hyperglow.aod
 
 import android.content.Context
 import android.os.SystemClock
+import com.eza.hyperglow.AppLog
 import com.eza.hyperglow.RuntimeCustomization
 import com.eza.hyperglow.bridge.SpicyBridgeDocument
 import com.eza.hyperglow.bridge.SpicyBridgeState
+import com.eza.hyperglow.bridge.spicyBridgeDocumentMismatch
 import com.eza.hyperglow.customization.CustomizationRepository
 import com.eza.hyperglow.customization.SceneCompiler
 import com.eza.hyperglow.producer.LyricProducerArbiter
@@ -101,12 +103,15 @@ object AodProjectionEngine {
     private var transitionKeepAlive: Job? = null
     private var fallbackSession: FallbackRefreshSession? = null
     private var releaseJob: Job? = null
+    private var documentClearJob: Job? = null
     private var pauseConfirmJob: Job? = null
     private var pendingPauseSession: ProjectionSessionIdentity? = null
     private var confirmedPauseSession: ProjectionSessionIdentity? = null
     private var sessionKey = ""
     private var lastKeepAliveAt = 0L
     private var lastKeepAliveIntent = false
+    private var lastDocumentMismatch = ""
+    private var lastAodEnabled: Boolean? = null
     private var lastCustomizationPublishAt = 0L
     private var started = false
     private var appContext: Context? = null
@@ -141,8 +146,14 @@ object AodProjectionEngine {
             stopScheduler()
             cancelPauseConfirmation()
             scheduleRelease()
-            producers.clearDocument()
+            scheduleDocumentClear()
             return
+        }
+        cancelDocumentClear()
+        val heldDocument = producers.currentDocument()
+        if (shouldClearMismatchedDocument(heldDocument, state)) {
+            heldDocument?.let { logDocumentMismatch(it, state) }
+            producers.clearDocument()
         }
         cancelRelease()
         if (!producers.isCurrentActive(state)) {
@@ -317,6 +328,38 @@ object AodProjectionEngine {
         releaseJob = null
     }
 
+    /**
+     * A null producer state is a transport gap, not proof that the timed document ended. Spotify can
+     * withdraw state while rebuilding the same session; clearing the document immediately degraded
+     * the returning song to line fallback and expired keepalive at the presentation lease.
+     */
+    @Synchronized
+    private fun scheduleDocumentClear() {
+        if (documentClearJob?.isActive == true) return
+        val retainedDocument = producers.currentDocument() ?: return
+        documentClearJob = scope.launch {
+            delay(DOCUMENT_TRANSPORT_GRACE_MS)
+            clearDocumentAfterTransportGrace(retainedDocument)
+        }
+    }
+
+    @Synchronized
+    private fun clearDocumentAfterTransportGrace(retainedDocument: SpicyBridgeDocument) {
+        documentClearJob = null
+        if (shouldClearRetainedDocument(
+                retainedDocument = retainedDocument,
+                currentDocument = producers.currentDocument(),
+                currentState = producers.currentState()
+            )
+        ) producers.clearDocument()
+    }
+
+    @Synchronized
+    private fun cancelDocumentClear() {
+        documentClearJob?.cancel()
+        documentClearJob = null
+    }
+
     @Synchronized
     private fun releaseNow(
         playbackActive: Boolean = false,
@@ -352,6 +395,7 @@ object AodProjectionEngine {
         val compiled = appContext?.let(CustomizationRepository::loadCompiled)
         val aodProfile = compiled?.profiles?.get(SceneCompiler.SURFACE_AOD)
         val aodEnabled = aodProfile?.enabled ?: prefs.aodEnabled
+        logAodEnabledEdge(aodEnabled, profilePresent = aodProfile != null, prefs.aodEnabled)
         val lockscreenEnabled = compiled?.profiles?.get(SceneCompiler.SURFACE_LOCKSCREEN)?.enabled
             ?: prefs.lockscreenEnabled
         val projectedState = projectToDisplay(
@@ -377,8 +421,56 @@ object AodProjectionEngine {
                 currentDocument = producers.currentDocument()
             ) || !producers.isCurrentActive(state) || !state.playing
         ) return
+        logKeepAliveEdge(projectedState.keepAlive, document, state)
         lastKeepAliveIntent = projectedState.keepAlive
         AodStateBridge.publish(projectedState)
+    }
+
+    /**
+     * Keepalive edges with the inputs that decided them.
+     *
+     * Without a document the decision falls back to the bounded song-change lease, and the SystemUI
+     * log then shows a guard release with no cause beyond `keepAlive=false`. Naming the document and
+     * timing state at the edge is what separates "this song has no timed lyrics" from "the timed
+     * document was lost in transport".
+     */
+    private fun logKeepAliveEdge(
+        keepAlive: Boolean,
+        document: SpicyBridgeDocument?,
+        state: SpicyBridgeState
+    ) {
+        if (keepAlive == lastKeepAliveIntent) return
+        AppLog.i(
+            TAG,
+            "Keepalive $lastKeepAliveIntent->$keepAlive document=${document != null} " +
+                "timed=${document?.let(::hasActualLyricTiming) == true} status=${state.status} " +
+                "generation=${state.generation} track=${state.trackUri}"
+        )
+    }
+
+    /**
+     * The projection re-reads the compiled customization on every tick, so a single tick that resolves
+     * `aodEnabled` false withdraws the SystemUI lifetime guard, replays Xiaomi's hide, and drops the
+     * scene back to the stock clock before the next tick restores it. The edge records which of the
+     * two sources answered so a one-tick flip is attributable.
+     */
+    private fun logAodEnabledEdge(aodEnabled: Boolean, profilePresent: Boolean, preference: Boolean) {
+        if (aodEnabled == lastAodEnabled) return
+        val previous = lastAodEnabled
+        lastAodEnabled = aodEnabled
+        if (previous == null) return
+        AppLog.i(
+            TAG,
+            "AOD enabled $previous->$aodEnabled profile=$profilePresent preference=$preference"
+        )
+    }
+
+    private fun logDocumentMismatch(document: SpicyBridgeDocument, state: SpicyBridgeState) {
+        val detail = spicyBridgeDocumentMismatch(document, state) ?: return
+        if (detail == lastDocumentMismatch) return
+        lastDocumentMismatch = detail
+        // Nothing re-requests a discarded document, so the rest of the song projects untimed.
+        AppLog.w(TAG, "Discarded mismatched document $detail")
     }
 
     /**
@@ -398,6 +490,17 @@ object AodProjectionEngine {
         playbackActive: Boolean,
         lastKeepAliveIntent: Boolean
     ): Boolean = playbackActive && lastKeepAliveIntent
+
+    internal fun shouldClearMismatchedDocument(
+        document: SpicyBridgeDocument?,
+        state: SpicyBridgeState
+    ): Boolean = document != null && !document.matches(state)
+
+    internal fun shouldClearRetainedDocument(
+        retainedDocument: SpicyBridgeDocument?,
+        currentDocument: SpicyBridgeDocument?,
+        currentState: SpicyBridgeState?
+    ): Boolean = retainedDocument != null && currentDocument === retainedDocument && currentState == null
 
     private fun publishCustomizationIfDue(now: Long) {
         if (now - lastCustomizationPublishAt < CUSTOMIZATION_REFRESH_MS) return
@@ -442,6 +545,8 @@ object AodProjectionEngine {
         fallbackRefreshSession(current) == expected
 
     internal fun fallbackRefreshIntervalMs(): Long = FALLBACK_REFRESH_INTERVAL_MS
+
+    internal fun keepAliveIntervalMs(): Long = KEEP_ALIVE_INTERVAL_MS
 
     fun shouldShowPlaybackFallback(status: String, playing: Boolean): Boolean =
         playing && (status == "loading" || status == "no_lyrics")
@@ -514,9 +619,16 @@ object AodProjectionEngine {
         return identity.hashCode().toLong() and Long.MAX_VALUE
     }
 
-    private const val KEEP_ALIVE_INTERVAL_MS = 4_000L
+    /**
+     * The consumer expires a projection after five seconds without a message. At one beat per four
+     * seconds a single late beat was enough to lose it, which withdrew the AOD lifetime guard and
+     * dropped the scene back to the stock clock mid-song. Three beats per window absorb that.
+     */
+    private const val KEEP_ALIVE_INTERVAL_MS = 1_500L
     private const val FALLBACK_REFRESH_INTERVAL_MS = 1_000L
     private const val TRANSITION_GRACE_MS = 1_500L
+    private const val DOCUMENT_TRANSPORT_GRACE_MS = 30_000L
     internal const val PAUSE_CONFIRM_MS = 1_500L
     private const val CUSTOMIZATION_REFRESH_MS = 1_000L
+    private const val TAG = "AodProjection"
 }

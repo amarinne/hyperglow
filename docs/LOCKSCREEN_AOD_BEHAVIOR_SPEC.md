@@ -219,6 +219,16 @@ first, lyrics shrink to the bounded minimum, and insufficient/unknown geometry f
   content capability and never gates lifetime policy. The next visible snapshot cancels the grace
   without replaying Xiaomi hide policy. Paused/non-playing state releases immediately. This prevents short
   producer/status gaps from turning AOD off mid-song; stale/disconnect still releases immediately.
+- A null producer-state edge retains the one bounded timed document in app memory for the same
+  30-second transport grace. Only a returning state with the exact producer, generation, track URI,
+  and duration may reuse it. A different session clears it immediately; an abandoned gap clears it
+  when the grace expires. Explicit producer clear still discards state and document immediately.
+- SystemUI transport retention uses the same absolute edge and retires the frozen scene atomically
+  at expiry. Keepalive heartbeats cannot restart a hidden grace, leave an expired scene positioned,
+  or alternate Xiaomi stock and managed placement. A fresh visible projection may start normally.
+- Detached-surface recovery is one-shot per wake identity. If Xiaomi tears AOD down again during the
+  same song phase, heartbeats do not repeatedly wake, attach, and reposition it; a new song or timed-
+  document wake identity may make one fresh recovery attempt.
 - A still-playing transport gap carries the session's existing keepalive intent, not a withdrawal.
   Publishing playback without keepalive reads as a withdrawal at the SystemUI coordinator and
   releases Xiaomi lifetime suppression for the length of the gap, which is what a song change must

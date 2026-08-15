@@ -18,10 +18,12 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
     private var surfaceAttached = false
     private var aodDisplayOff = false
     private var aodEnabled = false
+    private var projectionVisible = false
     private var keepAliveRequested = false
     private var graceEligible = false
     private var graceActive = false
     private var lastWakeSignal = Long.MIN_VALUE
+    private var lastDetachedRetrySignal = Long.MIN_VALUE
     private var lifetimeActive = false
     private var lifetimeActiveSinceElapsedMs = Long.MIN_VALUE
     private var hideRaceRecoveryPending = false
@@ -80,8 +82,9 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
     }
 
     override fun onLyricSnapshot(snapshot: LyricSnapshot) {
+        projectionVisible = snapshot.visible
         guardCause = "snapshot visible=${snapshot.visible} playing=${snapshot.playbackActive} " +
-            "keepAlive=${snapshot.keepAlive} grace=$graceActive"
+            "keepAlive=${snapshot.keepAlive} aodEnabled=${snapshot.aodEnabled} grace=$graceActive"
         if (snapshot.visible) {
             aodEnabled = snapshot.aodEnabled
             keepAliveRequested = snapshot.aodEnabled && snapshot.playbackActive && snapshot.keepAlive
@@ -114,7 +117,11 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
             cancelGrace()
             keepAliveRequested = false
             graceEligible = false
-        } else if (signal.keepAlive) {
+        } else if (signal.keepAlive && shouldAcceptKeepAliveHeartbeat(
+                projectionVisible = projectionVisible,
+                graceActive = graceActive
+            )
+        ) {
             keepAliveRequested = aodEnabled
             cancelGrace()
         } else if (!graceActive) {
@@ -125,34 +132,52 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
         dispatchWake(
             signal = signal.wakeSignal,
             allowed = aodEnabled,
-            forceRetry = shouldRetryDetachedAodWake(surfaceAttached, keepAliveRequested)
+            forceRetry = shouldRetryDetachedAodWake(
+                surfaceAttached = surfaceAttached,
+                keepAliveRequested = keepAliveRequested,
+                signal = signal.wakeSignal,
+                lastRetriedSignal = lastDetachedRetrySignal
+            )
         )
     }
 
-    override fun onLyricProjectionDisconnected() = clear()
+    override fun onLyricProjectionDisconnected() = clear("projection-disconnected")
 
-    override fun onLyricProjectionStale() = clear()
+    override fun onLyricProjectionStale() = clear("projection-stale")
 
-    private fun clear() {
+    /**
+     * Both entry points name themselves. A release here used to be logged under whatever cause the
+     * previous snapshot or heartbeat left behind, which read as a guard dropping while every input
+     * it prints was nominal.
+     */
+    private fun clear(cause: String) {
+        guardCause = cause
         cancelGrace()
         keepAliveRequested = false
         graceEligible = false
         aodEnabled = false
+        projectionVisible = false
         aodDisplayOff = false
         hideRaceRecoveryPending = false
         lastWakeSignal = Long.MIN_VALUE
+        lastDetachedRetrySignal = Long.MIN_VALUE
         updateLifetimeGuard()
     }
 
     private fun updateLifetimeGuard() {
+        val capabilityAvailable = XiaomiCapabilityResolver.hasCapability(
+            XiaomiCapability.AOD_LIFETIME_GUARD
+        )
         val active = shouldActivateAodPowerLifetime(
             surfaceAttached = surfaceAttached,
             keepAliveRequested = keepAliveRequested,
-            capabilityAvailable = XiaomiCapabilityResolver.hasCapability(
-                XiaomiCapability.AOD_LIFETIME_GUARD
-            )
+            capabilityAvailable = capabilityAvailable
         )
-        AodLifetimeController.noteGuardCause(guardCause)
+        // A release names the snapshot it came from, but the guard has two further inputs. Without
+        // them a release that reports every snapshot field as nominal has no attributable cause.
+        AodLifetimeController.noteGuardCause(
+            "$guardCause attached=$surfaceAttached capability=$capabilityAvailable"
+        )
         if (active != lifetimeActive) {
             lifetimeActive = active
             lifetimeActiveSinceElapsedMs = if (active) SystemClock.elapsedRealtime() else Long.MIN_VALUE
@@ -164,6 +189,7 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
     private fun dispatchWake(signal: Long, allowed: Boolean, forceRetry: Boolean = false) {
         val newSignal = isNewAodWakeSignal(lastWakeSignal, signal)
         if (!allowed || (!newSignal && !forceRetry)) return
+        if (forceRetry) lastDetachedRetrySignal = signal
         val accepted = AodWakeBroker.requestWake(signal)
         if (newSignal && accepted) lastWakeSignal = signal
         HookLogger.i(
@@ -206,8 +232,16 @@ internal fun shouldStartAodPowerGrace(
 
 internal fun shouldRetryDetachedAodWake(
     surfaceAttached: Boolean,
-    keepAliveRequested: Boolean
-): Boolean = !surfaceAttached && keepAliveRequested
+    keepAliveRequested: Boolean,
+    signal: Long,
+    lastRetriedSignal: Long
+): Boolean = !surfaceAttached && keepAliveRequested && signal != 0L && signal != lastRetriedSignal
+
+/** A heartbeat cannot turn a hidden transport grace back into an unbounded active session. */
+internal fun shouldAcceptKeepAliveHeartbeat(
+    projectionVisible: Boolean,
+    graceActive: Boolean
+): Boolean = projectionVisible
 
 /**
  * Bounded to the one unwinnable race: keepalive intent landing after Xiaomi's policy hide has

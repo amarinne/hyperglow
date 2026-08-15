@@ -48,6 +48,7 @@ internal fun setDiagnosticLogging(context: Context, enabled: Boolean): Boolean {
     if (!DiagnosticLoggingPreferences.write(context, enabled)) return false
     val effective = DiagnosticLoggingPreferences.read(context)
     DiagnosticLoggingRuntime.setEnabled(effective)
+    DiagnosticTraceFile.setDirectory(context.applicationContext.filesDir.takeIf { effective })
     AodStateBridge.publishConfiguration(
         RuntimeCustomization.loadCompiled(context),
         currentProcessUserId()

@@ -2,6 +2,7 @@ package com.eza.hyperglow.root.aod
 
 import com.eza.hyperglow.root.projection.LyricSnapshot
 import com.eza.hyperglow.root.projection.nextLyricRetentionAnchor
+import com.eza.hyperglow.root.projection.stampTransportGapEdge
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -43,9 +44,14 @@ class AodLifetimePolicyTest {
         assertTrue(shouldStartAodPowerGrace(true, true, true, true))
         assertFalse(shouldStartAodPowerGrace(true, false, true, true))
         assertFalse(shouldStartAodPowerGrace(true, true, true, false))
-        assertTrue(shouldRetryDetachedAodWake(false, true))
-        assertFalse(shouldRetryDetachedAodWake(true, true))
-        assertFalse(shouldRetryDetachedAodWake(false, false))
+        assertTrue(shouldRetryDetachedAodWake(false, true, 9L, Long.MIN_VALUE))
+        assertFalse(shouldRetryDetachedAodWake(false, true, 9L, 9L))
+        assertFalse(shouldRetryDetachedAodWake(true, true, 9L, Long.MIN_VALUE))
+        assertFalse(shouldRetryDetachedAodWake(false, false, 9L, Long.MIN_VALUE))
+        assertFalse(shouldRetryDetachedAodWake(false, true, 0L, Long.MIN_VALUE))
+        assertFalse(shouldAcceptKeepAliveHeartbeat(projectionVisible = false, graceActive = true))
+        assertTrue(shouldAcceptKeepAliveHeartbeat(projectionVisible = true, graceActive = true))
+        assertFalse(shouldAcceptKeepAliveHeartbeat(projectionVisible = false, graceActive = false))
     }
 
     @Test
@@ -271,6 +277,61 @@ class AodLifetimePolicyTest {
                 gap.copy(updatedAtElapsedMs = 40_000L), live, null, anchor, true, 40_000L, 5_000L
             )
         )
+    }
+
+    @Test
+    fun transportRetentionAnchorUsesTheProjectionStampedEdgeAfterReattach() {
+        val live = LyricSnapshot(
+            revision = 7L,
+            trackGeneration = 3L,
+            visible = true,
+            playbackActive = true,
+            keepAlive = true,
+            updatedAtElapsedMs = 1_000L,
+            sampledAtElapsedMs = 1_000L,
+            original = "line"
+        )
+        val firstGap = stampTransportGapEdge(
+            live,
+            live.copy(visible = false, updatedAtElapsedMs = 2_000L)
+        )
+        val heartbeatRefreshed = firstGap.copy(updatedAtElapsedMs = 40_000L)
+        val rebuiltAnchor = nextLyricRetentionAnchor(heartbeatRefreshed, null, 40_000L)
+
+        assertEquals(2_000L, firstGap.transportGapStartedAtElapsedMs)
+        assertEquals(2_000L, rebuiltAnchor?.atElapsedMs)
+        assertEquals(
+            null,
+            retainedAodSnapshotAfterUpdate(
+                heartbeatRefreshed,
+                live,
+                null,
+                rebuiltAnchor,
+                true,
+                40_000L,
+                5_000L
+            )
+        )
+    }
+
+    @Test
+    fun authoritativeHeartbeatRestoresRetainedPowerOnlyBeforeAbsoluteExpiry() {
+        val retained = LyricSnapshot(
+            revision = 9L,
+            visible = true,
+            playbackActive = true,
+            keepAlive = false,
+            sampledAtElapsedMs = 1_000L,
+            original = "line"
+        )
+
+        assertTrue(retainedKeepAliveFromSignal(retained, authoritativeKeepAlive = true))
+        assertFalse(retainedKeepAliveFromSignal(retained, authoritativeKeepAlive = false))
+        assertFalse(hasTransportRetentionExpired(retained, 30_999L))
+        assertTrue(hasTransportRetentionExpired(retained, 31_000L))
+
+        val paused = retained.copy(playbackActive = false, pauseRetentionEligible = true)
+        assertFalse(retainedKeepAliveFromSignal(paused, authoritativeKeepAlive = true))
     }
 
     @Test

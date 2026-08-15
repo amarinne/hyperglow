@@ -25,6 +25,23 @@ import com.eza.hyperglow.root.projection.LyricProjectionClient
 private const val RETRY_DELAY_BASE_MS = 1_000L
 private const val RETRY_DELAY_CAP_MS = 30_000L
 
+/**
+ * Whether an arriving state message may replace one that has not been delivered yet.
+ *
+ * The mailbox holds a single latest message, which is right for two snapshots: the newer one
+ * supersedes the older. A keepalive is not a substitute for a snapshot. It only renews the snapshot
+ * the consumer already holds and carries the revision of a snapshot it assumes arrived, so letting
+ * it overwrite an undelivered snapshot left the projection one revision behind, rejecting every
+ * keepalive that followed, and expiring five seconds later — which withdraws the AOD lifetime
+ * guard, replays Xiaomi's hide, and drops the lyrics to the bottom of the screen mid-song.
+ */
+internal fun shouldReplacePendingState(
+    pending: AodStateWireMessage?,
+    incoming: AodStateWireMessage
+): Boolean = pending == null ||
+    incoming !is AodStateWireMessage.KeepAlive ||
+    pending is AodStateWireMessage.KeepAlive
+
 internal class GenerationBoundLatest<T> {
     private var generation = -1L
     private var value: T? = null
@@ -35,6 +52,8 @@ internal class GenerationBoundLatest<T> {
         this.value = value
         return true
     }
+
+    fun peek(currentGeneration: Long): T? = value.takeIf { generation == currentGeneration }
 
     fun take(currentGeneration: Long): T? {
         val result = value.takeIf { generation == currentGeneration }
@@ -148,7 +167,16 @@ internal class AodLyricClient(
                 return
             }
             synchronized(this@AodLyricClient) {
-                if (stopped || !pendingState.offer(
+                if (stopped) return
+                val pending = pendingState.peek(bindingGeneration)
+                if (!shouldReplacePendingState(pending, ownedMessage)) {
+                    HookLogger.i(
+                        TAG,
+                        "Keepalive coalesced behind snapshot revision=${ownedMessage.revision}"
+                    )
+                    return
+                }
+                if (!pendingState.offer(
                         generation = generation,
                         currentGeneration = bindingGeneration,
                         value = ownedMessage

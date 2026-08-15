@@ -2,6 +2,7 @@ package com.eza.hyperglow.bridge
 
 import com.eza.hyperglow.aod.AodProjectionEngine
 import com.eza.hyperglow.aod.ProjectionSessionIdentity
+import com.eza.hyperglow.root.projection.LYRIC_SNAPSHOT_FRESH_MS
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -58,10 +59,14 @@ class SpicyBridgeDocumentTest {
     }
 
     @Test
-    fun keepAliveUsesBoundedFourSecondCadence() {
+    fun keepAliveBeatsSeveralTimesInsideTheConsumerFreshnessWindow() {
+        val interval = AodProjectionEngine.keepAliveIntervalMs()
+
         assertEquals(true, AodProjectionEngine.keepAliveDue(0, 1_000))
-        assertEquals(false, AodProjectionEngine.keepAliveDue(10_000, 13_999))
-        assertEquals(true, AodProjectionEngine.keepAliveDue(10_000, 14_000))
+        assertEquals(false, AodProjectionEngine.keepAliveDue(10_000, 10_000 + interval - 1))
+        assertEquals(true, AodProjectionEngine.keepAliveDue(10_000, 10_000 + interval))
+        // One late beat must not expire the projection the consumer holds.
+        assertTrue(interval * 3 <= LYRIC_SNAPSHOT_FRESH_MS)
     }
 
     @Test
@@ -184,6 +189,39 @@ class SpicyBridgeDocumentTest {
 
         assertTrue(isValidSpicyBridgeDocumentTiming(document, acceptedDurationMs = 3_000))
         assertFalse(isValidSpicyBridgeDocumentTiming(document, acceptedDurationMs = 3_001))
+    }
+
+    @Test
+    fun timingFaultNamesTheFieldThatDiverged() {
+        val document = document(listOf(row("LEAD", 1_000, 3_000, "line")), durationMs = 3_000)
+
+        assertNull(spicyBridgeDocumentTimingFault(document, acceptedDurationMs = 3_000))
+        assertEquals(
+            "duration document=3000 state=3001",
+            spicyBridgeDocumentTimingFault(document, acceptedDurationMs = 3_001)
+        )
+        assertEquals(
+            "row[0] start=1000 end=3001 duration=3000",
+            spicyBridgeDocumentTimingFault(
+                document(listOf(row("LEAD", 1_000, 3_001, "line")), durationMs = 3_000),
+                acceptedDurationMs = 3_000
+            )
+        )
+    }
+
+    @Test
+    fun documentMismatchNamesTheFieldThatDiverged() {
+        val document = document(listOf(row("LEAD", 1_000, 3_000, "line")), durationMs = 3_000)
+
+        assertNull(spicyBridgeDocumentMismatch(document, state(durationMs = 3_000)))
+        assertEquals(
+            "generation document=1 state=2",
+            spicyBridgeDocumentMismatch(document, state(durationMs = 3_000, generation = 2))
+        )
+        assertEquals(
+            "duration document=3000 state=3001 track=spotify:track:test",
+            spicyBridgeDocumentMismatch(document, state(durationMs = 3_001))
+        )
     }
 
     @Test

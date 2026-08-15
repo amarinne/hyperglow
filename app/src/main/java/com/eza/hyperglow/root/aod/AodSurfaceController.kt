@@ -273,6 +273,20 @@ internal fun expirePausedAodKeepAlive(
     }
 }
 
+internal fun hasTransportRetentionExpired(
+    retained: LyricSnapshot,
+    nowElapsedMs: Long
+): Boolean = nowElapsedMs - retained.sampledAtElapsedMs >= PAUSED_AOD_KEEP_ALIVE_MS
+
+internal fun retainedKeepAliveFromSignal(
+    retained: LyricSnapshot?,
+    authoritativeKeepAlive: Boolean
+): Boolean = when {
+    retained == null -> authoritativeKeepAlive
+    !retained.playbackActive || retained.pauseRetentionEligible -> retained.keepAlive
+    else -> authoritativeKeepAlive
+}
+
 internal const val PAUSED_AOD_KEEP_ALIVE_MS = 30_000L
 
 internal fun smoothAodRevealProgress(progress: Float): Float {
@@ -370,12 +384,15 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     private var initialRevealDurationMs = 0L
     private val pausedKeepAliveExpiry = Runnable {
         val retained = retainedMediaSnapshot ?: return@Runnable
-        val expired = expirePausedAodKeepAlive(retained, SystemClock.elapsedRealtime())
-        if (expired.keepAlive == retained.keepAlive) return@Runnable
-        retainedMediaSnapshot = expired
-        latestSnapshot = latestSnapshot?.copy(keepAlive = expired.keepAlive)
-        HookLogger.i(TAG, "Paused AOD keepalive grace expired")
-        updateLifetimeGuard()
+        if (!retained.playbackActive || retained.pauseRetentionEligible) return@Runnable
+        if (!hasTransportRetentionExpired(retained, SystemClock.elapsedRealtime())) return@Runnable
+        retainedMediaSnapshot = null
+        latestSnapshot = latestSnapshot?.takeUnless { it.revision == retained.revision }
+        lastVisibleSnapshot = null
+        retentionAnchor = null
+        setStockWidgetControlActive(false)
+        HookLogger.i(TAG, "AOD transport retention expired")
+        hideSurfaceOnly(pulse = false)
     }
     private val pauseLingerExpiry = object : Runnable {
         override fun run() {
@@ -829,12 +846,24 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     }
 
     override fun onLyricKeepAlive(signal: LyricKeepAliveSignal) {
-        val retained = retainedMediaSnapshot?.let {
-            expirePausedAodKeepAlive(it, SystemClock.elapsedRealtime())
+        val nowElapsedMs = SystemClock.elapsedRealtime()
+        val expiredTransport = retainedMediaSnapshot?.takeIf {
+            it.playbackActive && !it.pauseRetentionEligible &&
+                hasTransportRetentionExpired(it, nowElapsedMs)
         }
-        if (retained != retainedMediaSnapshot) retainedMediaSnapshot = retained
+        if (expiredTransport != null) {
+            retainedMediaSnapshot = null
+            latestSnapshot = latestSnapshot?.takeUnless { it.revision == expiredTransport.revision }
+            lastVisibleSnapshot = null
+            retentionAnchor = null
+            setStockWidgetControlActive(false)
+            HookLogger.i(TAG, "Ignored keepalive for expired AOD transport retention")
+            hideSurfaceOnly(pulse = false)
+            return
+        }
+        val retained = retainedMediaSnapshot
         schedulePausedKeepAliveExpiry(retained)
-        val effectiveKeepAlive = retained?.keepAlive ?: signal.keepAlive
+        val effectiveKeepAlive = retainedKeepAliveFromSignal(retained, signal.keepAlive)
         latestSnapshot = latestSnapshot?.copy(
             updatedAtElapsedMs = signal.updatedAtElapsedMs,
             keepAlive = effectiveKeepAlive,
@@ -895,18 +924,12 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         }
         runtimeProfile = null
         lastRenderContent = null
-        latestSnapshot?.let(::onLyricSnapshot)
-        if (retained != null) {
-            retainedMediaSnapshot = retained
-            latestSnapshot = retained
-            schedulePausedKeepAliveExpiry(retained)
-            schedulePauseLingerExpiry(retained)
-        }
+        SystemUiLyricProjectionRuntime.projection.cachedSnapshot()?.let(::onLyricSnapshot)
     }
 
     private fun schedulePausedKeepAliveExpiry(retained: LyricSnapshot?) {
         mainHandler.removeCallbacks(pausedKeepAliveExpiry)
-        if (retained?.keepAlive != true) return
+        if (retained?.playbackActive != true || retained.pauseRetentionEligible) return
         val pausedForMs = (SystemClock.elapsedRealtime() - retained.sampledAtElapsedMs)
             .coerceAtLeast(0L)
         val delayMs = (PAUSED_AOD_KEEP_ALIVE_MS - pausedForMs).coerceAtLeast(0L)

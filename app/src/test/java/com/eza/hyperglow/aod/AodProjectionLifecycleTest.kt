@@ -149,6 +149,44 @@ class AodProjectionLifecycleTest {
         )
     }
 
+    @Test
+    fun preservedTimedDocumentIsReusedOnlyByTheExactReturningSession() {
+        val document = document("Syllable", 100L, 200L)
+        val sameSession = state()
+
+        assertFalse(AodProjectionEngine.shouldClearMismatchedDocument(document, sameSession))
+        assertTrue(
+            AodProjectionEngine.shouldClearMismatchedDocument(
+                document,
+                sameSession.copy(generation = sameSession.generation + 1)
+            )
+        )
+        assertTrue(
+            AodProjectionEngine.shouldClearMismatchedDocument(
+                document,
+                sameSession.copy(trackUri = "spotify:track:next")
+            )
+        )
+        assertTrue(
+            AodProjectionEngine.shouldClearMismatchedDocument(
+                document,
+                sameSession.copy(durationMs = sameSession.durationMs + 1L)
+            )
+        )
+        assertFalse(AodProjectionEngine.shouldClearMismatchedDocument(null, sameSession))
+    }
+
+    @Test
+    fun abandonedGapClearsOnlyTheDocumentCapturedWhenTheGapBegan() {
+        val retained = document("Syllable", 100L, 200L)
+        val replacement = retained.copy(processingVersion = 2)
+
+        assertTrue(AodProjectionEngine.shouldClearRetainedDocument(retained, retained, null))
+        assertFalse(AodProjectionEngine.shouldClearRetainedDocument(retained, replacement, null))
+        assertFalse(AodProjectionEngine.shouldClearRetainedDocument(retained, retained, state()))
+        assertFalse(AodProjectionEngine.shouldClearRetainedDocument(null, null, null))
+    }
+
     private fun document(type: String, startMs: Long, endMs: Long) = SpicyBridgeDocument(
         producerId = "producer",
         generation = 7,

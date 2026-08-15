@@ -31,6 +31,7 @@ internal data class LyricSnapshot(
     val userId: Int = 0,
     val trackGeneration: Long = 0L,
     val updatedAtElapsedMs: Long = 0L,
+    val transportGapStartedAtElapsedMs: Long = 0L,
     val visible: Boolean = false,
     val playbackActive: Boolean = false,
     val pauseRetentionEligible: Boolean = false,
@@ -203,8 +204,31 @@ internal fun nextLyricRetentionAnchor(
     return anchor?.takeIf { it.pauseRetentionEligible == eligible }
         ?: LyricRetentionAnchor(
             eligible,
-            incoming.updatedAtElapsedMs.coerceIn(0L, nowElapsedMs)
+            if (eligible) {
+                incoming.updatedAtElapsedMs.coerceIn(0L, nowElapsedMs)
+            } else {
+                incoming.transportGapStartedAtElapsedMs
+                    .takeIf { it > 0L }
+                    ?.coerceAtMost(nowElapsedMs)
+                    ?: incoming.updatedAtElapsedMs.coerceIn(0L, nowElapsedMs)
+            }
         )
+}
+
+internal fun stampTransportGapEdge(
+    current: LyricSnapshot?,
+    incoming: LyricSnapshot
+): LyricSnapshot {
+    if (incoming.visible || !incoming.playbackActive || incoming.pauseRetentionEligible) {
+        return incoming.copy(transportGapStartedAtElapsedMs = 0L)
+    }
+    val sameGap = current?.takeIf {
+        !it.visible && it.playbackActive && !it.pauseRetentionEligible &&
+            it.trackGeneration == incoming.trackGeneration
+    }
+    val edge = sameGap?.transportGapStartedAtElapsedMs?.takeIf { it > 0L }
+        ?: incoming.updatedAtElapsedMs
+    return incoming.copy(transportGapStartedAtElapsedMs = edge)
 }
 
 internal fun LyricRetentionAnchor?.edgeFor(
