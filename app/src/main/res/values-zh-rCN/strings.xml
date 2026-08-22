@@ -22,11 +22,22 @@
     <string name="label_aod_lyrics">息屏歌词</string>
     <string name="label_lockscreen_lyrics">锁屏歌词</string>
     <string name="label_diagnostic_logging">诊断日志</string>
+    <string name="setting_hide_launcher_icon">隐藏桌面图标</string>
+    <string name="setting_hide_from_recents">在最近任务中隐藏</string>
+    <string name="action_export_config">导出配置</string>
+    <string name="action_import_config">导入配置</string>
+    <string name="toast_config_backup_exported">配置已导出</string>
+    <string name="toast_config_backup_write_failed">无法写入配置备份</string>
+    <string name="toast_config_backup_imported">配置已导入</string>
+    <string name="toast_config_backup_invalid">不是有效的 HyperGlow 配置备份</string>
     <string name="summary_diagnostic_logging_available">可能降低性能。</string>
     <string name="summary_diagnostic_logging_unavailable">此构建不包含诊断日志。</string>
     <string name="action_send_compatibility_report">发送兼容性报告</string>
     <string name="action_report_problem">报告问题</string>
     <string name="action_restart_systemui">重启系统界面</string>
+
+    <string name="section_system_integration">系统集成</string>
+    <string name="section_config_backup">配置备份</string>
 
     <string name="update_available_title">有可用更新</string>
     <string name="update_available_summary">最新版本为 %1$s，当前为 %2$s。</string>
@@ -142,6 +153,9 @@
     <string name="action_import_appearance">导入外观文件</string>
     <string name="action_export_appearance">导出外观文件</string>
     <string name="action_reset_surfaces">重置两个显示区域</string>
+    <string name="action_back">返回</string>
+    <string name="action_decrease">减小</string>
+    <string name="action_increase">增大</string>
     <string name="dialog_reset_title">重置息屏和锁屏设置？</string>
     <string name="dialog_reset_summary">这会启用息屏歌词、禁用锁屏歌词，并替换两套外观配置。</string>
 
@@ -199,6 +213,7 @@
     <string name="toast_appearance_exported">已导出外观文件</string>
     <string name="toast_appearance_export_failed">无法导出外观文件</string>
     <string name="toast_appearance_save_failed">无法保存外观设置</string>
+    <string name="toast_setting_save_failed">无法保存设置</string>
     <string name="toast_settings_restored">已恢复内置设置</string>
     <string name="toast_settings_restore_failed">无法恢复设置</string>
 
@@ -269,4 +284,8 @@
     <string name="diagnostic_failure_network">网络上传失败，请手动重试。</string>
     <string name="diagnostic_failure_receipt">接收服务返回无效回执，请手动重试。</string>
     <string name="toast_no_github_handler">没有应用可以打开 GitHub</string>
+
+    <string name="notification_channel_lyric_bridge">歌词桥接</string>
+    <string name="notification_lyric_bridge_title">HyperGlow 歌词服务</string>
+    <string name="notification_lyric_bridge_text">正在运行，以在息屏时保持息屏和锁屏歌词持续更新。</string>
 </resources>

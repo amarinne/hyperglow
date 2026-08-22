@@ -29,7 +29,9 @@ data class AodRenderConfig(
     val lockscreenKeepAwake: Boolean = false,
     val raiseToAod: Boolean = false,
     val suppressLockscreenEditorLongPress: Boolean = false,
-    val songChangeInfoEnabled: Boolean = true
+    val songChangeInfoEnabled: Boolean = true,
+    val hideLauncherIcon: Boolean = false,
+    val hideFromRecents: Boolean = false
 )
 
 internal fun normalizeAodAlignment(value: String?): String = when (value) {
@@ -141,6 +143,8 @@ object AodRenderPreferences {
     const val LOCKSCREEN_KEEP_AWAKE = "lockscreen_keep_awake"
     const val RAISE_TO_AOD = "raise_to_aod"
     const val SUPPRESS_LOCKSCREEN_EDITOR_LONG_PRESS = "suppress_lockscreen_editor_long_press"
+    const val HIDE_LAUNCHER_ICON = "hide_launcher_icon"
+    const val HIDE_FROM_RECENTS = "hide_from_recents"
 
     private var preferences: SharedPreferences? = null
     private var cachedConfig: AodRenderConfig? = null
@@ -180,7 +184,9 @@ object AodRenderPreferences {
             prefs.getBoolean(LOCKSCREEN_KEEP_AWAKE, false),
             prefs.getBoolean(RAISE_TO_AOD, false),
             prefs.getBoolean(SUPPRESS_LOCKSCREEN_EDITOR_LONG_PRESS, false),
-            prefs.getBoolean(SONG_CHANGE_INFO_ENABLED, true)
+            prefs.getBoolean(SONG_CHANGE_INFO_ENABLED, true),
+            prefs.getBoolean(HIDE_LAUNCHER_ICON, false),
+            prefs.getBoolean(HIDE_FROM_RECENTS, false)
         ).also { cachedConfig = it }
     }
 }

@@ -1,5 +1,6 @@
 package com.eza.hyperglow.ui
 
+import android.Manifest
 import android.content.Intent
 import android.app.LocaleManager
 import android.content.res.Configuration
@@ -17,6 +18,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -37,6 +39,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,18 +52,21 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.eza.hyperglow.BuildConfig
 import com.eza.hyperglow.R
+import com.eza.hyperglow.AppLog
 import com.eza.hyperglow.DiagnosticLoggingPreferences
-import com.eza.hyperglow.RuntimeCustomization
-import com.eza.hyperglow.setDiagnosticLogging
 import com.eza.hyperglow.root.utils.ShellUtils
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import com.eza.hyperglow.aod.AodLyricBridgeService
 import com.eza.hyperglow.aod.AodRenderPreferences
-import com.eza.hyperglow.aod.AodStateBridge
 import com.eza.hyperglow.aod.XiaomiCapabilityStore
 import com.eza.hyperglow.aod.XiaomiRuntimeSupportState
+import com.eza.hyperglow.customization.CustomizationDocument
 import com.eza.hyperglow.customization.CustomizationEditorState
 import com.eza.hyperglow.customization.CustomizationRepository
 import com.eza.hyperglow.customization.SceneCompiler
@@ -69,7 +75,6 @@ import com.eza.hyperglow.root.aod.metadataWidgetHeightDp
 import com.eza.hyperglow.root.capability.XiaomiCapability
 import com.eza.hyperglow.root.projection.LyricRuby
 import com.eza.hyperglow.root.projection.LyricSnapshot
-import com.eza.hyperglow.root.projection.currentProcessUserId
 import com.eza.hyperglow.root.surface.PlacementEngine
 import com.eza.hyperglow.update.UpdateAvailability
 import com.eza.hyperglow.update.UpdateChecker
@@ -79,20 +84,19 @@ import com.eza.hyperglow.root.surface.ResolvedPlacement
 import com.eza.hyperglow.root.surface.WidgetMeasurement
 import kotlin.math.roundToInt
 import java.util.Locale
+import kotlinx.serialization.encodeToString
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.FloatingNavigationBar
 import top.yukonga.miuix.kmp.basic.FloatingNavigationBarItem
+import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TopAppBar
-import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.Home
-import top.yukonga.miuix.kmp.icon.extended.Settings
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.RadioButtonPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
@@ -102,14 +106,62 @@ import top.yukonga.miuix.kmp.theme.ThemeController
 import top.yukonga.miuix.kmp.window.WindowDialog
 
 class MainActivity : ComponentActivity() {
+    private lateinit var session: SettingsSession
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setBackgroundDrawable(ColorDrawable(Color.BLACK))
         enableEdgeToEdge()
         window.isNavigationBarContrastEnforced = false
+        // Foreground retry for the bridge-service promotion: the application-level attempt usually
+        // runs without a background-start window, while an activity in the foreground has one.
+        runCatching {
+            startForegroundService(Intent(this, AodLyricBridgeService::class.java))
+        }.onFailure { error ->
+            AppLog.w("MainActivity", "startForegroundService denied", error)
+        }
+        // One activity-owned state holder feeds both screens; it survives AnimatedContent swaps,
+        // so no screen reads disk or capability stores during a transition.
+        session = SettingsSession(
+            initialConfig = AodRenderPreferences.read(this),
+            initialDocument = CustomizationRepository.loadDocument(this),
+            initialDiagnosticLogging = DiagnosticLoggingPreferences.read(this),
+            initialCapabilityReport = XiaomiCapabilityStore.read(this),
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1)),
+            store = PreferenceSettingsStore(applicationContext),
+            nowMs = { android.os.SystemClock.elapsedRealtime() }
+        )
         setContent {
             val controller = remember { ThemeController(colorSchemeMode = ColorSchemeMode.System) }
             MiuixTheme(controller = controller) {
+                // Startup component-enable and app-task reapplies land after the first frame,
+                // off the UI thread; they are idempotent one-shots.
+                LaunchedEffect(session) {
+                    val config = session.config.value
+                    withContext(Dispatchers.Default) {
+                        applyHideLauncherIcon(applicationContext, config.hideLauncherIcon)
+                        applyExcludeFromRecents(applicationContext, config.hideFromRecents)
+                    }
+                }
+                // One collector above AnimatedContent: both screens exist briefly during a
+                // transition and must not double-report the same failed flush.
+                LaunchedEffect(session) {
+                    session.persistFailures.collect { failure ->
+                        Toast.makeText(
+                            applicationContext,
+                            getString(
+                                when (failure) {
+                                    SettingsPersistFailure.DOCUMENT ->
+                                        R.string.toast_appearance_save_failed
+                                    SettingsPersistFailure.CONFIG,
+                                    SettingsPersistFailure.DIAGNOSTIC ->
+                                        R.string.toast_setting_save_failed
+                                }
+                            ),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
                 var editingSurface by rememberSaveable { mutableStateOf<String?>(null) }
                 var selectedTabName by rememberSaveable {
                     mutableStateOf(SettingsTab.OVERVIEW.name)
@@ -144,11 +196,13 @@ class MainActivity : ComponentActivity() {
                         DiagnosticsScreen(onBack = { editingSurface = null })
                     } else if (surface != null) {
                         LyricLayoutScreen(
+                            session = session,
                             initialSurface = surface,
                             onBack = { editingSurface = null }
                         )
                     } else {
                         HomeScreen(
+                            session = session,
                             showRestartResult = ::showRestartResult,
                             selectedTabName = selectedTabName,
                             onSelectTab = { selectedTabName = it },
@@ -159,6 +213,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onDestroy() {
+        // Pending debounced work must not publish after screen disposal.
+        if (::session.isInitialized) session.dispose()
+        super.onDestroy()
     }
 
     private fun showRestartResult(succeeded: Boolean) {
@@ -175,6 +235,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun HomeScreen(
+    session: SettingsSession,
     showRestartResult: (Boolean) -> Unit,
     selectedTabName: String,
     onSelectTab: (String) -> Unit,
@@ -203,24 +264,40 @@ private fun HomeScreen(
             pagerState.animateScrollToPage(selectedTabIndex)
         }
     }
-    val prefs = remember { context.getSharedPreferences(AodRenderPreferences.PREFS, 0) }
-    var capabilityReport by remember { mutableStateOf(XiaomiCapabilityStore.read(context)) }
-    DisposableEffect(context) {
-        val capabilityPrefs = context.getSharedPreferences(XiaomiCapabilityStore.PREFS, 0)
-        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
-            capabilityReport = XiaomiCapabilityStore.read(context)
-        }
-        capabilityPrefs.registerOnSharedPreferenceChangeListener(listener)
-        onDispose { capabilityPrefs.unregisterOnSharedPreferenceChangeListener(listener) }
-    }
     var updateAvailability by remember {
         mutableStateOf<UpdateAvailability>(UpdateAvailability.Unknown)
     }
     LaunchedEffect(Unit) {
         updateAvailability = UpdateChecker().refresh(context)
     }
-    val initialConfig = remember { AodRenderPreferences.read(context) }
-    val initialDocument = remember { CustomizationRepository.loadDocument(context) }
+    val config by session.config.collectAsState()
+    val document by session.document.collectAsState()
+    val capabilityReport by session.capabilityReport.collectAsState()
+    val diagnosticLogging by session.diagnosticLogging.collectAsState()
+    DisposableEffect(session) {
+        val capabilityPrefs = context.getSharedPreferences(XiaomiCapabilityStore.PREFS, 0)
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+            session.updateCapabilityReport(XiaomiCapabilityStore.read(context))
+        }
+        capabilityPrefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { capabilityPrefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
+    val aodEnabled = document.profiles[SceneCompiler.SURFACE_AOD]?.enabled
+        ?: config.aodEnabled
+    val lockscreenEnabled = document.profiles[SceneCompiler.SURFACE_LOCKSCREEN]?.enabled
+        ?: config.lockscreenEnabled
+    val keepAwake = config.keepAwake
+    val keepAwakeUnsynced = config.keepAwakeUnsynced
+    val keepAwakeDurationMs = config.keepAwakeDurationMs
+    val lockscreenKeepAwake = config.lockscreenKeepAwake
+    val raiseToAod = config.raiseToAod
+    val suppressLockscreenEditorLongPress = config.suppressLockscreenEditorLongPress
+    val positionFollowing = config.experimentalPositionFollowing
+    val burnInPattern = config.burnInPattern
+    val burnInIntervalMs = config.burnInIntervalMs
+    val pauseLingerMs = config.pauseLingerMs
+    val hideLauncherIcon = config.hideLauncherIcon
+    val hideFromRecents = config.hideFromRecents
     val supportState = capabilityReport.supportState()
     val aodSupported = capabilityReport.has(XiaomiCapability.AOD_SURFACE)
     val lockscreenSupported = capabilityReport.has(XiaomiCapability.LOCKSCREEN_HOST) &&
@@ -234,36 +311,68 @@ private fun HomeScreen(
     val lockscreenEditorGestureSupported = capabilityReport.has(
         XiaomiCapability.LOCKSCREEN_EDITOR_GESTURE
     )
-    var aodEnabled by remember {
-        mutableStateOf(
-            initialDocument.profiles[SceneCompiler.SURFACE_AOD]?.enabled
-                ?: initialConfig.aodEnabled
-        )
+
+    val configExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        // File I/O stays off the UI thread; the toast reports after the write settles.
+        scope.launch {
+            val written = withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use {
+                        it.write(
+                            ConfigBackupCodec.encode(
+                                session.config.value,
+                                session.document.value
+                            )
+                        )
+                    } ?: error("Backup stream unavailable")
+                }.isSuccess
+            }
+            Toast.makeText(
+                context,
+                context.getString(
+                    if (written) R.string.toast_config_backup_exported
+                    else R.string.toast_config_backup_write_failed
+                ),
+                Toast.LENGTH_LONG
+            ).show()
+        }
     }
-    var lockscreenEnabled by remember {
-        mutableStateOf(
-            initialDocument.profiles[SceneCompiler.SURFACE_LOCKSCREEN]?.enabled
-                ?: initialConfig.lockscreenEnabled
-        )
-    }
-    var keepAwake by remember { mutableStateOf(initialConfig.keepAwake) }
-    var keepAwakeUnsynced by remember { mutableStateOf(initialConfig.keepAwakeUnsynced) }
-    var keepAwakeDurationMs by remember { mutableStateOf(initialConfig.keepAwakeDurationMs) }
-    var lockscreenKeepAwake by remember {
-        mutableStateOf(initialConfig.lockscreenKeepAwake)
-    }
-    var raiseToAod by remember { mutableStateOf(initialConfig.raiseToAod) }
-    var suppressLockscreenEditorLongPress by remember {
-        mutableStateOf(initialConfig.suppressLockscreenEditorLongPress)
-    }
-    var positionFollowing by remember {
-        mutableStateOf(initialConfig.experimentalPositionFollowing)
-    }
-    var burnInPattern by remember { mutableStateOf(initialConfig.burnInPattern) }
-    var burnInIntervalMs by remember { mutableStateOf(initialConfig.burnInIntervalMs) }
-    var pauseLingerMs by remember { mutableStateOf(initialConfig.pauseLingerMs) }
-    var diagnosticLogging by remember {
-        mutableStateOf(DiagnosticLoggingPreferences.read(context))
+    val configImportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val bytes = withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        input.readNBytes(ConfigBackupCodec.MAX_BYTES + 1)
+                    }
+                }.getOrNull()
+            }
+            val result = bytes?.let(ConfigBackupCodec::decode)
+                ?: ConfigBackupDecodeResult.Rejected(ConfigBackupRejection.MALFORMED)
+            when (result) {
+                is ConfigBackupDecodeResult.Success -> {
+                    // Adopt optimistically in memory, persist synchronously, and let the failure
+                    // event roll memory back if the stores reject the write; its collector owns
+                    // the failure toast, and the store applies component/task state from the
+                    // persisted snapshot, so only success is reported here.
+                    session.restore(result.preferences, result.customizationDocument)
+                    val persisted = session.flushNow()
+                    if (persisted) {
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.toast_config_backup_imported),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+                is ConfigBackupDecodeResult.Rejected -> showInvalidBackupToast(context)
+            }
+        }
     }
 
     Scaffold(
@@ -275,7 +384,7 @@ private fun HomeScreen(
                     onClick = {
                         scope.launch { pagerState.animateScrollToPage(SettingsTab.OVERVIEW.ordinal) }
                     },
-                    icon = MiuixIcons.Regular.Home,
+                    icon = LucideIcons.House,
                     label = stringResource(R.string.nav_overview)
                 )
                 FloatingNavigationBarItem(
@@ -283,7 +392,7 @@ private fun HomeScreen(
                     onClick = {
                         scope.launch { pagerState.animateScrollToPage(SettingsTab.CONFIG.ordinal) }
                     },
-                    icon = MiuixIcons.Regular.Settings,
+                    icon = LucideIcons.Settings,
                     label = stringResource(R.string.nav_settings)
                 )
             }
@@ -304,8 +413,12 @@ private fun HomeScreen(
                 when (SettingsTab.entries[page]) {
                 SettingsTab.OVERVIEW -> {
                     (updateAvailability as? UpdateAvailability.UpdateAvailable)?.let { available ->
-                        item {
-                            SettingsCard {
+                        // The banner inserts at the top of the list; animateItem keeps it from
+                        // shifting the rest of the content in a single frame.
+                        item(key = "update_banner") {
+                            SettingsCard(
+                                modifier = Modifier.animateItem()
+                            ) {
                                 ArrowPreference(
                                     title = stringResource(R.string.update_available_title),
                                     summary = stringResource(
@@ -313,7 +426,8 @@ private fun HomeScreen(
                                         available.latest.versionName,
                                         BuildConfig.VERSION_NAME
                                     ),
-                                    onClick = { openExternalUrl(context, GITHUB_RELEASES_URL) }
+                                    onClick = { openExternalUrl(context, GITHUB_RELEASES_URL) },
+                                    startAction = { Icon(LucideIcons.Download, contentDescription = null) }
                                 )
                             }
                         }
@@ -341,7 +455,8 @@ private fun HomeScreen(
                                     configured = aodEnabled,
                                     supported = aodSupported,
                                     surfaceName = context.getString(R.string.surface_aod)
-                                )
+                                ),
+                                startAction = { Icon(LucideIcons.MoonStar, contentDescription = null) }
                             )
                             BasicComponent(
                                 title = stringResource(R.string.label_lockscreen_lyrics),
@@ -350,15 +465,12 @@ private fun HomeScreen(
                                     configured = lockscreenEnabled,
                                     supported = lockscreenSupported,
                                     surfaceName = context.getString(R.string.surface_lockscreen)
-                                )
+                                ),
+                                startAction = { Icon(LucideIcons.Lock, contentDescription = null) }
                             )
                             SwitchPreference(
                                 diagnosticLogging,
-                                { enabled ->
-                                    if (updateDiagnosticLogging(context, enabled)) {
-                                        diagnosticLogging = enabled
-                                    }
-                                },
+                                { enabled -> session.setDiagnosticLogging(enabled) },
                                 stringResource(R.string.label_diagnostic_logging),
                                 summary = if (BuildConfig.TRACE_LOGGING_AVAILABLE) {
                                     stringResource(R.string.summary_diagnostic_logging_available)
@@ -378,11 +490,54 @@ private fun HomeScreen(
                                 } else {
                                     stringResource(R.string.action_report_problem)
                                 },
-                                onClick = onOpenDiagnostics
+                                onClick = onOpenDiagnostics,
+                                startAction = { Icon(LucideIcons.Bug, contentDescription = null) }
                             )
                             ArrowPreference(
                                 title = stringResource(R.string.action_restart_systemui),
-                                onClick = { showRestartDialog = true }
+                                onClick = { showRestartDialog = true },
+                                startAction = { Icon(LucideIcons.RefreshCw, contentDescription = null) }
+                            )
+                        }
+                    }
+                    item { SmallTitle(text = stringResource(R.string.section_system_integration)) }
+                    item {
+                        SettingsCard {
+                            SwitchPreference(
+                                hideLauncherIcon,
+                                { hidden ->
+                                    // The component flip follows the persisted snapshot inside
+                                    // the store's config write, so a failed flush cannot leave
+                                    // the launcher state diverged from the preference.
+                                    session.updateConfig { it.copy(hideLauncherIcon = hidden) }
+                                },
+                                stringResource(R.string.setting_hide_launcher_icon),
+                                startAction = { Icon(LucideIcons.EyeOff, contentDescription = null) }
+                            )
+                            SwitchPreference(
+                                hideFromRecents,
+                                { excluded ->
+                                    session.updateConfig { it.copy(hideFromRecents = excluded) }
+                                },
+                                stringResource(R.string.setting_hide_from_recents),
+                                startAction = { Icon(LucideIcons.SquareStack, contentDescription = null) }
+                            )
+                        }
+                    }
+                    item { SmallTitle(text = stringResource(R.string.section_config_backup)) }
+                    item {
+                        SettingsCard {
+                            ArrowPreference(
+                                title = stringResource(R.string.action_export_config),
+                                onClick = {
+                                    configExportLauncher.launch(CONFIG_BACKUP_FILE_NAME)
+                                }
+                            )
+                            ArrowPreference(
+                                title = stringResource(R.string.action_import_config),
+                                onClick = {
+                                    configImportLauncher.launch(arrayOf("application/json"))
+                                }
                             )
                         }
                     }
@@ -393,7 +548,8 @@ private fun HomeScreen(
                                 title = stringResource(R.string.action_download_spicy_ex),
                                 onClick = {
                                     openExternalUrl(context, SPICY_EX_GITHUB_URL)
-                                }
+                                },
+                                startAction = { Icon(LucideIcons.Download, contentDescription = null) }
                             )
                             ArrowPreference(
                                 title = stringResource(R.string.action_open_spotify),
@@ -420,7 +576,8 @@ private fun HomeScreen(
                                 title = stringResource(R.string.action_hyperglow_github),
                                 onClick = {
                                     openExternalUrl(context, GITHUB_URL)
-                                }
+                                },
+                                startAction = { Icon(LucideIcons.ExternalLink, contentDescription = null) }
                             )
                         }
                     }
@@ -436,7 +593,8 @@ private fun HomeScreen(
                                     context,
                                     currentUiLanguage(context)
                                 ),
-                                onClick = { showLanguageDialog = true }
+                                onClick = { showLanguageDialog = true },
+                                startAction = { Icon(LucideIcons.Globe, contentDescription = null) }
                             )
                         }
                     }
@@ -447,14 +605,10 @@ private fun HomeScreen(
                                 aodEnabled,
                                 { enabled ->
                                     if (!aodSupported) return@SwitchPreference
-                                    if (updateCustomizationSurfaceEnabled(
-                                            context,
-                                            SceneCompiler.SURFACE_AOD,
-                                            enabled
-                                        )
-                                    ) {
-                                        aodEnabled = enabled
-                                    }
+                                    session.updateSurfaceEnabled(
+                                        SceneCompiler.SURFACE_AOD,
+                                        enabled
+                                    )
                                 },
                                 stringResource(R.string.setting_show_aod),
                                 summary = if (aodSupported) {
@@ -462,7 +616,8 @@ private fun HomeScreen(
                                 } else {
                                     stringResource(R.string.summary_show_aod_unsupported)
                                 },
-                                enabled = aodSupported
+                                enabled = aodSupported,
+                                startAction = { Icon(LucideIcons.MoonStar, contentDescription = null) }
                             )
                             SwitchPreference(
                                 lockscreenEnabled,
@@ -475,14 +630,10 @@ private fun HomeScreen(
                                         ).show()
                                         return@SwitchPreference
                                     }
-                                    if (updateCustomizationSurfaceEnabled(
-                                            context,
-                                            SceneCompiler.SURFACE_LOCKSCREEN,
-                                            enabled
-                                        )
-                                    ) {
-                                        lockscreenEnabled = enabled
-                                    }
+                                    session.updateSurfaceEnabled(
+                                        SceneCompiler.SURFACE_LOCKSCREEN,
+                                        enabled
+                                    )
                                 },
                                 stringResource(R.string.setting_show_lockscreen),
                                 summary = if (lockscreenSupported) {
@@ -490,7 +641,8 @@ private fun HomeScreen(
                                 } else {
                                     stringResource(R.string.summary_unavailable_systemui_version)
                                 },
-                                enabled = lockscreenSupported
+                                enabled = lockscreenSupported,
+                                startAction = { Icon(LucideIcons.Lock, contentDescription = null) }
                             )
                         }
                     }
@@ -499,11 +651,13 @@ private fun HomeScreen(
                         SettingsCard {
                             ArrowPreference(
                                 title = stringResource(R.string.title_aod_appearance),
-                                onClick = { onOpenLyricLayout(SceneCompiler.SURFACE_AOD) }
+                                onClick = { onOpenLyricLayout(SceneCompiler.SURFACE_AOD) },
+                                startAction = { Icon(LucideIcons.Palette, contentDescription = null) }
                             )
                             ArrowPreference(
                                 title = stringResource(R.string.title_lockscreen_appearance),
-                                onClick = { onOpenLyricLayout(SceneCompiler.SURFACE_LOCKSCREEN) }
+                                onClick = { onOpenLyricLayout(SceneCompiler.SURFACE_LOCKSCREEN) },
+                                startAction = { Icon(LucideIcons.Palette, contentDescription = null) }
                             )
                         }
                     }
@@ -514,7 +668,8 @@ private fun HomeScreen(
                                 title = stringResource(R.string.setting_after_spotify_pauses),
                                 summary = pauseLingerLabel(context, pauseLingerMs),
                                 onClick = { showPauseLingerDialog = true },
-                                enabled = runtimeProfileAvailable && (aodSupported || lockscreenSupported)
+                                enabled = runtimeProfileAvailable && (aodSupported || lockscreenSupported),
+                                startAction = { Icon(LucideIcons.Pause, contentDescription = null) }
                             )
                         }
                     }
@@ -523,17 +678,14 @@ private fun HomeScreen(
                         SettingsCard {
                             SwitchPreference(
                                 keepAwake,
-                                { enabled ->
-                                    prefs.edit().putBoolean(AodRenderPreferences.KEEP_AWAKE, enabled).apply()
-                                    keepAwake = enabled
-                                },
+                                { enabled -> session.updateConfig { it.copy(keepAwake = enabled) } },
                                 stringResource(R.string.setting_keep_aod_active),
                                 summary =
                                     if (aodSupported) {
                                         stringResource(R.string.summary_keep_aod_active)
                                     } else {
                                         stringResource(R.string.summary_unavailable_systemui_profile)
-                                    },
+                                },
                                 enabled = aodSupported
                             )
                             ArrowPreference(
@@ -545,11 +697,7 @@ private fun HomeScreen(
                             SwitchPreference(
                                 keepAwakeUnsynced,
                                 { enabled ->
-                                    prefs.edit().putBoolean(
-                                        AodRenderPreferences.KEEP_AWAKE_UNSYNCED,
-                                        enabled
-                                    ).apply()
-                                    keepAwakeUnsynced = enabled
+                                    session.updateConfig { it.copy(keepAwakeUnsynced = enabled) }
                                 },
                                 stringResource(R.string.setting_keep_aod_unsynced),
                                 enabled = aodSupported && keepAwake
@@ -591,8 +739,8 @@ private fun HomeScreen(
                             SwitchPreference(
                                 lockscreenKeepAwake,
                                 { enabled ->
-                                    if (updateLockscreenKeepAwake(context, enabled)) {
-                                        lockscreenKeepAwake = enabled
+                                    session.updatePublishedConfig {
+                                        it.copy(lockscreenKeepAwake = enabled)
                                     }
                                 },
                                 stringResource(R.string.setting_keep_lockscreen_awake),
@@ -603,8 +751,8 @@ private fun HomeScreen(
                             SwitchPreference(
                                 suppressLockscreenEditorLongPress,
                                 { enabled ->
-                                    if (updateLockscreenEditorLongPress(context, enabled)) {
-                                        suppressLockscreenEditorLongPress = enabled
+                                    session.updatePublishedConfig {
+                                        it.copy(suppressLockscreenEditorLongPress = enabled)
                                     }
                                 },
                                 stringResource(R.string.setting_block_lockscreen_customization),
@@ -623,9 +771,7 @@ private fun HomeScreen(
                             SwitchPreference(
                                 raiseToAod,
                                 { enabled ->
-                                    if (updateRaiseToAod(context, enabled)) {
-                                        raiseToAod = enabled
-                                    }
+                                    session.updatePublishedConfig { it.copy(raiseToAod = enabled) }
                                 },
                                 stringResource(R.string.setting_raise_to_aod),
                                 summary = if (raiseToAodSupported) {
@@ -706,11 +852,9 @@ private fun HomeScreen(
                     stringResource(R.string.option_follow_xiaomi),
                     !positionFollowing,
                     {
-                        prefs.edit().putBoolean(
-                            AodRenderPreferences.EXPERIMENTAL_POSITION_FOLLOWING,
-                            false
-                        ).apply()
-                        positionFollowing = false
+                        session.updateConfig {
+                            it.copy(experimentalPositionFollowing = false)
+                        }
                         showBurnInPatternDialog = false
                     }
                 )
@@ -719,15 +863,12 @@ private fun HomeScreen(
                         burnInPatternLabel(context, value),
                         positionFollowing && burnInPattern == value,
                         {
-                            prefs.edit()
-                                .putBoolean(
-                                    AodRenderPreferences.EXPERIMENTAL_POSITION_FOLLOWING,
-                                    true
+                            session.updateConfig {
+                                it.copy(
+                                    experimentalPositionFollowing = true,
+                                    burnInPattern = value
                                 )
-                                .putString(AodRenderPreferences.BURN_IN_PATTERN, value)
-                                .apply()
-                            positionFollowing = true
-                            burnInPattern = value
+                            }
                             showBurnInPatternDialog = false
                         }
                     )
@@ -749,7 +890,7 @@ private fun HomeScreen(
                         pauseLingerLabel(context, value),
                         pauseLingerMs == value,
                         {
-                            if (updatePauseLinger(context, value)) pauseLingerMs = value
+                            session.updatePublishedConfig { it.copy(pauseLingerMs = value) }
                             showPauseLingerDialog = false
                         }
                     )
@@ -771,7 +912,9 @@ private fun HomeScreen(
                         keepAwakeDurationLabel(context, value),
                         keepAwakeDurationMs == value,
                         {
-                            if (updateKeepAwakeDuration(context, value)) keepAwakeDurationMs = value
+                            session.updatePublishedConfig {
+                                it.copy(keepAwakeDurationMs = value)
+                            }
                             showKeepAwakeDurationDialog = false
                         }
                     )
@@ -792,8 +935,7 @@ private fun HomeScreen(
                         burnInIntervalLabel(context, value),
                         burnInIntervalMs == value,
                         {
-                            prefs.edit().putLong(AodRenderPreferences.BURN_IN_INTERVAL_MS, value).apply()
-                            burnInIntervalMs = value
+                            session.updateConfig { it.copy(burnInIntervalMs = value) }
                             showBurnInIntervalDialog = false
                         }
                     )
@@ -804,13 +946,18 @@ private fun HomeScreen(
 }
 
 @Composable
-internal fun SettingsCard(content: @Composable () -> Unit) {
+internal fun SettingsCard(
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
     Card(
-        modifier = Modifier
+        modifier = modifier
             .padding(horizontal = 12.dp)
             .fillMaxWidth()
     ) {
-        Column { content() }
+        // animateContentSize gives conditional rows inside the card a placement transition
+        // instead of jumping the rest of the list under the finger.
+        Column(modifier = Modifier.animateContentSize()) { content() }
     }
 }
 
@@ -824,6 +971,7 @@ private enum class SettingsTab {
 
 private const val DIAGNOSTICS_DESTINATION = "__diagnostics__"
 private const val GITHUB_URL = "https://github.com/amarinne/hyperglow"
+private const val CONFIG_BACKUP_FILE_NAME = "hyperglow-config-backup.json"
 private const val GITHUB_RELEASES_URL = "https://github.com/amarinne/hyperglow/releases/latest"
 private const val SPICY_EX_GITHUB_URL = "https://github.com/amarinne/spicy-ex/releases"
 
@@ -982,99 +1130,94 @@ private val BURN_IN_INTERVALS = listOf(30_000L, 60_000L, 120_000L, 300_000L)
 
 @Composable
 private fun LyricLayoutScreen(
+    session: SettingsSession,
     initialSurface: String,
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    var editorState by remember {
-        mutableStateOf(
-            CustomizationEditorState(
-                CustomizationRepository.loadDocument(context),
-                initialSurface
-            )
-        )
-    }
+    val scope = rememberCoroutineScope()
     var activeChoice by remember { mutableStateOf<AodChoice?>(null) }
     var showResetDialog by remember { mutableStateOf(false) }
-    val renderPrefs = remember { context.getSharedPreferences(AodRenderPreferences.PREFS, 0) }
-    var songChangeInfo by remember {
-        mutableStateOf(AodRenderPreferences.read(context).songChangeInfoEnabled)
-    }
+    val document by session.document.collectAsState()
+    val config by session.config.collectAsState()
+    // The in-memory document is the source of truth; the editor derives its state from it and
+    // mutates it directly. Persistence is the session's debounced background flush.
+    val editorState = CustomizationEditorState(document, initialSurface)
+    val songChangeInfo = config.songChangeInfoEnabled
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        val raw = runCatching {
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                val bytes = input.readNBytes(SceneCompiler.MAX_CONFIG_BYTES + 1)
-                if (bytes.size > SceneCompiler.MAX_CONFIG_BYTES) {
-                    error("Appearance file too large")
+        scope.launch {
+            val raw = withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        val bytes = input.readNBytes(SceneCompiler.MAX_CONFIG_BYTES + 1)
+                        if (bytes.size > SceneCompiler.MAX_CONFIG_BYTES) {
+                            error("Appearance file too large")
+                        }
+                        bytes.toString(Charsets.UTF_8)
+                    } ?: error("Appearance file unavailable")
+                }.getOrNull()
+            }
+            val canonicalized = raw?.let { text ->
+                withContext(Dispatchers.Default) {
+                    SceneCompiler.decodeDocument(text)?.let(
+                        CustomizationRepository::canonicalizeDocument
+                    )
                 }
-                bytes.toString(Charsets.UTF_8)
-            } ?: error("Appearance file unavailable")
-        }.getOrNull()
-        val imported = raw != null && CustomizationRepository.importDocument(context, raw)
-        if (imported) {
-            val document = CustomizationRepository.loadDocument(context)
-            syncCustomizationRuntime(context, document)
-            editorState = CustomizationEditorState(document, editorState.selectedSurface)
+            }
+            if (canonicalized == null) {
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.toast_appearance_invalid),
+                    Toast.LENGTH_LONG
+                ).show()
+                return@launch
+            }
+            session.restore(session.config.value, canonicalized)
+            // The persistFailures collector owns the failure toast; only success reports here.
+            val persisted = session.flushNow()
+            if (persisted) {
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.toast_appearance_imported),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
         }
-        Toast.makeText(
-            context,
-            if (imported) {
-                context.getString(R.string.toast_appearance_imported)
-            } else {
-                context.getString(R.string.toast_appearance_invalid)
-            },
-            Toast.LENGTH_LONG
-        ).show()
     }
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        val written = runCatching {
-            context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use {
-                it.write(CustomizationRepository.exportDocument(context))
-            } ?: error("Appearance file unavailable")
-        }.isSuccess
-        Toast.makeText(
-            context,
-            context.getString(
-                if (written) R.string.toast_appearance_exported
-                else R.string.toast_appearance_export_failed
-            ),
-            Toast.LENGTH_LONG
-        ).show()
+        scope.launch {
+            val written = withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use {
+                        it.write(SceneCompiler.json.encodeToString(session.document.value))
+                    } ?: error("Appearance file unavailable")
+                }.isSuccess
+            }
+            Toast.makeText(
+                context,
+                context.getString(
+                    if (written) R.string.toast_appearance_exported
+                    else R.string.toast_appearance_export_failed
+                ),
+                Toast.LENGTH_LONG
+            ).show()
+        }
     }
 
     BackHandler(enabled = activeChoice == null && !showResetDialog, onBack = onBack)
 
-    fun saveEditor(next: CustomizationEditorState): Boolean {
-        if (!CustomizationRepository.saveDocument(context, next.document)) {
-            Toast.makeText(
-                context,
-                context.getString(R.string.toast_appearance_save_failed),
-                Toast.LENGTH_LONG
-            ).show()
-            return false
-        }
-        val document = CustomizationRepository.loadDocument(context)
-        syncCustomizationRuntime(context, document)
-        editorState = CustomizationEditorState(
-            document,
-            next.selectedSurface
-        )
-        return true
-    }
-
     fun updateSelected(updateProfile: (SurfaceProfile) -> SurfaceProfile) {
-        saveEditor(editorState.updateSelected(updateProfile))
+        // Memory-only; the debounced background flush persists and publishes.
+        session.updateSelectedProfile(initialSurface, updateProfile)
     }
 
     LaunchedEffect(Unit) {
-        if (editorState.document.linkSurfaces) {
-            saveEditor(editorState.setLinkSurfaces(false))
-        }
+        session.disableLinkSurfaces()
     }
 
     fun openChoice(
@@ -1098,7 +1241,10 @@ private fun LyricLayoutScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Text("←")
+                        Icon(
+                            LucideIcons.ChevronLeft,
+                            contentDescription = stringResource(R.string.action_back)
+                        )
                     }
                 }
             )
@@ -1211,11 +1357,9 @@ private fun LyricLayoutScreen(
                     SwitchPreference(
                         songChangeInfo,
                         { enabled ->
-                            renderPrefs.edit().putBoolean(
-                                AodRenderPreferences.SONG_CHANGE_INFO_ENABLED,
-                                enabled
-                            ).apply()
-                            songChangeInfo = enabled
+                            session.updateConfig {
+                                it.copy(songChangeInfoEnabled = enabled)
+                            }
                         },
                         stringResource(R.string.setting_song_change_info)
                     )
@@ -1434,21 +1578,12 @@ private fun LyricLayoutScreen(
                     colors = ButtonDefaults.textButtonColorsPrimary(),
                     onClick = {
                         showResetDialog = false
-                        val reset = CustomizationRepository.reset(context)
-                        if (reset) {
-                            val document = CustomizationRepository.loadDocument(context)
-                            syncCustomizationRuntime(context, document)
-                            editorState = CustomizationEditorState(
-                                document,
-                                editorState.selectedSurface
-                            )
-                        }
+                        // Optimistic in-memory reset; the failure event reports a rejected write
+                        // and rolls the editor back to the persisted document.
+                        session.resetDocument()
                         Toast.makeText(
                             context,
-                            context.getString(
-                                if (reset) R.string.toast_settings_restored
-                                else R.string.toast_settings_restore_failed
-                            ),
+                            context.getString(R.string.toast_settings_restored),
                             Toast.LENGTH_LONG
                         ).show()
                     }
@@ -1566,7 +1701,10 @@ private fun TextSizePreference(
                 minHeight = 48.dp,
                 minWidth = 48.dp
             ) {
-                Text("−", fontSize = 24.sp)
+                Icon(
+                    LucideIcons.Minus,
+                    contentDescription = stringResource(R.string.action_decrease)
+                )
             }
             Spacer(Modifier.width(12.dp))
             Text(
@@ -1586,7 +1724,10 @@ private fun TextSizePreference(
                 minHeight = 48.dp,
                 minWidth = 48.dp
             ) {
-                Text("+", fontSize = 28.sp)
+                Icon(
+                    LucideIcons.Plus,
+                    contentDescription = stringResource(R.string.action_increase)
+                )
             }
         }
     )
@@ -1712,21 +1853,6 @@ private data class AodChoice(
     val onSelect: (String) -> Unit
 )
 
-private fun updateCustomizationSurfaceEnabled(
-    context: android.content.Context,
-    surface: String,
-    enabled: Boolean
-): Boolean {
-    val document = CustomizationRepository.loadDocument(context)
-    val profiles = document.profiles.toMutableMap()
-    profiles[surface] = (profiles[surface] ?: SurfaceProfile()).copy(enabled = enabled)
-    if (!CustomizationRepository.saveDocument(context, document.copy(profiles = profiles))) {
-        return false
-    }
-    syncCustomizationRuntime(context, CustomizationRepository.loadDocument(context))
-    return true
-}
-
 internal fun withMetadataVisible(profile: SurfaceProfile, visible: Boolean): SurfaceProfile {
     val widgets = profile.widgets.filterNot { it.type == "metadata" }.toMutableList()
     if (visible) {
@@ -1755,104 +1881,10 @@ internal fun palettePreset(name: String): Map<String, String> =
 internal fun palettePresetName(palette: Map<String, String>): String =
     if (palette.isNotEmpty() && palette.values.all { it == "dimmed" }) "dimmed" else "default"
 
-private fun applyDocumentToLegacyPreferences(
-    context: android.content.Context,
-    document: com.eza.hyperglow.customization.CustomizationDocument
-) {
-    val aod = document.profiles[SceneCompiler.SURFACE_AOD] ?: SceneCompiler.safeAodProfile()
-    val lockscreen = document.profiles[SceneCompiler.SURFACE_LOCKSCREEN]
-        ?: SceneCompiler.safeLockscreenProfile()
-    context.getSharedPreferences(AodRenderPreferences.PREFS, 0).edit()
-        .putBoolean(AodRenderPreferences.AOD_ENABLED, aod.enabled)
-        .putBoolean(AodRenderPreferences.LOCKSCREEN_ENABLED, lockscreen.enabled)
-        .putString(AodRenderPreferences.ALIGNMENT, aod.alignment)
-        .putString(AodRenderPreferences.SECONDARY, aod.secondaryMode)
-        .putString(AodRenderPreferences.OVERFLOW, aod.overflow)
-        .putString(
-            AodRenderPreferences.METADATA_VISIBLE,
-            if (aod.metadataVisible) "show" else "hide"
-        )
-        .putString(AodRenderPreferences.METADATA_ANCHOR, aod.metadataAnchor)
-        .putString(AodRenderPreferences.WEIGHT, aod.weight)
-        .putString(AodRenderPreferences.TEXT_SIZE, aod.textSize)
-        .putInt(AodRenderPreferences.TEXT_SIZE_CUSTOM, aod.textSizeCustom)
-        .putString(AodRenderPreferences.FONT_FAMILY, aod.fontFamily)
-        .putString(AodRenderPreferences.ANIMATION, aod.animation)
-        .putString(AodRenderPreferences.GLOW, aod.glow)
-        .putBoolean(AodRenderPreferences.ADAPTIVE_SECTIONING, aod.adaptiveSectioning)
-        .commit()
+private fun showInvalidBackupToast(context: android.content.Context) {
+    Toast.makeText(
+        context,
+        context.getString(R.string.toast_config_backup_invalid),
+        Toast.LENGTH_LONG
+    ).show()
 }
-
-private fun syncCustomizationRuntime(
-    context: android.content.Context,
-    document: com.eza.hyperglow.customization.CustomizationDocument
-) {
-    applyDocumentToLegacyPreferences(context, document)
-    publishRuntimeConfiguration(context)
-}
-
-private fun updateLockscreenKeepAwake(
-    context: android.content.Context,
-    enabled: Boolean
-): Boolean {
-    val saved = context.getSharedPreferences(AodRenderPreferences.PREFS, 0).edit()
-        .putBoolean(AodRenderPreferences.LOCKSCREEN_KEEP_AWAKE, enabled)
-        .commit()
-    if (!saved) return false
-    publishRuntimeConfiguration(context)
-    return true
-}
-
-private fun updateRaiseToAod(
-    context: android.content.Context,
-    enabled: Boolean
-): Boolean {
-    val saved = context.getSharedPreferences(AodRenderPreferences.PREFS, 0).edit()
-        .putBoolean(AodRenderPreferences.RAISE_TO_AOD, enabled)
-        .commit()
-    if (!saved) return false
-    publishRuntimeConfiguration(context)
-    return true
-}
-
-private fun updateLockscreenEditorLongPress(
-    context: android.content.Context,
-    enabled: Boolean
-): Boolean {
-    val saved = context.getSharedPreferences(AodRenderPreferences.PREFS, 0).edit()
-        .putBoolean(AodRenderPreferences.SUPPRESS_LOCKSCREEN_EDITOR_LONG_PRESS, enabled)
-        .commit()
-    if (!saved) return false
-    publishRuntimeConfiguration(context)
-    return true
-}
-
-private fun publishRuntimeConfiguration(context: android.content.Context) {
-    AodStateBridge.publishConfiguration(
-        RuntimeCustomization.loadCompiled(context),
-        currentProcessUserId()
-    )
-}
-
-private fun updateKeepAwakeDuration(context: android.content.Context, value: Long): Boolean {
-    val saved = context.getSharedPreferences(AodRenderPreferences.PREFS, 0).edit()
-        .putLong(AodRenderPreferences.KEEP_AWAKE_DURATION_MS, value)
-        .commit()
-    if (!saved) return false
-    publishRuntimeConfiguration(context)
-    return true
-}
-
-private fun updatePauseLinger(context: android.content.Context, value: Long): Boolean {
-    val saved = context.getSharedPreferences(AodRenderPreferences.PREFS, 0).edit()
-        .putLong(AodRenderPreferences.PAUSE_LINGER_MS, value)
-        .commit()
-    if (!saved) return false
-    publishRuntimeConfiguration(context)
-    return true
-}
-
-private fun updateDiagnosticLogging(
-    context: android.content.Context,
-    enabled: Boolean
-): Boolean = setDiagnosticLogging(context, enabled)

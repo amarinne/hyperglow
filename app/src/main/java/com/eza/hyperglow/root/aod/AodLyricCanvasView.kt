@@ -464,16 +464,73 @@ internal fun timedWordProgress(positionMs: Long, startMs: Long, endMs: Long): Fl
     else -> (positionMs - startMs).toFloat() / (endMs - startMs).toFloat()
 }
 
+internal enum class AodTextDirection { LTR, RTL }
+
+internal fun firstStrongAodTextDirection(text: String): AodTextDirection? {
+    var index = 0
+    while (index < text.length) {
+        val codePoint = text.codePointAt(index)
+        when (Character.getDirectionality(codePoint)) {
+            Character.DIRECTIONALITY_RIGHT_TO_LEFT,
+            Character.DIRECTIONALITY_RIGHT_TO_LEFT_ARABIC -> return AodTextDirection.RTL
+            Character.DIRECTIONALITY_LEFT_TO_RIGHT -> return AodTextDirection.LTR
+        }
+        index += Character.charCount(codePoint)
+    }
+    return null
+}
+
+internal fun resolvedAodTextDirection(
+    text: String,
+    words: List<AodCanvasWord> = emptyList()
+): AodTextDirection = firstStrongAodTextDirection(text)
+    ?: words.firstOrNull { firstStrongAodTextDirection(it.text) == AodTextDirection.RTL }
+        ?.let { AodTextDirection.RTL }
+    ?: AodTextDirection.LTR
+
+internal fun resolvedAodPhysicalAlignment(
+    configured: String,
+    oppositeAligned: Boolean,
+    direction: AodTextDirection
+): String {
+    val start = if (direction == AodTextDirection.RTL) "end" else "start"
+    val end = if (direction == AodTextDirection.RTL) "start" else "end"
+    return when (configured) {
+        "start" -> start
+        "center" -> "center"
+        "end" -> end
+        else -> if (oppositeAligned) end else start
+    }
+}
+
+internal fun timedWordDrawX(
+    lineStartX: Float,
+    lineWidth: Float,
+    precedingWidth: Float,
+    wordWidth: Float,
+    direction: AodTextDirection
+): Float = if (direction == AodTextDirection.RTL) {
+    lineStartX + lineWidth - precedingWidth - wordWidth
+} else {
+    lineStartX + precedingWidth
+}
+
 internal data class GradientSweepZone(val start: Float, val end: Float)
 
 internal fun gradientSweepZone(
     progress: Float,
     extent: Float,
-    bandFraction: Float = 0.4f
+    bandFraction: Float = 0.4f,
+    direction: AodTextDirection = AodTextDirection.LTR
 ): GradientSweepZone {
     val safeExtent = extent.coerceAtLeast(0f)
     val band = (safeExtent * bandFraction.coerceIn(0.1f, 1f)).coerceAtLeast(1f)
-    val start = -band + (safeExtent + band) * progress.coerceIn(0f, 1f)
+    val value = progress.coerceIn(0f, 1f)
+    val start = if (direction == AodTextDirection.RTL) {
+        safeExtent - (safeExtent + band) * value
+    } else {
+        -band + (safeExtent + band) * value
+    }
     return GradientSweepZone(start, start + band)
 }
 
@@ -869,6 +926,7 @@ internal class AodLyricCanvasView(
     )
     private var resolvedPalette = resolveAodPalette(emptyMap())
     private var alignment = Alignment.START
+    private var textDirection = AodTextDirection.LTR
     private var layout = LayoutState(emptyList(), OriginalLayout(emptyList(), 0f, 0f, false))
     private var exitSnapshot: CanvasSnapshot? = null
     private var transitionStartedAt = 0L
@@ -894,6 +952,7 @@ internal class AodLyricCanvasView(
         textAlign = Paint.Align.CENTER
     }
     private val horizontalSweepShaders = SparseArray<LinearGradient>(4)
+    private val horizontalRtlSweepShaders = SparseArray<LinearGradient>(4)
     private val verticalSweepShaders = SparseArray<LinearGradient>(4)
     private val sweepMatrix = Matrix()
     private var currentRenderStyle = captureRenderStyle()
@@ -966,11 +1025,15 @@ internal class AodLyricCanvasView(
             nextContent.speed
         )
         resolvedPalette = resolveAodPalette(nextContent.palette)
-        alignment = when (nextContent.alignmentMode) {
-            "start" -> Alignment.START
+        textDirection = resolvedAodTextDirection(nextContent.original, nextContent.words)
+        alignment = when (resolvedAodPhysicalAlignment(
+            nextContent.alignmentMode,
+            nextContent.alignedRight,
+            textDirection
+        )) {
             "center" -> Alignment.CENTER
             "end" -> Alignment.END
-            else -> if (nextContent.alignedRight) Alignment.END else Alignment.START
+            else -> Alignment.START
         }
         val sizeScale = textSizeModeMultiplier(nextContent.textSizeMode, nextContent.textSizeCustom)
         val baseSp = baseTextSizeSp(nextContent.original) * sizeScale
@@ -1264,11 +1327,13 @@ internal class AodLyricCanvasView(
             var lineIndex = 0
             while (lineIndex < positioned.row.lines.size) {
                 val line = positioned.row.lines[lineIndex]
-                canvas.drawText(
+                drawDirectionalText(
+                    canvas,
                     line.text,
                     line.startX,
                     positioned.baseline + lineIndex * positioned.row.lineHeight,
-                    positioned.row.paint
+                    positioned.row.paint,
+                    resolvedAodTextDirection(line.text)
                 )
                 lineIndex++
             }
@@ -1299,7 +1364,8 @@ internal class AodLyricCanvasView(
         translatedPaint = Paint(translatedPaint),
         rubyPaint = Paint(rubyPaint),
         palette = resolvedPalette,
-        alignment = alignment
+        alignment = alignment,
+        textDirection = textDirection
     )
 
     private fun applyRenderStyle(style: RenderStyleSnapshot) {
@@ -1310,6 +1376,7 @@ internal class AodLyricCanvasView(
         rubyPaint.set(style.rubyPaint)
         resolvedPalette = style.palette
         alignment = style.alignment
+        textDirection = style.textDirection
     }
 
     private fun drawMetadata(
@@ -1590,13 +1657,19 @@ internal class AodLyricCanvasView(
             if (line.ruby.isNotEmpty()) {
                 drawRuby(canvas, line, lineBaseline)
             }
-            var x = 0f
+            var precedingWidth = 0f
             var wordIndex = 0
             while (wordIndex < line.words.size) {
                 val placed = line.words[wordIndex]
                 val word = placed.word
                 val width = placed.width
-                val wordX = line.startX + x
+                val wordX = timedWordDrawX(
+                    line.startX,
+                    line.width,
+                    precedingWidth,
+                    width,
+                    textDirection
+                )
                 val progress = timedWordProgress(position, word.startMs, word.endMs)
                 val active = position >= word.startMs && position < word.endMs
                 val sung = position >= word.endMs
@@ -1618,7 +1691,14 @@ internal class AodLyricCanvasView(
                     1f,
                     if (sung) resolvedPalette.sungText else resolvedPalette.unsungText
                 )
-                canvas.drawText(word.text, wordX, wordBaseline + y, originalPaint)
+                drawDirectionalText(
+                    canvas,
+                    word.text,
+                    wordX,
+                    wordBaseline + y,
+                    originalPaint,
+                    resolvedAodTextDirection(word.text, listOf(word))
+                )
                 if (active && content.animationMode == "Gradient") {
                     setTextAlpha(originalPaint, 1f, 1f, resolvedPalette.sungText)
                     applySoftSweep(
@@ -1627,14 +1707,22 @@ internal class AodLyricCanvasView(
                         origin = wordX,
                         progress = progress,
                         extent = width,
-                        vertical = false
+                        vertical = false,
+                        direction = textDirection
                     )
-                    canvas.drawText(word.text, wordX, wordBaseline + y, originalPaint)
+                    drawDirectionalText(
+                        canvas,
+                        word.text,
+                        wordX,
+                        wordBaseline + y,
+                        originalPaint,
+                        resolvedAodTextDirection(word.text, listOf(word))
+                    )
                     originalPaint.shader = null
                 }
                 originalPaint.clearShadowLayer()
                 canvas.restore()
-                x += width + placed.gapAfter
+                precedingWidth += width + placed.gapAfter
                 wordIndex++
             }
             if (lineClipSave != -1) canvas.restoreToCount(lineClipSave)
@@ -2220,7 +2308,8 @@ internal class AodLyricCanvasView(
             origin = x,
             progress = progress,
             extent = line.width,
-            vertical = false
+            vertical = false,
+            direction = textDirection
         )
         drawOriginalText(canvas, line, baseline)
         originalPaint.shader = null
@@ -2230,23 +2319,25 @@ internal class AodLyricCanvasView(
 
     private fun drawOriginalText(canvas: Canvas, line: OriginalLine, baseline: Float) {
         if (line.ruby.isEmpty()) {
-            canvas.drawText(line.text, line.startX, baseline, originalPaint)
+            drawDirectionalText(canvas, line.text, line.startX, baseline, originalPaint, textDirection)
             return
         }
         if (line.textRuns.isEmpty()) {
-            canvas.drawText(line.text, line.startX, baseline, originalPaint)
+            drawDirectionalText(canvas, line.text, line.startX, baseline, originalPaint, textDirection)
             return
         }
         var index = 0
         while (index < line.textRuns.size) {
             val run = line.textRuns[index]
-            canvas.drawText(
+            drawDirectionalTextRun(
+                canvas,
                 line.text,
                 run.start,
                 run.end,
                 line.startX + run.x,
                 baseline,
-                originalPaint
+                originalPaint,
+                textDirection
             )
             index++
         }
@@ -2349,9 +2440,14 @@ internal class AodLyricCanvasView(
         origin: Float,
         progress: Float,
         extent: Float,
-        vertical: Boolean
+        vertical: Boolean,
+        direction: AodTextDirection = AodTextDirection.LTR
     ) {
-        val shaders = if (vertical) verticalSweepShaders else horizontalSweepShaders
+        val shaders = when {
+            vertical -> verticalSweepShaders
+            direction == AodTextDirection.RTL -> horizontalRtlSweepShaders
+            else -> horizontalSweepShaders
+        }
         var shader = shaders[color]
         if (shader == null) {
             val transparent = Color.argb(0, Color.red(color), Color.green(color), Color.blue(color))
@@ -2372,7 +2468,11 @@ internal class AodLyricCanvasView(
                     0f,
                     1f,
                     0f,
-                    intArrayOf(color, middle, transparent),
+                    if (direction == AodTextDirection.RTL) {
+                        intArrayOf(transparent, middle, color)
+                    } else {
+                        intArrayOf(color, middle, transparent)
+                    },
                     floatArrayOf(0f, 0.45f, 1f),
                     Shader.TileMode.CLAMP
                 )
@@ -2380,8 +2480,9 @@ internal class AodLyricCanvasView(
             shaders.put(color, shader)
         }
         val safeExtent = extent.coerceAtLeast(0f)
-        val band = (safeExtent * SWEEP_BAND_FRACTION).coerceAtLeast(1f)
-        val start = origin - band + (safeExtent + band) * progress.coerceIn(0f, 1f)
+        val zone = gradientSweepZone(progress, safeExtent, SWEEP_BAND_FRACTION, direction)
+        val band = zone.end - zone.start
+        val start = origin + zone.start
         sweepMatrix.setScale(if (vertical) 1f else band, if (vertical) band else 1f)
         sweepMatrix.postTranslate(if (vertical) 0f else start, if (vertical) start else 0f)
         shader.setLocalMatrix(sweepMatrix)
@@ -2395,10 +2496,18 @@ internal class AodLyricCanvasView(
     private fun applyWholeBlockHorizontalSweepShaders(progress: Float) {
         val origin = paddingLeft.toFloat()
         val extent = (width - paddingLeft - paddingRight).coerceAtLeast(0).toFloat()
-        applySoftSweep(originalPaint, resolvedPalette.sungText, origin, progress, extent, false)
-        applySoftSweep(romanizedPaint, resolvedPalette.secondaryText, origin, progress, extent, false)
-        applySoftSweep(translatedPaint, resolvedPalette.secondaryText, origin, progress, extent, false)
-        applySoftSweep(rubyPaint, resolvedPalette.secondaryText, origin, progress, extent, false)
+        applySoftSweep(
+            originalPaint, resolvedPalette.sungText, origin, progress, extent, false, textDirection
+        )
+        applySoftSweep(
+            romanizedPaint, resolvedPalette.secondaryText, origin, progress, extent, false, textDirection
+        )
+        applySoftSweep(
+            translatedPaint, resolvedPalette.secondaryText, origin, progress, extent, false, textDirection
+        )
+        applySoftSweep(
+            rubyPaint, resolvedPalette.secondaryText, origin, progress, extent, false, textDirection
+        )
     }
 
     private fun clearBlockSweepShaders() {
@@ -2440,7 +2549,60 @@ internal class AodLyricCanvasView(
         )
         paint.shader = null
         paint.clearShadowLayer()
-        canvas.drawText(text, x, baseline, paint)
+        drawDirectionalText(
+            canvas,
+            text,
+            x,
+            baseline,
+            paint,
+            resolvedAodTextDirection(text)
+        )
+    }
+
+    private fun drawDirectionalText(
+        canvas: Canvas,
+        text: String,
+        x: Float,
+        baseline: Float,
+        paint: Paint,
+        direction: AodTextDirection
+    ) {
+        if (text.isEmpty()) return
+        canvas.drawTextRun(
+            text,
+            0,
+            text.length,
+            0,
+            text.length,
+            x,
+            baseline,
+            direction == AodTextDirection.RTL,
+            paint
+        )
+    }
+
+    private fun drawDirectionalTextRun(
+        canvas: Canvas,
+        text: String,
+        start: Int,
+        end: Int,
+        x: Float,
+        baseline: Float,
+        paint: Paint,
+        direction: AodTextDirection
+    ) {
+        if (start >= end) return
+        canvas.drawTextRun(
+            text,
+            start,
+            end,
+            0,
+            text.length,
+            x,
+            baseline,
+            direction == AodTextDirection.RTL,
+            paint
+        )
     }
 
     private fun paint(sizeSp: Float, color: Int, weight: Int) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -2534,7 +2696,8 @@ internal class AodLyricCanvasView(
         val translatedPaint: Paint,
         val rubyPaint: Paint,
         val palette: AodResolvedPalette,
-        val alignment: Alignment
+        val alignment: Alignment,
+        val textDirection: AodTextDirection
     )
     private data class PositionedRow(val row: Row, val baseline: Float, val animate: Boolean)
     private data class OriginalLayout(

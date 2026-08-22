@@ -257,6 +257,63 @@ class AodCanvasLayoutTest {
     }
 
     @Test
+    fun rtlDirectionUsesFirstStrongTextAndTimedWordFallback() {
+        assertEquals(AodTextDirection.RTL, resolvedAodTextDirection("... ۱۲۳ عايزة"))
+        assertEquals(AodTextDirection.RTL, resolvedAodTextDirection("שיר בעברית"))
+        assertEquals(AodTextDirection.LTR, resolvedAodTextDirection("English ثم عربي"))
+        assertEquals(
+            AodTextDirection.RTL,
+            resolvedAodTextDirection(
+                "(۱۲۳)",
+                listOf(AodCanvasWord("عايزة", "", 0L, 1L, true))
+            )
+        )
+    }
+
+    @Test
+    fun rtlAutoAlignmentAndTimedWordsStartAtLogicalRightEdge() {
+        assertEquals(
+            "end",
+            resolvedAodPhysicalAlignment("auto", false, AodTextDirection.RTL)
+        )
+        assertEquals(
+            "start",
+            resolvedAodPhysicalAlignment("auto", true, AodTextDirection.RTL)
+        )
+        assertEquals(
+            170f,
+            timedWordDrawX(10f, 200f, 0f, 40f, AodTextDirection.RTL),
+            0.0001f
+        )
+        assertEquals(
+            120f,
+            timedWordDrawX(10f, 200f, 50f, 40f, AodTextDirection.RTL),
+            0.0001f
+        )
+        assertEquals(
+            60f,
+            timedWordDrawX(10f, 200f, 50f, 40f, AodTextDirection.LTR),
+            0.0001f
+        )
+    }
+
+    @Test
+    fun rtlGradientSweepMirrorsTheHorizontalReadingDirection() {
+        assertEquals(
+            GradientSweepZone(100f, 140f),
+            gradientSweepZone(0f, 100f, direction = AodTextDirection.RTL)
+        )
+        assertEquals(
+            GradientSweepZone(30f, 70f),
+            gradientSweepZone(0.5f, 100f, direction = AodTextDirection.RTL)
+        )
+        assertEquals(
+            GradientSweepZone(-40f, 0f),
+            gradientSweepZone(1f, 100f, direction = AodTextDirection.RTL)
+        )
+    }
+
+    @Test
     fun lineLevelRowsWithTransportWordsStillUseOneSharedCanvasSweep() {
         val content = LyricSnapshot(
             original = "絡み合う迷宮",

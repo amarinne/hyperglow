@@ -138,6 +138,9 @@
     <string name="action_import_appearance">Import appearance file</string>
     <string name="action_export_appearance">Export appearance file</string>
     <string name="action_reset_surfaces">Reset both surfaces</string>
+    <string name="action_back">Back</string>
+    <string name="action_decrease">Decrease</string>
+    <string name="action_increase">Increase</string>
     <string name="dialog_reset_title">Reset AOD and lock screen settings?</string>
     <string name="dialog_reset_summary">This enables AOD lyrics and disables lock screen lyrics. It replaces both appearance profiles.</string>
     <string name="option_below_clock">Below clock</string>
@@ -193,6 +196,7 @@
     <string name="toast_appearance_exported">Appearance file exported</string>
     <string name="toast_appearance_export_failed">Could not export the appearance file</string>
     <string name="toast_appearance_save_failed">Could not save the appearance settings</string>
+    <string name="toast_setting_save_failed">Could not save the setting</string>
     <string name="toast_settings_restored">Built-in settings restored</string>
     <string name="toast_settings_restore_failed">Could not restore settings</string>
     <string name="diagnostic_section_problem">Problem</string>
@@ -259,4 +263,18 @@
     <string name="diagnostic_failure_network">Network upload failed. Retry manually.</string>
     <string name="diagnostic_failure_receipt">The intake returned an invalid receipt. Retry manually.</string>
     <string name="toast_no_github_handler">No app can open GitHub</string>
+
+    <string name="setting_hide_launcher_icon">Hide launcher icon</string>
+    <string name="setting_hide_from_recents">Hide from recents</string>
+    <string name="section_system_integration">System integration</string>
+    <string name="section_config_backup">Config backup</string>
+    <string name="action_export_config">Export config</string>
+    <string name="action_import_config">Import config</string>
+    <string name="toast_config_backup_exported">Configuration exported</string>
+    <string name="toast_config_backup_write_failed">Could not write the configuration backup</string>
+    <string name="toast_config_backup_imported">Configuration imported</string>
+    <string name="toast_config_backup_invalid">Not a valid HyperGlow configuration backup</string>
+    <string name="notification_channel_lyric_bridge">Lyric bridge</string>
+    <string name="notification_lyric_bridge_title">HyperGlow lyric service</string>
+    <string name="notification_lyric_bridge_text">Keeping AOD and lock screen lyrics updating while the screen is off.</string>
 </resources>

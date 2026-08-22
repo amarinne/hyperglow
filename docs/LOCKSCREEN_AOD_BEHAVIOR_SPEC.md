@@ -324,14 +324,14 @@ first, lyrics shrink to the bounded minimum, and insufficient/unknown geometry f
 - Unknown widgets are dropped. No valid lyric widget falls back to the built-in safe profile.
 - Lockscreen `backgroundStyle` accepts only `auto`, `card`, or `none`; AOD always resolves it to
   `none`.
-- Line-level progress keeps `None`, `Top to bottom`, and a main-only `Left to right` approximate mode,
-  plus a distinct explicit whole-block compatibility mode. Approximate left-to-right progress treats
-  all wrapped main-lyric rows as one continuous sequence: complete one visual row left-to-right, then
-  continue on the next. Normal gradient/progress animation affects only the main lyric; ruby,
-  transliteration, and translation remain static. The whole-block option alone preserves the current
-  simultaneous sweep across all visible lyric rows and must not normalize to main-only. Each surface
-  profile independently selects bright or dimmed secondary-text presentation. Word/syllable-level
-  synchronization is unchanged.
+- Line-level progress keeps `None`, `Top to bottom`, and a main-only horizontal approximate mode under
+  the compatible `Left to right` identifier, plus a distinct explicit whole-block compatibility mode.
+  Horizontal progress follows the lyric's first-strong reading direction: LTR rows complete one visual
+  row left-to-right, RTL rows right-to-left, then continue on the next. Normal gradient/progress
+  animation affects only the main lyric; ruby, transliteration, and translation remain static. The
+  whole-block option alone preserves the current simultaneous sweep across all visible lyric rows and
+  must not normalize to main-only. Each surface profile independently selects bright or dimmed
+  secondary-text presentation. Word/syllable-level synchronization is unchanged.
 - Main lyrics accept a per-surface wrap limit of 1, 2, 3, 4, 5, or no user limit. Text size up to 200%
   must use the selected limit rather than the old fixed three-line ceiling. Safe-area geometry,
   optional-row removal, bounded minimum size, and fail-closed placement remain authoritative.

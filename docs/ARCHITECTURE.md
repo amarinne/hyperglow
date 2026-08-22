@@ -103,14 +103,25 @@ limit. The renderer applies that limit before layout; no-limit layout remains bo
 500-character/128-word snapshot. Surface safe areas, maximum-height policy, optional-row removal, and
 fail-closed placement remain authoritative. Transliteration and translation rows are static; their
 profile toggle selects bright or dimmed presentation and never changes timing cadence. Line-level
-left-to-right approximation traverses the cumulative widths of wrapped main rows sequentially. The
-explicit whole-block compatibility mode is the sole exception: it retains the existing simultaneous
-X sweep across every visible lyric row. Word/syllable timing remains unchanged.
+horizontal approximation traverses the cumulative widths of wrapped main rows sequentially in the
+lyric's first-strong reading direction. Existing left-to-right wire/configuration identifiers remain
+compatible, but Arabic and Hebrew rows mirror the sweep right-to-left. The explicit whole-block
+compatibility mode is the sole exception: it retains the existing simultaneous X sweep across every
+visible lyric row, mirrored for RTL lyrics. Word/syllable timing remains unchanged.
 
 ## Security And Lifecycle
 
 - Producer endpoints accept only UIDs containing `com.spotify.music`.
 - AOD callback accepts only system UID containing `com.android.systemui`.
+- The app process promotes `AodLyricBridgeService` to a `specialUse` foreground service through
+  explicit start attempts at application creation, activity creation, and SystemUI binding, because
+  SystemUI only ever binds the service and a bind neither triggers `onStartCommand` nor protects the
+  process from OEM background freezing (MIUI Greeze stops AOD/lockscreen lyric updates silently).
+  Promotion is process survival only: it never reads or writes wake, lifetime, capability, or
+  presentation policy. The battery-optimization allowlist remains a documented prerequisite. The
+  app never declares `POST_NOTIFICATIONS`: a foreground service must supply a notification object
+  but never needs the posting permission, so no HyperGlow entry can appear in the status bar or
+  shade, and the promotion never depends on one being visible.
 - Protocol, sequence, payload size, document identity, row count, word count, timing, and text bounds fail closed. Document pipes use the declared compressed byte count as an exact frame boundary and reject short/truncated frames.
 - Closed producer render-mode strings are normalized once at bridge ingress. Current values are
   preserved, known legacy aliases are canonicalized, unknown values use producer-safe defaults, and

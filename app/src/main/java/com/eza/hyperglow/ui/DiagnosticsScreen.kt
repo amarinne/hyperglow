@@ -65,6 +65,7 @@ import com.eza.hyperglow.diagnostics.utf8Size
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
+import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTitle
@@ -162,7 +163,12 @@ internal fun DiagnosticsScreen(onBack: () -> Unit) {
             TopAppBar(
                 title = stringResource(R.string.action_report_problem),
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Text("←") }
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            LucideIcons.ChevronLeft,
+                            contentDescription = stringResource(R.string.action_back)
+                        )
+                    }
                 }
             )
         }

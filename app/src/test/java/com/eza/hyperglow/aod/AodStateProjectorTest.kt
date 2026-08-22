@@ -31,6 +31,43 @@ class AodStateProjectorTest {
     }
 
     @Test
+    fun aiDerivedWholeLineTextPublishedInTheDocumentReachesBothSecondaryRows() {
+        val source = document("Line")
+        val row = source.rows.single().copy(
+            romanized = "AI pronunciation",
+            translated = "AI translation"
+        )
+
+        val projected = project(
+            state().copy(
+                romanizedLine = "stale pronunciation",
+                translatedLine = "stale translation"
+            ),
+            source.copy(rows = listOf(row)),
+            positionMs = 500L
+        )
+
+        assertEquals("AI pronunciation", projected.romanized)
+        assertEquals("AI translation", projected.translated)
+    }
+
+    @Test
+    fun providerFallbackCarriesAiDerivedActiveLineWithoutADocument() {
+        val projected = project(
+            state().copy(
+                line = "line",
+                romanizedLine = "AI pronunciation",
+                translatedLine = "AI translation"
+            ),
+            document = null,
+            positionMs = 500L
+        )
+
+        assertEquals("AI pronunciation", projected.romanized)
+        assertEquals("AI translation", projected.translated)
+    }
+
+    @Test
     fun untimedDocumentIsHeldOnlyBySongChangeLeaseAndSleepsAfterIt() {
         val policy = AodPowerSessionPolicy()
         val held = project(state(), document("Static"), powerSessionPolicy = policy)

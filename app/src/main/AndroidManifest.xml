@@ -2,6 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="io.github.libxposed.permission.BIND_XPOSED_SERVICE" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- POST_NOTIFICATIONS is deliberately absent: a foreground service must supply a
+         notification object but never needs the posting permission, and without the grant no
+         HyperGlow entry ever appears in the status bar or shade. -->
 
     <queries>
         <package android:name="com.eza.spicyex" />
@@ -21,11 +26,32 @@
         <activity
             android:name=".ui.MainActivity"
             android:exported="true">
+            <!-- LSPosed resolves its module launch entry through these categories on MainActivity,
+                 which must stay enabled under every preference state. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="de.robv.android.xposed.category.MODULE_SETTINGS" />
+            </intent-filter>
+            <!-- CATEGORY_INFO keeps getLaunchIntentForPackage working with no home-screen icon,
+                 and does not itself create a launcher entry. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.INFO" />
+            </intent-filter>
+        </activity>
+
+        <!-- The alias owns the desktop LAUNCHER entry so hiding the icon disables only this
+             component and leaves LSPosed's launch path intact. Moving LAUNCHER off MainActivity
+             breaks existing pinned home-screen shortcuts once, on update. -->
+        <activity-alias
+            android:name=".ui.MainActivityAlias"
+            android:exported="true"
+            android:targetActivity=".ui.MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
 
         <service
             android:name=".bridge.SpicyLyricBridgeService"
@@ -39,8 +65,13 @@
         <service
             android:name=".aod.AodLyricBridgeService"
             android:exported="true"
+            android:foregroundServiceType="specialUse"
             android:permission="android.permission.STATUS_BAR_SERVICE"
-            android:stopWithTask="false" />
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="AOD lyric bridge for SystemUI" />
+        </service>
 
         <provider
             android:name=".bridge.SpicyLyricBridgeProvider"
