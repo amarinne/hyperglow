@@ -628,7 +628,7 @@ object AodProjectionEngine {
     private const val FALLBACK_REFRESH_INTERVAL_MS = 1_000L
     private const val TRANSITION_GRACE_MS = 1_500L
     private const val DOCUMENT_TRANSPORT_GRACE_MS = 30_000L
-    internal const val PAUSE_CONFIRM_MS = 1_500L
+    internal const val PAUSE_CONFIRM_MS = 5_000L
     private const val CUSTOMIZATION_REFRESH_MS = 1_000L
     private const val TAG = "AodProjection"
 }

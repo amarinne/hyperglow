@@ -54,6 +54,7 @@ import com.eza.hyperglow.root.surface.PlacementRect
 import com.eza.hyperglow.root.surface.WidgetMeasurement
 import java.lang.ref.WeakReference
 import java.lang.reflect.Method
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 internal data class LockscreenSceneRect(
@@ -106,6 +107,7 @@ internal data class LockscreenNotificationGeometry(
 
 private const val TOP_MARGIN_DP = 16f
 private const val NOTIFICATION_GAP_DP = 8f
+private const val NOTIFICATION_GEOMETRY_DEAD_BAND_DP = 8f
 private const val BOTTOM_RESERVE_DP = 120f
 private const val MIN_WIDTH_DP = 160f
 private const val MIN_HEIGHT_DP = 72f
@@ -342,6 +344,18 @@ internal fun lockscreenNotificationBounds(
         visible.map { it.left }.filter { it > 0 }.minOrNull() ?: 0,
         visible.map { it.right }.filter { it > 0 }.maxOrNull() ?: 0
     )
+}
+
+internal fun stabilizeNotificationBounds(
+    current: LockscreenNotificationBounds?,
+    lastApplied: LockscreenNotificationBounds?,
+    deadBandPx: Int
+): LockscreenNotificationBounds? {
+    if (current == null) return null
+    val last = lastApplied ?: return current
+    val topDrift = abs(current.top - last.top)
+    val bottomDrift = abs(current.bottom - last.bottom)
+    return if (topDrift < deadBandPx && bottomDrift < deadBandPx) last else current
 }
 
 internal fun resolveLockscreenNotificationGeometry(
@@ -1284,9 +1298,17 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
         } else {
             null
         }
+        val deadBandPx = (NOTIFICATION_GEOMETRY_DEAD_BAND_DP * host.resources.displayMetrics.density)
+            .toInt()
+            .coerceAtLeast(1)
+        val stabilizedCurrent = stabilizeNotificationBounds(
+            current,
+            lastNotificationBounds,
+            deadBandPx
+        )
         val geometry = resolveLockscreenNotificationGeometry(
             hasNotification,
-            current,
+            stabilizedCurrent,
             lastNotificationBounds,
             host.height
         )

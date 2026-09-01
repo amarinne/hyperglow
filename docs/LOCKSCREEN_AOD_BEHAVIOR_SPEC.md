@@ -63,6 +63,9 @@ scrim is vertically tight to currently rendered rows, unions outgoing/incoming b
 transitions, and follows visible media-card width when available. A bounded 92% width and dark-card
 opacity are used when native media width is unavailable.
 
+Notification geometry uses an 8 dp dead band against the last applied bounds. Smaller animation
+jitter keeps the current lyric-card placement; larger movement updates collision placement normally.
+
 Lockscreen card lifetime follows Xiaomi's stock Spotify media player:
 
 ```text
@@ -213,12 +216,21 @@ first, lyrics shrink to the bounded minimum, and insufficient/unknown geometry f
   so no separate SystemUI timer exists. The duration is lifetime policy only; it does not
   alter wake identity, presentation leases, content capability, pause retention, or renderer state.
   Draw-wake renewal remains a separate renderer concern.
+- The validated lifetime guard also owns one narrow brightness override. In exact Xiaomi
+  `DOZE_AOD`, a low nonzero request through `MiuiDozeBrightnessTimeoutAdapter` is clamped to Xiaomi's
+  own positive `CommonUtils.BRIGHTNESS_ON` value. Requests at or above that value pass through.
+  Zero/off requests and every request in `DOZE_AOD_PAUSING`, `DOZE_AOD_PAUSED`, plain `DOZE`, pulse,
+  finish, unknown state, or inactive guard pass through unchanged. This keeps pocket and proximity
+  pause authoritative. Guard activation and release re-submit Xiaomi's last raw request through the
+  stock adapter, so Xiaomi keeps its native brightness timeout behavior and regains control on the
+  stock adapter's normal delay when lyric keepalive ends.
 - A transient hidden edge explicitly marked as Spotify still playing starts a bounded 30-second
   power grace after any snapshot carrying validated keepalive intent. Timed lyrics and untimed
   sessions held by `Also keep AOD active without timed lyrics` are equally eligible; lyric timing is
   content capability and never gates lifetime policy. The next visible snapshot cancels the grace
   without replaying Xiaomi hide policy. Paused/non-playing state releases immediately. This prevents short
-  producer/status gaps from turning AOD off mid-song; stale/disconnect still releases immediately.
+  producer/status gaps from turning AOD off mid-song. Projection stale retains an already-active
+  validated keepalive request; disconnect, explicit clear, pause, and grace expiry still release it.
 - A null producer-state edge retains the one bounded timed document in app memory for the same
   30-second transport grace. Only a returning state with the exact producer, generation, track URI,
   and duration may reuse it. A different session clears it immediately; an abandoned gap clears it
@@ -238,7 +250,7 @@ first, lyrics shrink to the bounded minimum, and insufficient/unknown geometry f
   transport gap. Every other non-playing edge is provisional: Spotify reports the ending track as
   `ready`/not playing roughly a second before the next generation arrives, so the edge is first
   projected as the same still-playing transport gap and only becomes real pause retention when the
-  producer is still non-playing on the same session after a bounded 1.5-second confirmation window.
+  producer is still non-playing on the same session after a bounded 5-second confirmation window.
   A resumed producer or a new session inside that window cancels the pending pause, so a song change
   never releases AOD lifetime or replays Xiaomi hide policy. The window opens once per session; a
   producer that keeps publishing while paused must not reopen it.
@@ -340,7 +352,7 @@ first, lyrics shrink to the bounded minimum, and insufficient/unknown geometry f
 - During the generation-bound song intro, matching one-line title/artist text suppresses the duplicate
   metadata row and morphs into the persistent metadata position and size when the intro ends.
   Incompatible or wrapped geometry uses bounded crossfade. Neither path changes whole-surface alpha,
-  stock-clock brightness, or placement authority.
+  the keepalive brightness policy, or placement authority.
 - Imported data cannot name classes, resources, methods, paths, URLs, commands, or external bitmap
   sources.
 - Reset restores the built-in safe profile.

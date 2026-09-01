@@ -42,6 +42,39 @@ internal fun shouldReplacePendingState(
     incoming !is AodStateWireMessage.KeepAlive ||
     pending is AodStateWireMessage.KeepAlive
 
+/**
+ * Preserve a pending state while applying a newer same-revision heartbeat to its scalar fields. A
+ * heartbeat cannot carry the lyric body, but dropping it here lets a stale `keepAlive=false` expire
+ * the AOD lease before the next full snapshot arrives.
+ */
+internal fun mergePendingKeepAlive(
+    pending: AodStateWireMessage?,
+    incoming: AodStateWireMessage.KeepAlive
+): AodStateWireMessage? {
+    if (pending == null ||
+        pending.revision != incoming.revision ||
+        pending.userId != incoming.userId ||
+        incoming.updatedAtElapsedMs <= pending.updatedAtElapsedMs
+    ) return null
+    return when (pending) {
+        is AodStateWireMessage.Snapshot -> pending.copy(
+            updatedAtElapsedMs = incoming.updatedAtElapsedMs,
+            keepAlive = incoming.keepAlive,
+            wakeSignal = incoming.wakeSignal,
+            playbackActive = incoming.playbackActive,
+            pauseRetentionEligible = incoming.pauseRetentionEligible
+        )
+        is AodStateWireMessage.Hidden -> pending.copy(
+            updatedAtElapsedMs = incoming.updatedAtElapsedMs,
+            keepAlive = incoming.keepAlive,
+            wakeSignal = incoming.wakeSignal,
+            playbackActive = incoming.playbackActive,
+            pauseRetentionEligible = incoming.pauseRetentionEligible
+        )
+        is AodStateWireMessage.KeepAlive -> null
+    }
+}
+
 internal class GenerationBoundLatest<T> {
     private var generation = -1L
     private var value: T? = null
@@ -169,14 +202,28 @@ internal class AodLyricClient(
             synchronized(this@AodLyricClient) {
                 if (stopped) return
                 val pending = pendingState.peek(bindingGeneration)
-                if (!shouldReplacePendingState(pending, ownedMessage)) {
+                val merged = if (ownedMessage is AodStateWireMessage.KeepAlive) {
+                    mergePendingKeepAlive(pending, ownedMessage)
+                } else null
+                if (merged != null) {
+                    if (!pendingState.offer(
+                            generation = generation,
+                            currentGeneration = bindingGeneration,
+                            value = merged
+                        )
+                    ) return
+                    HookLogger.i(
+                        TAG,
+                        "Keepalive merged into pending state revision=${merged.revision}"
+                    )
+                } else if (!shouldReplacePendingState(pending, ownedMessage)) {
                     HookLogger.i(
                         TAG,
                         "Keepalive coalesced behind snapshot revision=${ownedMessage.revision}"
                     )
                     return
                 }
-                if (!pendingState.offer(
+                if (merged == null && !pendingState.offer(
                         generation = generation,
                         currentGeneration = bindingGeneration,
                         value = ownedMessage

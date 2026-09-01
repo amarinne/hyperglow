@@ -223,10 +223,10 @@
     <string name="diagnostic_description">描述发生的情况</string>
     <string name="diagnostic_byte_count">%1$d/%2$d</string>
     <string name="diagnostic_guided_capture">引导捕获</string>
-    <string name="diagnostic_capture_active">捕获正在进行。如需更完整的报告，请先重启系统界面并复现问题——但现在点击"完成捕获"也可以，仍会提交有用的内容。</string>
+    <string name="diagnostic_capture_active">捕获正在进行。请重启系统界面，复现到故障可见，然后立即返回此处完成捕获。现在完成只能捕获设置状态，可能会漏掉故障。</string>
     <string name="diagnostic_finish_capture">完成捕获</string>
     <string name="diagnostic_finishing">正在完成…</string>
-    <string name="diagnostic_capture_explanation">暂时捕获筛选后的诊断信息。您可以立即完成，也可以先复现问题后再完成——两种方式都能生成可用的报告。完成时会检查 Root。</string>
+    <string name="diagnostic_capture_explanation">暂时捕获筛选后的诊断信息。请先复现问题再完成，以包含故障证据。立即完成只会捕获设置状态。完成时会检查 Root。</string>
     <string name="diagnostic_start_capture">开始捕获</string>
     <string name="diagnostic_section_review">检查</string>
     <string name="diagnostic_preview_json">报告 JSON</string>

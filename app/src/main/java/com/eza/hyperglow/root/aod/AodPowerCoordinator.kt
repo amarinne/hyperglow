@@ -143,7 +143,14 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
 
     override fun onLyricProjectionDisconnected() = clear("projection-disconnected")
 
-    override fun onLyricProjectionStale() = clear("projection-stale")
+    override fun onLyricProjectionStale() {
+        if (shouldRetainAodPowerOnProjectionStale(keepAliveRequested)) {
+            guardCause = "projection-stale-retained"
+            updateLifetimeGuard()
+        } else {
+            clear("projection-stale")
+        }
+    }
 
     /**
      * Both entry points name themselves. A release here used to be logged under whatever cause the
@@ -189,9 +196,13 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
     private fun dispatchWake(signal: Long, allowed: Boolean, forceRetry: Boolean = false) {
         val newSignal = isNewAodWakeSignal(lastWakeSignal, signal)
         if (!allowed || (!newSignal && !forceRetry)) return
+        // Consume a content wake identity before calling the broker. A rejected request usually
+        // means Xiaomi has torn down the AOD host; leaving the identity unrecorded turns every
+        // heartbeat into another normal request and creates an attach/wake loop. The bounded
+        // detached retry below remains available once for that same identity.
+        if (newSignal) lastWakeSignal = signal
         if (forceRetry) lastDetachedRetrySignal = signal
         val accepted = AodWakeBroker.requestWake(signal)
-        if (newSignal && accepted) lastWakeSignal = signal
         HookLogger.i(
             TAG,
             "AOD wake requested signal=$signal attached=$surfaceAttached " +
@@ -242,6 +253,9 @@ internal fun shouldAcceptKeepAliveHeartbeat(
     projectionVisible: Boolean,
     graceActive: Boolean
 ): Boolean = projectionVisible
+
+internal fun shouldRetainAodPowerOnProjectionStale(keepAliveRequested: Boolean): Boolean =
+    keepAliveRequested
 
 /**
  * Bounded to the one unwinnable race: keepalive intent landing after Xiaomi's policy hide has

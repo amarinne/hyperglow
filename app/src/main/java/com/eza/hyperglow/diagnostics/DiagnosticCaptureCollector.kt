@@ -47,7 +47,7 @@ internal class DiagnosticCaptureCollector(
             Instant.ofEpochMilli(startedAtUtcMillis).atZone(ZoneId.systemDefault())
         )
         val commands = listOf(
-            "logs" to "logcat -d -b main -b system -v threadtime -t 4000 " +
+            "logs" to "logcat -d -b main -b system -v threadtime -T '$timestamp' " +
                 "-s HyperGlow:V '*:S'",
             "systemui_processes" to SYSTEM_UI_PROCESS_COMMAND,
             "framework" to FRAMEWORK_EVIDENCE_COMMAND,

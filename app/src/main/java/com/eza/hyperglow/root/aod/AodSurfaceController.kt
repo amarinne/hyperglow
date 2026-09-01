@@ -1685,7 +1685,36 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     private fun isSurfaceRenderActive(): Boolean {
         val directSurface = surface ?: return false
         if (!directSurface.isAttachedToWindow || directSurface.visibility != View.VISIBLE) return false
-        return lyricCanvas?.visibility == View.VISIBLE || spicyAnimationView?.visibility == View.VISIBLE
+        if (lyricCanvas?.visibility != View.VISIBLE && spicyAnimationView?.visibility != View.VISIBLE) {
+            return false
+        }
+        // Xiaomi can hide the whole AODView by ancestor alpha while our child stays VISIBLE.
+        // Keep linkage handoff exception: transition alpha is intentionally zero during morph.
+        return handoffActive || effectiveSurfaceAlpha(directSurface) > EFFECTIVE_ALPHA_THRESHOLD
+    }
+
+    private fun effectiveSurfaceAlpha(view: View): Float {
+        var value = view.alpha * view.transitionAlpha
+        var ancestor = view.parent as? View
+        var depth = 0
+        while (ancestor != null && depth++ < MAX_ALPHA_CHAIN_DEPTH) {
+            value *= ancestor.alpha * ancestor.transitionAlpha
+            if (value <= EFFECTIVE_ALPHA_THRESHOLD) return value
+            ancestor = ancestor.parent as? View
+        }
+        return value
+    }
+
+    private fun surfaceAlphaChain(view: View): String {
+        val parts = ArrayList<String>(MAX_ALPHA_CHAIN_DEPTH + 1)
+        var current: View? = view
+        var depth = 0
+        while (current != null && depth++ < MAX_ALPHA_CHAIN_DEPTH) {
+            parts += "${current.javaClass.simpleName}:${current.visibility}:${current.alpha}/${current.transitionAlpha}"
+            current = current.parent as? View
+        }
+        if (current != null) parts += "…"
+        return parts.joinToString(">")
     }
 
     private fun requestWakeIfAllowed(root: ViewGroup, directSurface: View, wakeRequired: Boolean) {
@@ -1773,6 +1802,8 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
                 "${directSurface?.right},${directSurface?.bottom} scale=${directSurface?.scaleX}/" +
                 "${directSurface?.scaleY} translation=${directSurface?.translationX}/" +
                 "${directSurface?.translationY} canvas=${canvas?.visibility} " +
+                "effAlpha=${directSurface?.let(::effectiveSurfaceAlpha)} " +
+                "alphaChain=${directSurface?.let(::surfaceAlphaChain)} " +
                 "render=${latestSnapshot?.let(::canRenderAod)} wake=$lastDrawWakePulseResult"
         )
     }
@@ -1798,6 +1829,8 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     private const val STOCK_MOTION_FADE_OUT_MS = 150L
     private const val STOCK_MOTION_FADE_IN_MS = 180L
     private const val MIN_RENDERED_CLOCK_ALPHA = 0.02f
+    private const val EFFECTIVE_ALPHA_THRESHOLD = 0.01f
+    private const val MAX_ALPHA_CHAIN_DEPTH = 6
     private const val MANAGED_BURN_IN_RETRY_MS = 1_000L
     private const val MAX_MANAGED_POSITION_RETRIES = 5
     private val DEFAULT_AOD_PROFILE = SceneCompiler.compile(SceneCompiler.safeDefaultDocument())

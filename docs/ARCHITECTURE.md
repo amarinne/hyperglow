@@ -27,10 +27,13 @@ Package identity:
 
 Lockscreen and AOD use separate physical renderer instances backed by one immutable lyric snapshot.
 Views are never reparented between hosts. Xiaomi retains ownership of parent visibility, keyguard
-authentication, doze, and brightness. On exact verified AOD modes, the optional scene coordinator
-temporarily owns native AOD content/lyric burn-in timing and placement while lyrics are active. The
-native target is Xiaomi's clock container, including custom-image styles. Xiaomi's natural target is
-cached and restored when the lyric scene ends.
+authentication, and doze. During a validated lyric keepalive session, HyperGlow may clamp Xiaomi's
+low nonzero AOD brightness request to Xiaomi's own readable AOD level only in exact `DOZE_AOD`.
+Xiaomi keeps brightness authority in pause, pocket, proximity, off, finish, and inactive-guard states.
+On exact verified AOD modes, the optional scene coordinator temporarily owns native AOD content/lyric
+burn-in timing and placement while lyrics are active. The native target is Xiaomi's clock container,
+including custom-image styles. Xiaomi's natural target is cached and restored when the lyric scene
+ends.
 
 ## Exclusions
 
@@ -73,6 +76,11 @@ cached and restored when the lyric scene ends.
   Xiaomi lifetime suppression through the existing intent path instead of a second timer. The
   deadline spans continuous eligible Spotify playback and is not reset by track/document/heartbeat
   updates. Lockscreen-only playback cannot suppress `smartHide()` or `hideDoze()`.
+- AOD brightness support observes Xiaomi's exact doze state and raw brightness request. While the
+  validated lifetime guard is active in `DOZE_AOD`, a low nonzero request is clamped to Xiaomi's
+  reflective `CommonUtils.BRIGHTNESS_ON` value. Zero, off, invalid, already-readable, paused,
+  pausing, plain-doze, and inactive-guard requests pass through unchanged. Guard activation and
+  release re-submit Xiaomi's last raw request through its adapter, preserving Xiaomi timeout policy.
 - Linkage uses two renderer instances and bounded geometry/alpha handoff. Stock linkage keeps the
   lockscreen instance as the semantic source through Xiaomi's bright SystemUI clock morph. The AOD
   instance is immediately visible opposite the exact rendered SystemUI clock-morph bounds when they

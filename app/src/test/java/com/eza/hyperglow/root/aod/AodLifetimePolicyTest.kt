@@ -18,11 +18,27 @@ class AodLifetimePolicyTest {
     }
 
     @Test
+    fun projectionStaleRetainsOnlyExistingKeepalive() {
+        assertTrue(shouldRetainAodPowerOnProjectionStale(true))
+        assertFalse(shouldRetainAodPowerOnProjectionStale(false))
+    }
+
+    @Test
     fun wakeSignalOnlyFiresForNewContentEvents() {
         assertFalse(isNewAodWakeSignal(9L, 0L))
         assertFalse(isNewAodWakeSignal(9L, 9L))
         assertTrue(isNewAodWakeSignal(0L, 9L))
         assertTrue(isNewAodWakeSignal(8L, 9L))
+    }
+
+    @Test
+    fun rejectedWakeStillConsumesIdentityBeforeOneDetachedRetry() {
+        // The broker result does not define identity. A rejected first request must not become a
+        // fresh normal request on every heartbeat; only the separate detached retry may re-arm it.
+        assertTrue(isNewAodWakeSignal(Long.MIN_VALUE, 9L))
+        assertFalse(isNewAodWakeSignal(9L, 9L))
+        assertTrue(shouldRetryDetachedAodWake(false, true, 9L, Long.MIN_VALUE))
+        assertFalse(shouldRetryDetachedAodWake(false, true, 9L, 9L))
     }
 
     @Test

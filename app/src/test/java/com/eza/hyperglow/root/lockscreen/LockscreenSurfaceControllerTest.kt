@@ -53,6 +53,20 @@ class LockscreenSurfaceControllerTest {
     }
 
     @Test
+    fun notificationGeometryDeadBandKeepsSmallAnimationJitter() {
+        val last = LockscreenNotificationBounds(100, 400)
+        val current = LockscreenNotificationBounds(105, 404)
+
+        assertEquals(last, stabilizeNotificationBounds(current, last, deadBandPx = 8))
+        assertEquals(
+            LockscreenNotificationBounds(109, 404),
+            stabilizeNotificationBounds(LockscreenNotificationBounds(109, 404), last, 8)
+        )
+        assertEquals(current, stabilizeNotificationBounds(current, null, 8))
+        assertEquals(null, stabilizeNotificationBounds(null, last, 8))
+    }
+
+    @Test
     fun identicalFrameGeometryDoesNotRequestAnotherLayoutPass() {
         assertFalse(frameLayoutGeometryChanged(100, 80, 12, 20, 100, 80, 12, 20))
         assertTrue(frameLayoutGeometryChanged(100, 80, 12, 20, 100, 81, 12, 20))

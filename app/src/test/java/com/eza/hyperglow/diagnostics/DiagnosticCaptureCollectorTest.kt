@@ -41,6 +41,7 @@ class DiagnosticCaptureCollectorTest {
     @Test
     fun captureFiltersCrashPackagesAndLsposedIdentity() {
         var lsposedCommand = ""
+        var logsCommand = ""
         var processCommand = ""
         var frameworkCommand = ""
         val collector = DiagnosticCaptureCollector { command, _ ->
@@ -90,7 +91,10 @@ class DiagnosticCaptureCollectorTest {
                         """.trimIndent()
                     )
                 }
-                else -> DiagnosticRootCommandResult(0, "08-01 I HyperGlow: safe event")
+                else -> {
+                    logsCommand = command
+                    DiagnosticRootCommandResult(0, "08-01 I HyperGlow: safe event")
+                }
             }
         }
 
@@ -106,6 +110,8 @@ class DiagnosticCaptureCollectorTest {
         assertFalse(result.lsposedLines.contains("secret"))
         assertTrue(lsposedCommand.contains("tail -c 524288"))
         assertTrue(lsposedCommand.contains("head -n 1"))
+        assertTrue(logsCommand.contains("-T '"))
+        assertFalse(logsCommand.contains("-t 4000"))
         assertTrue(processCommand.contains("com\\.android\\.sys"))
         assertTrue(frameworkCommand.contains("/data/adb/modules"))
         assertTrue(frameworkCommand.contains("zygisk"))

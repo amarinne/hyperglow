@@ -223,10 +223,10 @@
     <string name="diagnostic_description">Describe what happened</string>
     <string name="diagnostic_byte_count">%1$d/%2$d</string>
     <string name="diagnostic_guided_capture">Guided capture</string>
-    <string name="diagnostic_capture_active">Capture active. For the fullest report, restart System UI and reproduce the problem first — but Finish works right now too and still submits something useful.</string>
+    <string name="diagnostic_capture_active">Capture active. Restart System UI, reproduce until the failure is visible, then return here and finish immediately. Finishing now captures setup state but may miss the failure.</string>
     <string name="diagnostic_finish_capture">Finish capture</string>
     <string name="diagnostic_finishing">Finishing…</string>
-    <string name="diagnostic_capture_explanation">Temporarily captures filtered diagnostics. You can finish immediately or after reproducing the problem — either way produces a usable report. Root is checked when you finish.</string>
+    <string name="diagnostic_capture_explanation">Temporarily captures filtered diagnostics. Reproduce the problem before you finish to include failure evidence. Finishing immediately captures setup state only. Root is checked when you finish.</string>
     <string name="diagnostic_start_capture">Start capture</string>
     <string name="diagnostic_section_review">Review</string>
     <string name="diagnostic_preview_json">Report JSON</string>

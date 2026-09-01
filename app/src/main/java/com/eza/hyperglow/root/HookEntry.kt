@@ -2,10 +2,11 @@ package com.eza.hyperglow.root
 
 import android.app.Application
 import com.eza.hyperglow.BuildConfig
-import com.eza.hyperglow.root.aod.AodSurfaceHook
+import com.eza.hyperglow.root.aod.AodBrightnessHook
+import com.eza.hyperglow.root.aod.AodDisplayStateHook
 import com.eza.hyperglow.root.aod.AodLifetimeHook
 import com.eza.hyperglow.root.aod.AodPositionHook
-import com.eza.hyperglow.root.aod.AodDisplayStateHook
+import com.eza.hyperglow.root.aod.AodSurfaceHook
 import com.eza.hyperglow.root.aod.AodWakeBroker
 import com.eza.hyperglow.root.capability.XiaomiCapabilityResolver
 import com.eza.hyperglow.root.capability.missingProbeNames
@@ -99,6 +100,11 @@ class HookEntry : XposedModule() {
             HookLogger.w(TAG, "Default-loader AOD lifetime hook unavailable", error)
         }
         try {
+            AodBrightnessHook.install(this, param.defaultClassLoader)
+        } catch (error: Exception) {
+            HookLogger.w(TAG, "Default-loader AOD brightness hook unavailable", error)
+        }
+        try {
             AodPositionHook.install(this, param.defaultClassLoader)
         } catch (error: Exception) {
             HookLogger.w(TAG, "Default-loader AOD position hook unavailable", error)
@@ -140,6 +146,11 @@ class HookEntry : XposedModule() {
                 AodLifetimeHook.install(module, loader)
             } catch (error: Exception) {
                 HookLogger.w(TAG, "Dynamic-loader AOD lifetime hook failed", error)
+            }
+            try {
+                AodBrightnessHook.install(module, loader)
+            } catch (error: Exception) {
+                HookLogger.w(TAG, "Dynamic-loader AOD brightness hook failed", error)
             }
             try {
                 AodPositionHook.install(module, loader)
