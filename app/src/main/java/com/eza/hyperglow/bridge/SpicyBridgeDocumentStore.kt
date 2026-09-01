@@ -142,8 +142,8 @@ internal fun spicyBridgeDocumentTimingFault(
         if (row.startMs < 0L || row.endMs !in row.startMs..acceptedDurationMs) {
             return "row[$index] start=${row.startMs} end=${row.endMs} duration=$acceptedDurationMs"
         }
-        if (row.fillEndMs !in row.startMs..row.endMs) {
-            return "row[$index] fillEnd=${row.fillEndMs} window=${row.startMs}..${row.endMs}"
+        if (row.fillEndMs !in row.startMs..acceptedDurationMs) {
+            return "row[$index] fillEnd=${row.fillEndMs} duration=$acceptedDurationMs"
         }
         row.words.forEachIndexed { wordIndex, word ->
             if (word.startMs < 0L || word.endMs !in word.startMs..acceptedDurationMs) {

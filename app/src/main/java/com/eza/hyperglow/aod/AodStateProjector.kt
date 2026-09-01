@@ -85,6 +85,9 @@ internal fun projectToDisplay(
         )
     )
     val presentedRow = row.takeUnless { showLargeMetadata }
+    val rejectJapaneseReading = presentedRow?.let {
+        hasLanguageInconsistentKanaRuby(document, it.ruby.map { ruby -> ruby.reading })
+    } == true
     val original = when {
         showLargeMetadata -> metadata
         unsynced || noLyrics -> "♪"
@@ -93,10 +96,10 @@ internal fun projectToDisplay(
         fallbackLine != null -> fallbackLine
         else -> "♪"
     }
-    val romanized = if (showLargeMetadata || unsynced || noLyrics) "" else
-        (presentedRow?.romanized ?: state.romanizedLine.takeIf { document == null }).orEmpty()
+    val romanized = if (showLargeMetadata || unsynced || noLyrics || rejectJapaneseReading) "" else
+        presentedRow?.romanized.orEmpty()
     val translated = if (showLargeMetadata || unsynced || noLyrics) "" else
-        (presentedRow?.translated ?: state.translatedLine.takeIf { it.isNotBlank() }).orEmpty()
+        presentedRow?.translated.orEmpty()
     val persistentKeepAlive = AodProjectionEngine.shouldKeepAodAlive(
         playing = state.playing,
         aodEnabled = context.aodEnabled,
@@ -136,7 +139,7 @@ internal fun projectToDisplay(
         lineLevelSync = document != null && presentedRow != null &&
             AodProjectionEngine.isEffectiveLineLevelSync(document.type, presentedRow.words.size),
         lineStartMs = presentedRow?.startMs ?: 0L,
-        lineEndMs = presentedRow?.fillEndMs ?: 0L,
+        lineEndMs = presentedRow?.let { minOf(it.fillEndMs, it.endMs) } ?: 0L,
         durationMs = state.durationMs,
         positionMs = position,
         sampledAtElapsedMs = context.nowElapsedMs,
@@ -144,7 +147,7 @@ internal fun projectToDisplay(
         words = presentedRow?.words.orEmpty().map {
             AodDisplayWord(
                 it.text,
-                it.romanized,
+                if (rejectJapaneseReading) "" else it.romanized,
                 it.startMs,
                 it.endMs,
                 it.boundaryAfter,
@@ -152,7 +155,10 @@ internal fun projectToDisplay(
                 it.sourceEnd
             )
         },
-        ruby = presentedRow?.ruby.orEmpty().map { AodDisplayRuby(it.start, it.end, it.reading) },
+        ruby = presentedRow?.ruby.orEmpty()
+            .takeUnless { rejectJapaneseReading }
+            .orEmpty()
+            .map { AodDisplayRuby(it.start, it.end, it.reading) },
         layoutGroups = presentedRow?.layoutGroups.orEmpty().map {
             AodDisplayLayoutGroup(it.start, it.end, it.kind, it.keepTogether, it.confidence)
         },
@@ -172,3 +178,17 @@ internal fun projectToDisplay(
         adaptiveSectioning = prefs.adaptiveSectioning
     )
 }
+
+internal fun hasLanguageInconsistentKanaRuby(
+    document: SpicyBridgeDocument?,
+    rubyReadings: List<String>
+): Boolean {
+    val language = document?.language
+        ?.substringBefore('-')
+        ?.substringBefore('_')
+    if (!language.equals("zh", ignoreCase = true)) return false
+    return rubyReadings.any { reading -> reading.any(::isKana) }
+}
+
+private fun isKana(character: Char): Boolean =
+    character in '\u3040'..'\u30ff' || character in '\uff66'..'\uff9f'

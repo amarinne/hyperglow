@@ -1,8 +1,10 @@
 package com.eza.hyperglow.aod
 
 import com.eza.hyperglow.bridge.SpicyBridgeDocument
+import com.eza.hyperglow.bridge.SpicyBridgeRuby
 import com.eza.hyperglow.bridge.SpicyBridgeRow
 import com.eza.hyperglow.bridge.SpicyBridgeState
+import com.eza.hyperglow.bridge.SpicyBridgeWord
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -31,6 +33,20 @@ class AodStateProjectorTest {
     }
 
     @Test
+    fun fillEndPastActiveWindowIsClampedForRendering() {
+        val source = document("Line")
+        val row = source.rows.single().copy(endMs = 800L, fillEndMs = 900L)
+
+        val projected = project(
+            state(),
+            source.copy(rows = listOf(row)),
+            positionMs = 500L
+        )
+
+        assertEquals(800L, projected.lineEndMs)
+    }
+
+    @Test
     fun aiDerivedWholeLineTextPublishedInTheDocumentReachesBothSecondaryRows() {
         val source = document("Line")
         val row = source.rows.single().copy(
@@ -52,7 +68,7 @@ class AodStateProjectorTest {
     }
 
     @Test
-    fun providerFallbackCarriesAiDerivedActiveLineWithoutADocument() {
+    fun stateFallbackWithoutDocumentCarriesOnlyOriginalLyric() {
         val projected = project(
             state().copy(
                 line = "line",
@@ -63,8 +79,40 @@ class AodStateProjectorTest {
             positionMs = 500L
         )
 
-        assertEquals("AI pronunciation", projected.romanized)
-        assertEquals("AI translation", projected.translated)
+        assertEquals("", projected.romanized)
+        assertEquals("", projected.translated)
+        assertEquals("line", projected.original)
+    }
+
+    @Test
+    fun chineseDocumentRejectsJapaneseRubyAndRomaji() {
+        val source = document("Line", language = "zh-Hant")
+        val row = source.rows.single().copy(
+            text = "眼神中飄移總是在",
+            romanized = "me jinnaka hyou utsuri sou ze zai",
+            words = listOf(
+                SpicyBridgeWord("眼神中", "me jinnaka", 0L, 400L, true),
+                SpicyBridgeWord("飄移總是在", "hyou utsuri sou ze zai", 400L, 900L, true)
+            ),
+            ruby = listOf(SpicyBridgeRuby(0, 3, "め じんなか"))
+        )
+
+        val projected = project(
+            state(),
+            source.copy(rows = listOf(row)),
+            positionMs = 500L
+        )
+
+        assertEquals("眼神中飄移總是在", projected.original)
+        assertEquals("", projected.romanized)
+        assertTrue(projected.words.all { it.romanized.isEmpty() })
+        assertTrue(projected.ruby.isEmpty())
+    }
+
+    @Test
+    fun validChinesePinyinAndJapaneseRubyRemainAvailable() {
+        assertFalse(hasLanguageInconsistentKanaRuby(document("Line", "zh-CN"), emptyList()))
+        assertFalse(hasLanguageInconsistentKanaRuby(document("Line", "ja"), listOf("めじん")))
     }
 
     @Test
@@ -218,12 +266,12 @@ class AodStateProjectorTest {
         powerSessionPolicy = powerSessionPolicy
     )
 
-    private fun document(type: String) = SpicyBridgeDocument(
+    private fun document(type: String, language: String = "en") = SpicyBridgeDocument(
         producerId = "producer",
         generation = 7,
         trackUri = "spotify:track:test",
         provider = "test",
-        language = "en",
+        language = language,
         type = type,
         durationMs = 1_000L,
         processingVersion = 1,

@@ -19,6 +19,15 @@ contract. This spec defines surface visibility, privacy, continuity, customizati
   discarded only when it carries the same displayed text. The same sequence with revised title,
   artist, lyric, transliteration, or translation is a correction — the producer reprocessed the
   playing song — and replaces the held state, so text cannot outlive the setting that produced it.
+- Transliteration, translation, timed reading fragments, and ruby come only from the current matching
+  producer document. Scalar state may keep the original lyric visible before that document arrives,
+  but it never supplies or synthesizes an auxiliary line.
+- A Chinese document carrying kana ruby is language-inconsistent producer data. Projection keeps the
+  original lyric and rejects that row's ruby, whole-line reading, and timed reading fragments. It
+  does not classify the lyric again or synthesize a replacement reading.
+- A row fill end must remain inside the track duration. A producer fill end past that row's active
+  window is clamped to the active end for rendering; this bounded mismatch does not discard the
+  otherwise valid timed document or release keepalive.
 - State/configuration carry the app user ID; a SystemUI user switch clears/rebinds and rejects the
   previous user's cached payload.
 - AOD keepalive and lockscreen screen-on policy remain independent. Neither can activate from the

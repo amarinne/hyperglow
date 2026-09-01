@@ -251,11 +251,15 @@ class SpicyBridgeDocumentTest {
     }
 
     @Test
-    fun malformedIntervalsFailClosed() {
-        assertFalse(isValidSpicyBridgeDocumentTiming(
+    fun fillEndPastRowWindowButInsideTrackRemainsValid() {
+        assertTrue(isValidSpicyBridgeDocumentTiming(
             document(listOf(row("LEAD", 1_000, 2_800, "line").copy(fillEndMs = 2_900))),
             acceptedDurationMs = 3_000
         ))
+    }
+
+    @Test
+    fun malformedWordIntervalFailsClosed() {
         assertFalse(isValidSpicyBridgeDocumentTiming(
             document(listOf(row("LEAD", 1_000, 3_000, "line").copy(
                 words = listOf(SpicyBridgeWord("word", "", 2_500, 2_400, false))
@@ -271,6 +275,15 @@ class SpicyBridgeDocumentTest {
         ))
 
         assertTrue(isValidSpicyBridgeDocumentTiming(document, acceptedDurationMs = 3_000))
+    }
+
+    @Test
+    fun fillEndPastTrackDurationStillFailsClosed() {
+        val document = document(listOf(
+            row("BACKGROUND", 1_000, 2_800, "line").copy(fillEndMs = 3_001)
+        ))
+
+        assertFalse(isValidSpicyBridgeDocumentTiming(document, acceptedDurationMs = 3_000))
     }
 
     @Test
