@@ -65,7 +65,9 @@ internal object RuntimeCustomization {
             pauseLingerMs = preferences.pauseLingerMs,
             lockscreenKeepAwake = preferences.lockscreenKeepAwake,
             raiseToAod = preferences.raiseToAod,
-            suppressLockscreenEditorLongPress = preferences.suppressLockscreenEditorLongPress
+            suppressLockscreenEditorLongPress = preferences.suppressLockscreenEditorLongPress,
+            aodBrightnessOverride = preferences.aodBrightnessOverride,
+            aodBrightnessLevel = preferences.aodBrightnessLevel
         )
     }
 
@@ -75,14 +77,18 @@ internal object RuntimeCustomization {
         pauseLingerMs: Long = 5_000L,
         lockscreenKeepAwake: Boolean = false,
         raiseToAod: Boolean = false,
-        suppressLockscreenEditorLongPress: Boolean = false
+        suppressLockscreenEditorLongPress: Boolean = false,
+        aodBrightnessOverride: Boolean = false,
+        aodBrightnessLevel: Int = 255
     ): CompiledCustomization = withDiagnosticLogging(
         SceneCompiler.compile(document),
         diagnosticLogging,
         pauseLingerMs = pauseLingerMs,
         lockscreenKeepAwake = lockscreenKeepAwake,
         raiseToAod = raiseToAod,
-        suppressLockscreenEditorLongPress = suppressLockscreenEditorLongPress
+        suppressLockscreenEditorLongPress = suppressLockscreenEditorLongPress,
+        aodBrightnessOverride = aodBrightnessOverride,
+        aodBrightnessLevel = aodBrightnessLevel
     )
 
     internal fun withDiagnosticLogging(
@@ -93,7 +99,9 @@ internal object RuntimeCustomization {
         lockscreenKeepAwake: Boolean = configuration.lockscreenKeepAwake,
         raiseToAod: Boolean = configuration.raiseToAod,
         suppressLockscreenEditorLongPress: Boolean =
-            configuration.suppressLockscreenEditorLongPress
+            configuration.suppressLockscreenEditorLongPress,
+        aodBrightnessOverride: Boolean = configuration.aodBrightnessOverride,
+        aodBrightnessLevel: Int = configuration.aodBrightnessLevel
     ): CompiledCustomization = requireNotNull(
         SceneCompiler.finalizeCompiled(
             configuration.copy(
@@ -106,7 +114,9 @@ internal object RuntimeCustomization {
                 pauseLingerMs = com.eza.hyperglow.aod.normalizePauseLingerMs(pauseLingerMs),
                 lockscreenKeepAwake = lockscreenKeepAwake,
                 raiseToAod = raiseToAod,
-                suppressLockscreenEditorLongPress = suppressLockscreenEditorLongPress
+                suppressLockscreenEditorLongPress = suppressLockscreenEditorLongPress,
+                aodBrightnessOverride = aodBrightnessOverride,
+                aodBrightnessLevel = aodBrightnessLevel.coerceIn(10, 255)
             )
         )
     )

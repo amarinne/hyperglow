@@ -28,6 +28,58 @@ contract. This spec defines surface visibility, privacy, continuity, customizati
 - A row fill end must remain inside the track duration. A producer fill end past that row's active
   window is clamped to the active end for rendering; this bounded mismatch does not discard the
   otherwise valid timed document or release keepalive.
+- Overlapping sung lines (duet/layered rows whose timings overlap the playhead) render together on
+  AOD: the primary plus the latest-started overlap, at most two lines, each with its own word
+  timing, readings, and secondary rows, stacked as same-size sections of the canvas. A line stays
+  visible until its own end instead of being cut off when the next line starts. Sections form one
+  connected stack in positional slots: a continuing line keeps its slot and never moves between
+  sections, a newcomer inherits the vacated slot instead of appending, and a full swap keeps
+  current order. A lone line that never joined a chain centers as before; a chain survivor holds
+  its position instead of recentering, and the block fades out as a unit when the chain ends. Slot
+  anchors reset on track, metadata, or frame changes. The anchored block is clamped into the
+  lyric area as a whole, so a tall newcomer lands in the freed slot instead of running
+  off-screen; the survivor moves only when clipping is otherwise unavoidable. An overlap with
+  less than a second of singing left never joins, so a dying tail cannot flicker a two-line
+  section into existence. An ended overlap waits for the survivor instead of vanishing mid-duet,
+  so both fade out together, and a new overlap takes its slot on arrival. While the primary is
+  solo, its earliest substantial future overlap pre-joins as an invisible placeholder: it
+  reserves layout, shrink, and slot space but draws nothing until its window starts, so the
+  join itself moves and resizes nothing. Second-line joins, leaves, and replacements dissolve
+  like primary changes. Line changes
+  involving both sections dissolve in place without the opposing enter/exit slide. The exit
+  side renders muted (no glow, bounce, or sweep styling) so overlapping time-driven effects
+   cannot double into a brightness flash; word states and fills cross over normally. All sections
+   draw at one shared scale sized by the combined stack against the whole lyric area — sections
+   keep matching glyph sizes, nobody shrinks unless the combined content exceeds the canvas, and
+   a lone section is the degenerate case of the same formula. The shared duet fit is exact with a
+   deep 0.3 absolute floor; below that floor the stack still overflows and the bottom rows clip,
+   so the floor does not guarantee containment. Solo overflow keeps the legacy half-size floor
+   and clamp before clipping. Fit is a uniform draw transform, never re-wrapped text: laid-out
+   sentences keep their line
+   breaks while sections scale, so a line that needs one line stays one line the whole way.
+   Anchors survive metadata on/off publication and orientation-scale changes; only a track,
+   orientation-step, or alignment change resets them, and a frame-size publication that leaves
+   the logical frame unchanged rebuilds without clearing. Frozen breaks are stored only after
+   the minimal-count-first wrap policy produces them, and a freeze inherited from a smaller
+   frame is repaired once by re-wrapping; adjacency is chained in drawn space
+   (drawnTop(i+1) == drawnBottom(i)) so per-section fit never leaves an internal gap.
+   Unwrap-on-floor is a landscape-only presentation upgrade: a landscape section drawn below
+   full size re-presents one line per row when the single-line form stays within 0.15 scale of
+   the wrapped form; the decision freezes at the section's anchor commit and is re-evaluated
+   once per section-count change; portrait keeps the wrapped stack. The AOD canvas default
+   height is 75% of the AOD root (owner-trim via the Canvas height setting, safe-region clamped;
+   v1 customization documents migrate their implicit 0.42 AOD height to 0.75, explicit choices
+   are preserved). Landscape anchored sections keep one pinyin/translation line each
+   so typical pairs fit without shrinking anyone; genuinely long readings keep two lines
+   instead of clipping, and fresh solos and portrait keep legacy multi-line secondaries. Wrap-mode paint sizes are fixed per surface rather than bucketed
+  by line length, so a new primary never reflows settled sections; single-line Clip keeps
+  length buckets so long lines shrink toward fitting. Each line's breaks freeze at its first layout and are reused with
+  freshly measured widths and current words, so lane refinements never restructure the sentence
+  while karaoke fill stays accurate; corrected text re-lays out once.
+  The overlap is AOD-only; the lockscreen card always renders the primary alone. The primary keeps
+  line identity, transitions, keepalive, and lockscreen output; the overlap joins and leaves
+  without its own transition. Instrumental-gap rows never join a lyric scene. Bodies before v9
+  render solo.
 - State/configuration carry the app user ID; a SystemUI user switch clears/rebinds and rejects the
   previous user's cached payload.
 - AOD keepalive and lockscreen screen-on policy remain independent. Neither can activate from the
@@ -110,6 +162,8 @@ reserved only during an active linkage transition; stable stale rows are ignored
 measured native notification block inside the remaining bottom-safe region. Native notification top
 padding, translation, animation, measurement, and scrolling are never modified. Optional rows hide
 first, lyrics shrink to the bounded minimum, and insufficient/unknown geometry fails closed.
+Imported lockscreen overlap policies normalize to `avoid`; only `hide_scene` remains an alternative.
+This guarantee is enforced by both compilation and SystemUI validation.
 
 ## AOD visibility and lifetime
 
@@ -131,6 +185,35 @@ first, lyrics shrink to the bounded minimum, and insufficient/unknown geometry f
   leaves native-content translation to Xiaomi while HyperGlow observes the exact target and keeps
   the lyric canvas clear. Fixed and moving choices make HyperGlow the translation authority for the
   same clock-or-image container with the selected pattern.
+- `Hide stock clock and image` suppresses Xiaomi's native clock-or-image container (`GONE`) only
+  while a lyric scene renders, freeing the full screen as canvas. Suppression is enforced at the
+  `View.setVisibility` seam, so Xiaomi show paths cannot re-show the container mid-session; every
+  exit path — hide, detach, stale, disable, setting off — restores its exact prior visibility.
+  Managed translation ownership stays off while suppressed and position callbacks pass through to
+  Xiaomi untouched.
+- `Canvas orientation` is gated behind the hide toggle. Portrait holds the normal full-screen
+  portrait frame. Landscape holds the logical long-axis frame without registering the sensor. Auto
+  follows the device: after the settle delay the canvas fades out, layout re-runs in the logical
+  long-axis frame for side steps (portrait frame otherwise), the text re-wraps to the long axis and
+  one rigid draw transform maps that frame exactly onto the fullscreen portrait view, and the canvas
+  fades back in — so longer lines survive with no clipping and no oversized child. The free
+  display-rotation signal is preferred; the accelerometer is the fallback with a configurable hold
+  debounce, and flat or ambiguous readings hold the current step. A framework portrait report never
+  overrides a sensor-held side step, and an applied framework step rebases the sensor debounce so
+  it re-decides ground truth instead of sticking. The sensor registers only while an
+  auto suppressed scene renders and unregisters on hide, detach, disable, or reload.
+- `Rotation settle delay` bounds that debounce to Instant, 0.5, 1, 2, 5, or 10 seconds
+  (1 second default) so shaking the phone cannot spam orientation transitions. Instant still
+  requires two consistent samples.
+- `Canvas position` is a free 0–100% vertical anchor for the full-screen canvas, applied as a
+  bounded internal layout shift with no layout loop. It positions a lone lyric block; pinned duet
+  sections ignore it. It has no effect outside suppression.
+- Landscape carries its own anchor and text size (50–200%). Canvas padding is per orientation
+  and per axis in percent of the logical frame (0–20%, 1% slider steps): each of portrait and
+  landscape has its own horizontal/vertical pair, so landscape can carry extra padding to clear
+  the camera cutout while portrait stays tight. Side steps keep the same fullscreen portrait
+  bounds while the anchor positions the block inside the logical landscape frame and the scale
+  re-wraps text to the long axis.
 - Xiaomi movement callbacks remain observed so its latest natural target is cached, but their
   translation is suppressed during module ownership. The default `static_bottom` pattern moves the
   native clock-or-image container to the verified bottom zone once and holds it there while lyrics
@@ -233,6 +316,11 @@ first, lyrics shrink to the bounded minimum, and insufficient/unknown geometry f
   pause authoritative. Guard activation and release re-submit Xiaomi's last raw request through the
   stock adapter, so Xiaomi keeps its native brightness timeout behavior and regains control on the
   stock adapter's normal delay when lyric keepalive ends.
+- Optional manual AOD brightness uses a bounded raw level from 10 to 255 and defaults off. It
+  replaces positive requests only while the same validated guard is active in exact `DOZE_AOD`.
+  All zero, pause, off and inactive states keep the pass-through behavior above. Disabling manual
+  brightness restores the existing readability clamp; it does not disable that default policy.
+  Changes re-submit the last raw request through the existing adapter without new hooks.
 - A transient hidden edge explicitly marked as Spotify still playing starts a bounded 30-second
   power grace after any snapshot carrying validated keepalive intent. Timed lyrics and untimed
   sessions held by `Also keep AOD active without timed lyrics` are equally eligible; lyric timing is
@@ -353,9 +441,14 @@ first, lyrics shrink to the bounded minimum, and insufficient/unknown geometry f
   whole-block option alone preserves the current simultaneous sweep across all visible lyric rows and
   must not normalize to main-only. Each surface profile independently selects bright or dimmed
   secondary-text presentation. Word/syllable-level synchronization is unchanged.
-- Main lyrics accept a per-surface wrap limit of 1, 2, 3, 4, 5, or no user limit. Text size up to 200%
+- Main lyrics accept a per-surface wrap limit of 1, 2, 3, 4, 5, or no user limit. Text size up to 300%
   must use the selected limit rather than the old fixed three-line ceiling. Safe-area geometry,
   optional-row removal, bounded minimum size, and fail-closed placement remain authoritative.
+- Per-surface lyric and song information colors accept a small built-in preset set or validated
+  opaque `#RRGGBB` values. Invalid values cannot reach Android color parsing. Independent color
+  choices do not alter text timing, placement, or the shared lyric source.
+- Lockscreen card color and opacity are independent. Existing profiles retain charcoal at 217/255
+  opacity. Turning the card off hides its controls without discarding its saved appearance.
 - Each surface profile stores metadata size from 50% to 200% and ruby-reading visibility. Ruby is
   shown by default and, when disabled, reserves no drawing or layout height.
 - During the generation-bound song intro, matching one-line title/artist text suppresses the duplicate
@@ -364,7 +457,8 @@ first, lyrics shrink to the bounded minimum, and insufficient/unknown geometry f
   the keepalive brightness policy, or placement authority.
 - Imported data cannot name classes, resources, methods, paths, URLs, commands, or external bitmap
   sources.
-- Reset restores the built-in safe profile.
+- Per-surface reset restores built-in appearance and that surface's behavior defaults. It preserves
+  the enable switch, other surface, shared pause timer, and shared handoff duration.
 
 Enabled fixed registry:
 
@@ -432,6 +526,7 @@ VIDEO_DEPTH
 ```
 
 Matching includes SystemUI/AOD package versions and exact required symbol signatures. Unknown or
-missing symbols disable only dependent behavior. Stock UI is never hidden, replaced, reparented,
-remeasured, or restyled. Clock translation control is allowed only by the verified AOD scene policy
-above and must fail back to Xiaomi's original target.
+missing symbols disable only dependent behavior. Stock UI is never replaced, reparented,
+remeasured, or restyled. Only the explicit `Hide stock clock and image` setting hides Xiaomi's
+AOD clock-or-image container, and only while lyrics render. Clock translation control is allowed
+only by the verified AOD scene policy above and must fail back to Xiaomi's original target.

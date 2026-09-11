@@ -10,6 +10,7 @@ class ConfigBackupCodecTest {
     private fun nonDefaultPreferences() = AodRenderConfig(
         aodEnabled = false,
         lockscreenEnabled = true,
+        seamlessTransitionEnabled = false,
         alignment = "end",
         secondaryMode = "Both",
         overflowMode = "Clip",
@@ -34,7 +35,9 @@ class ConfigBackupCodecTest {
         suppressLockscreenEditorLongPress = true,
         songChangeInfoEnabled = false,
         hideLauncherIcon = true,
-        hideFromRecents = true
+        hideFromRecents = true,
+        aodBrightnessOverride = true,
+        aodBrightnessLevel = 73
     )
 
     @Test

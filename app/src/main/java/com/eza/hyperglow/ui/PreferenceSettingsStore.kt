@@ -50,6 +50,7 @@ internal class PreferenceSettingsStore(
                 val editor = context.getSharedPreferences(AodRenderPreferences.PREFS, 0).edit()
                 ConfigBackupCodec.booleanFields.forEach { editor.putBoolean(it.key, it.read(config)) }
                 ConfigBackupCodec.intFields.forEach { editor.putInt(it.key, it.read(config)) }
+                ConfigBackupCodec.floatFields.forEach { editor.putFloat(it.key, it.read(config)) }
                 ConfigBackupCodec.longFields.forEach { editor.putLong(it.key, it.read(config)) }
                 ConfigBackupCodec.stringFields.forEach { editor.putString(it.key, it.read(config)) }
                 editor.commit()
@@ -103,7 +104,9 @@ internal class PreferenceSettingsStore(
                         lockscreenKeepAwake = config.lockscreenKeepAwake,
                         raiseToAod = config.raiseToAod,
                         suppressLockscreenEditorLongPress =
-                            config.suppressLockscreenEditorLongPress
+                            config.suppressLockscreenEditorLongPress,
+                        aodBrightnessOverride = config.aodBrightnessOverride,
+                        aodBrightnessLevel = config.aodBrightnessLevel
                     ),
                     currentProcessUserId()
                 )

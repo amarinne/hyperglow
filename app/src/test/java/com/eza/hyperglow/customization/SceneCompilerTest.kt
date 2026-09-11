@@ -18,6 +18,17 @@ import org.junit.Test
 
 class SceneCompilerTest {
     @Test
+    fun lockscreenOverlapChoicesNormalizeToSafePlacement() {
+        for (legacy in listOf("behind_system", "hide_optional", "unknown")) {
+            val document = SceneCompiler.safeDefaultDocument()
+            val compiled = SceneCompiler.compile(document.copy(profiles = document.profiles +
+                (SceneCompiler.SURFACE_LOCKSCREEN to SceneCompiler.safeLockscreenProfile().copy(
+                    collisionPolicy = legacy))))
+            assertEquals("avoid", compiled.profiles.getValue(SceneCompiler.SURFACE_LOCKSCREEN).collisionPolicy)
+        }
+    }
+
+    @Test
     fun safeDefaultsUseLyricsOnlySpotifyMainLineSweep() {
         val compiled = SceneCompiler.compile(SceneCompiler.safeDefaultDocument())
         val lockscreen = compiled.profiles.getValue(SceneCompiler.SURFACE_LOCKSCREEN)
@@ -31,6 +42,53 @@ class SceneCompilerTest {
             assertEquals("spotify", profile.fontFamily)
             assertEquals("Left to right (main only)", profile.lineSyncFillMode)
         }
+    }
+
+    @Test
+    fun versionOneDocumentsMigrateImplicitAodCanvasHeightToNewDefault() {
+        // v1 documents predate the canvas-height setting: the AOD 0.42 is the
+        // old implicit default, so it moves to the advised default. The
+        // lockscreen keeps its own default, and explicit non-default
+        // selections are preserved.
+        val v1 = SceneCompiler.safeDefaultDocument().copy(
+            version = 1,
+            profiles = linkedMapOf(
+                SceneCompiler.SURFACE_LOCKSCREEN to SurfaceProfile(maxHeightFraction = 0.42f),
+                SceneCompiler.SURFACE_AOD to SurfaceProfile(maxHeightFraction = 0.42f)
+            )
+        )
+        val migrated = CustomizationRepository.canonicalizeDocument(v1)!!
+
+        assertEquals(2, migrated.version)
+        assertEquals(
+            0.75f,
+            migrated.profiles.getValue(SceneCompiler.SURFACE_AOD).maxHeightFraction
+        )
+        assertEquals(
+            0.42f,
+            migrated.profiles.getValue(SceneCompiler.SURFACE_LOCKSCREEN).maxHeightFraction
+        )
+
+        // Explicit selections survive the migration untouched.
+        val explicit = CustomizationRepository.canonicalizeDocument(
+            v1.copy(
+                profiles = linkedMapOf(
+                    SceneCompiler.SURFACE_AOD to SurfaceProfile(maxHeightFraction = 0.25f)
+                )
+            )
+        )!!
+        assertEquals(0.25f, explicit.profiles.getValue(SceneCompiler.SURFACE_AOD).maxHeightFraction)
+
+        // Version 2 documents carry explicit values: even 0.42 is a choice.
+        val explicitV2 = CustomizationRepository.canonicalizeDocument(
+            SceneCompiler.safeDefaultDocument().copy(
+                version = 2,
+                profiles = linkedMapOf(
+                    SceneCompiler.SURFACE_AOD to SurfaceProfile(maxHeightFraction = 0.42f)
+                )
+            )
+        )!!
+        assertEquals(0.42f, explicitV2.profiles.getValue(SceneCompiler.SURFACE_AOD).maxHeightFraction)
     }
 
     @Test
@@ -55,6 +113,7 @@ class SceneCompilerTest {
         assertFalse(aod.metadataVisible)
         assertEquals("Bold", aod.weight)
         assertEquals("spotify", aod.fontFamily)
+        assertEquals(0.75f, aod.maxHeightFraction)
     }
 
     @Test
@@ -89,7 +148,7 @@ class SceneCompilerTest {
             CustomizationDocument(
                 profiles = mapOf(
                     SceneCompiler.SURFACE_AOD to SurfaceProfile(
-                        maxHeightFraction = 0.9f,
+                        maxHeightFraction = 0.95f,
                         widgets = widgets,
                         transition = TransitionPreset(durationMs = 5_000)
                     )
@@ -97,7 +156,7 @@ class SceneCompilerTest {
             )
         ).profiles.getValue(SceneCompiler.SURFACE_AOD)
 
-        assertEquals(0.5f, compiled.maxHeightFraction)
+        assertEquals(0.9f, compiled.maxHeightFraction)
         assertTrue(compiled.widgets.size <= SceneCompiler.MAX_AOD_WIDGETS)
         assertFalse(compiled.widgets.any { it.type == "media_progress" })
         assertEquals(600, compiled.transition.durationMs)
@@ -110,6 +169,8 @@ class SceneCompilerTest {
                 profiles = mapOf(
                     SceneCompiler.SURFACE_AOD to SurfaceProfile(
                         metadataSizePercent = 900,
+                        textSize = "custom",
+                        textSizeCustom = 900,
                         rubyVisible = false
                     )
                 )
@@ -119,7 +180,27 @@ class SceneCompilerTest {
             .profiles.getValue(SceneCompiler.SURFACE_AOD)
 
         assertEquals(200, validated.metadataSizePercent)
+        assertEquals(MAX_LYRIC_TEXT_SIZE_PERCENT, validated.textSizeCustom)
         assertFalse(validated.rubyVisible)
+    }
+
+    @Test
+    fun lyricTextSizeAllowsTheEditorThreeHundredPercentUpperBound() {
+        val compiled = SceneCompiler.compile(
+            CustomizationDocument(
+                profiles = mapOf(
+                    SceneCompiler.SURFACE_AOD to SurfaceProfile(
+                        textSize = "custom",
+                        textSizeCustom = 900
+                    )
+                )
+            )
+        )
+
+        assertEquals(
+            MAX_LYRIC_TEXT_SIZE_PERCENT,
+            compiled.profiles.getValue(SceneCompiler.SURFACE_AOD).textSizeCustom
+        )
     }
 
     @Test
@@ -332,7 +413,7 @@ class SceneCompilerTest {
         )!!.profiles.getValue(SceneCompiler.SURFACE_AOD)
 
         assertEquals(listOf("lyrics"), validated.widgets.map { it.type })
-        assertEquals(0.5f, validated.maxHeightFraction)
+        assertEquals(0.9f, validated.maxHeightFraction)
         assertNotNull(WidgetRendererRegistry.renderer("lyrics"))
         assertNull(WidgetRendererRegistry.renderer("arbitrary_class"))
     }
@@ -359,6 +440,57 @@ class SceneCompilerTest {
             validated.profiles.getValue(SceneCompiler.SURFACE_AOD).palette["primaryText"]
         )
         assertNotEquals(compiled.hash, validated.hash)
+    }
+
+    @Test
+    fun appearancePaletteAndCardValuesCompileAndRoundTripWithSafeBounds() {
+        val source = CustomizationDocument(
+            profiles = mapOf(
+                SceneCompiler.SURFACE_LOCKSCREEN to SurfaceProfile(
+                    backgroundStyle = "card",
+                    cardColor = "#151519",
+                    cardAlpha = 1.5f,
+                    palette = mapOf(
+                        "primaryText" to "lavender",
+                        "sungText" to "#62D891",
+                        "metadataText" to "#9998A4",
+                        "surfaceScrim" to "not-a-color"
+                    )
+                )
+            )
+        )
+
+        val compiled = SceneCompiler.compile(source)
+        val lockscreen = compiled.profiles.getValue(SceneCompiler.SURFACE_LOCKSCREEN)
+        assertEquals("#151519", lockscreen.cardColor)
+        assertEquals(1f, lockscreen.cardAlpha)
+        assertEquals("lavender", lockscreen.palette["primaryText"])
+        assertEquals("#62D891", lockscreen.palette["sungText"])
+        assertEquals("#9998A4", lockscreen.palette["metadataText"])
+        assertFalse(lockscreen.palette.containsKey("surfaceScrim"))
+
+        val roundTrip = SceneCompiler.decodeDocument(
+            SceneCompiler.json.encodeToString(source)
+        )!!
+        assertEquals("#151519", roundTrip.profiles
+            .getValue(SceneCompiler.SURFACE_LOCKSCREEN).cardColor)
+        assertEquals("#9998A4", roundTrip.profiles
+            .getValue(SceneCompiler.SURFACE_LOCKSCREEN).palette["metadataText"])
+
+        val invalid = SceneCompiler.compile(
+            CustomizationDocument(
+                profiles = mapOf(
+                    SceneCompiler.SURFACE_LOCKSCREEN to SurfaceProfile(
+                        cardColor = "javascript:alert(1)",
+                        cardAlpha = Float.NaN,
+                        palette = mapOf("primaryText" to "#12345")
+                    )
+                )
+            )
+        ).profiles.getValue(SceneCompiler.SURFACE_LOCKSCREEN)
+        assertEquals(DEFAULT_CARD_COLOR, invalid.cardColor)
+        assertEquals(DEFAULT_CARD_ALPHA, invalid.cardAlpha)
+        assertTrue(invalid.palette.isEmpty())
     }
 
     @Test

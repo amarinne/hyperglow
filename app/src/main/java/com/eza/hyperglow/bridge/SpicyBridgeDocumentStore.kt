@@ -53,6 +53,16 @@ data class SpicyBridgeLayoutGroup(
     val confidence: Double
 )
 
+/** Sung lines kept on screen at once: the primary plus one overlapping line. */
+internal const val MAX_CONCURRENT_LYRIC_LINES = 2
+internal const val SPICY_ROW_ROLE_INTERLUDE = "INTERLUDE"
+/**
+ * Minimum shared window for a duet section. A companion whose overlap with
+ * the primary is shorter never joins, so a dying tail cannot flicker a
+ * two-line section into existence for a fraction of a second.
+ */
+internal const val MIN_CONCURRENT_OVERLAP_MS = 1_000L
+
 data class SpicyBridgeRow(
     val role: String,
     val startMs: Long,
@@ -84,17 +94,67 @@ data class SpicyBridgeDocument(
 
     fun primaryRowAt(positionMs: Long): SpicyBridgeRow? {
         var lead: SpicyBridgeRow? = null
-        var other: SpicyBridgeRow? = null
+        var sung: SpicyBridgeRow? = null
+        var interlude: SpicyBridgeRow? = null
         for (row in rows) {
             if (positionMs < row.startMs || positionMs >= row.endMs) continue
             if (row.role == "LEAD") {
                 if (lead == null || row.startMs >= lead.startMs) lead = row
-            } else if (other == null) {
-                other = row
+            } else if (row.role == SPICY_ROW_ROLE_INTERLUDE) {
+                // Keep an instrumental row as the fallback only. Producers can briefly overlap
+                // an interlude boundary with a BACKGROUND line; treating the first non-LEAD row
+                // as primary made that overlap look like a permanent instrumental scene.
+                if (interlude == null || row.startMs >= interlude.startMs) interlude = row
+            } else if (sung == null || row.startMs >= sung.startMs) {
+                sung = row
             }
         }
-        return lead ?: other
+        return lead ?: sung ?: interlude
     }
+
+    /**
+     * Other sung lines shown while [primary] shows: duet/layered rows whose
+     * shared window with the primary reaches [MIN_CONCURRENT_OVERLAP_MS].
+     * Instrumental-gap rows never join a lyric scene. A still-running overlap
+     * joins latest-started first, bounded so the canvas splits into at most
+     * [MAX_CONCURRENT_LYRIC_LINES] sections. Otherwise the most recently
+     * ended overlap waits for the survivor instead of vanishing mid-duet, so
+     * both fade out together. Otherwise, while the primary is solo, the
+     * earliest overlap starting inside its window pre-joins as an invisible
+     * placeholder, so the pair lays out at duet size before the first sung
+     * word and the join itself moves and resizes nothing.
+     */
+    fun concurrentRowsAt(positionMs: Long, primary: SpicyBridgeRow?): List<SpicyBridgeRow> {
+        if (primary == null || primary.role == SPICY_ROW_ROLE_INTERLUDE) return emptyList()
+        val covering = rows.asSequence()
+            .filter {
+                it !== primary && it.role != SPICY_ROW_ROLE_INTERLUDE &&
+                    positionMs >= it.startMs && positionMs < it.endMs &&
+                    overlapWith(primary, it) >= MIN_CONCURRENT_OVERLAP_MS
+            }
+            .sortedByDescending { it.startMs }
+            .take((MAX_CONCURRENT_LYRIC_LINES - 1).coerceAtLeast(0))
+            .toList()
+        if (covering.isNotEmpty()) return covering
+        rows.asSequence()
+            .filter {
+                it !== primary && it.role != SPICY_ROW_ROLE_INTERLUDE &&
+                    it.endMs <= positionMs && overlapWith(primary, it) >= MIN_CONCURRENT_OVERLAP_MS
+            }
+            .maxByOrNull { it.endMs }
+            ?.let { return listOf(it) }
+        return rows.asSequence()
+            .filter {
+                it !== primary && it.role != SPICY_ROW_ROLE_INTERLUDE &&
+                    it.startMs > positionMs && it.startMs < primary.endMs &&
+                    overlapWith(primary, it) >= MIN_CONCURRENT_OVERLAP_MS
+            }
+            .minByOrNull { it.startMs }
+            ?.let { listOf(it) } ?: emptyList()
+    }
+
+    private fun overlapWith(first: SpicyBridgeRow, second: SpicyBridgeRow): Long =
+        minOf(first.endMs, second.endMs) - maxOf(first.startMs, second.startMs)
 }
 /**
  * Which identity field stops a held document from belonging to the producer state, or null when it

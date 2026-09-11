@@ -38,8 +38,11 @@ data class SurfaceProfile(
     val lineSyncFillMode: String = "Left to right (main only)",
     val overflow: String = "Wrap",
     val adaptiveSectioning: Boolean = true,
+    val duetEnabled: Boolean = true,
     val palette: Map<String, String> = emptyMap(),
-    val backgroundStyle: String = "auto"
+    val backgroundStyle: String = "auto",
+    val cardColor: String = DEFAULT_CARD_COLOR,
+    val cardAlpha: Float = DEFAULT_CARD_ALPHA
 )
 
 @Serializable
@@ -69,7 +72,9 @@ data class CompiledCustomization(
     val diagnosticLogging: Boolean = false,
     val lockscreenKeepAwake: Boolean = false,
     val raiseToAod: Boolean = false,
-    val suppressLockscreenEditorLongPress: Boolean = false
+    val suppressLockscreenEditorLongPress: Boolean = false,
+    val aodBrightnessOverride: Boolean = false,
+    val aodBrightnessLevel: Int = 255
 )
 
 @Serializable
@@ -96,17 +101,71 @@ data class CompiledSurfaceProfile(
     val lineSyncFillMode: String,
     val overflow: String,
     val adaptiveSectioning: Boolean,
+    val duetEnabled: Boolean = true,
     val palette: Map<String, String>,
     val backgroundStyle: String = "none",
     val metadataSizePercent: Int = 100,
     val rubyVisible: Boolean = true,
     val secondaryTextBright: Boolean = true,
-    val lyricLineLimit: Int = DEFAULT_LYRIC_LINE_LIMIT
+    val lyricLineLimit: Int = DEFAULT_LYRIC_LINE_LIMIT,
+    val cardColor: String = DEFAULT_CARD_COLOR,
+    val cardAlpha: Float = DEFAULT_CARD_ALPHA
 )
 
-const val CURRENT_CUSTOMIZATION_VERSION = 1
+/** Canvas height before the setting existed: an implicit default, not a choice. */
+const val LEGACY_AOD_MAX_HEIGHT_FRACTION = 0.42f
+
+/** Advised AOD canvas height default: portrait duets fit near full size. */
+const val DEFAULT_AOD_MAX_HEIGHT_FRACTION = 0.75f
+
+const val CURRENT_CUSTOMIZATION_VERSION = 2
 const val DEFAULT_LYRIC_LINE_LIMIT = 3
 const val NO_LYRIC_LINE_LIMIT = 0
+/** Upper bound exposed by the appearance editor for custom lyric text size. */
+const val MAX_LYRIC_TEXT_SIZE_PERCENT = 300
+const val MIN_AOD_BRIGHTNESS = 10
+const val MAX_AOD_BRIGHTNESS = 255
+
+/** Existing lockscreen scrim: charcoal at 217/255 opacity. */
+const val DEFAULT_CARD_COLOR = "charcoal"
+const val DEFAULT_CARD_ALPHA = 0.8509804f
+
+/** Values accepted by the declarative appearance configuration. */
+internal val PALETTE_VALUES = setOf(
+    "default",
+    "clock",
+    "wallpaper",
+    "white",
+    "dimmed",
+    "lavender",
+    "mint"
+)
+
+/** Card presets stay deliberately small; custom colors use a validated RGB token. */
+internal val CARD_COLOR_VALUES = setOf("black", "charcoal", "deep_purple")
+
+internal fun normalizeHexColor(value: String): String? {
+    val trimmed = value.trim()
+    if (!trimmed.matches(Regex("#[0-9a-fA-F]{6}"))) return null
+    return trimmed.uppercase()
+}
+
+internal fun normalizePaletteValue(value: String): String? =
+    value.trim().lowercase().let { token ->
+        token.takeIf { it in PALETTE_VALUES } ?: normalizeHexColor(token)
+    }
+
+internal fun normalizeCardColor(value: String): String =
+    value.trim().lowercase().let { token ->
+        when {
+            token in CARD_COLOR_VALUES -> token
+            token == "deep purple" -> "deep_purple"
+            else -> normalizeHexColor(token) ?: DEFAULT_CARD_COLOR
+        }
+    }
+
+internal fun normalizeCardAlpha(value: Float): Float =
+    value.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: DEFAULT_CARD_ALPHA
 
 internal fun normalizeLyricLineLimit(value: Int): Int = when (value) {
     NO_LYRIC_LINE_LIMIT,

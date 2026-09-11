@@ -7,6 +7,7 @@ import com.eza.hyperglow.AppLog
 import com.eza.hyperglow.customization.CompiledCustomization
 import com.eza.hyperglow.root.customization.CompiledCustomizationBundleCodec
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 data class AodDisplayState(
     val visible: Boolean,
@@ -21,6 +22,18 @@ data class AodDisplayState(
     val positionFollowingEnabled: Boolean = false,
     val burnInPattern: String = "static_bottom",
     val burnInIntervalMs: Long = 60_000L,
+    val suppressStockAodContent: Boolean = false,
+    val aodRotateWithDevice: Boolean = false,
+    val aodRotationMode: String = AOD_ROTATION_MODE_PORTRAIT,
+    val aodCanvasAnchor: Float = 0.5f,
+    val aodRotationSettleMs: Long = 1_000L,
+    val aodCanvasAnchorLandscape: Float = 0.5f,
+    val aodLandscapeTextScale: Float = 1f,
+    val aodCanvasPaddingPortraitXPercent: Float = 2f,
+    val aodCanvasPaddingPortraitYPercent: Float = 2f,
+    val aodCanvasPaddingLandscapeXPercent: Float = 2f,
+    val aodCanvasPaddingLandscapeYPercent: Float = 2f,
+    val secondLine: AodDisplaySecondLine? = null,
     val wakeSignal: Long = 0L,
     val original: String = "",
     val romanized: String = "",
@@ -62,6 +75,22 @@ data class AodDisplayWord(
     val boundaryAfter: Boolean,
     val sourceStart: Int = -1,
     val sourceEnd: Int = -1
+)
+
+/**
+ * One overlapping sung line kept on screen next to the primary: same timed
+ * word data, own text/secondaries, own active window. Null renders solo.
+ */
+data class AodDisplaySecondLine(
+    val text: String = "",
+    val romanized: String = "",
+    val translated: String = "",
+    val alignedRight: Boolean = false,
+    val lineStartMs: Long = 0L,
+    val lineEndMs: Long = 0L,
+    val words: List<AodDisplayWord> = emptyList(),
+    val ruby: List<AodDisplayRuby> = emptyList(),
+    val layoutGroups: List<AodDisplayLayoutGroup> = emptyList()
 )
 
 data class AodDisplayRuby(val start: Int, val end: Int, val reading: String)
@@ -269,54 +298,118 @@ internal fun encodeNormalizedAodStatePublication(
     return AodStatePublication(deliveredMessage, envelope)
 }
 
+private fun normalizedDisplayWords(
+    words: List<AodDisplayWord>,
+    sourceTextLength: Int,
+    trimmedTextLength: Int,
+    trimOffset: Int,
+    maxWords: Int
+): List<AodDisplayWord> = words.asSequence()
+    .take(maxWords.coerceAtLeast(0))
+    .map { word ->
+        val range = trimAodSourceRange(
+            sourceTextLength = sourceTextLength,
+            trimmedTextLength = trimmedTextLength,
+            trimOffset = trimOffset,
+            start = word.sourceStart,
+            end = word.sourceEnd
+        )
+        val startMs = word.startMs.coerceAtLeast(0L)
+        word.copy(
+            text = word.text.takeUtf16Prefix(AodStateWireLimits.MAX_LYRIC_CHARS),
+            romanized = word.romanized.takeUtf16Prefix(AodStateWireLimits.MAX_LYRIC_CHARS),
+            startMs = startMs,
+            endMs = word.endMs.coerceAtLeast(startMs),
+            sourceStart = range.first,
+            sourceEnd = range.second
+        )
+    }
+    .toList()
+
+private fun normalizedDisplayRuby(
+    ruby: List<AodDisplayRuby>,
+    trimmedTextLength: Int,
+    trimOffset: Int,
+    maxRuby: Int
+): List<AodDisplayRuby> = ruby.asSequence()
+    .take(maxRuby.coerceAtLeast(0))
+    .mapNotNull { item ->
+        val start = (item.start - trimOffset).coerceAtLeast(0)
+        val end = (item.end - trimOffset).coerceAtMost(trimmedTextLength)
+        if (end <= start) null else item.copy(
+            start = start,
+            end = end,
+            reading = item.reading.takeUtf16Prefix(AodStateWireLimits.MAX_LYRIC_CHARS)
+        )
+    }
+    .toList()
+
+private fun normalizedDisplayLayoutGroups(
+    layoutGroups: List<AodDisplayLayoutGroup>,
+    trimmedTextLength: Int,
+    trimOffset: Int,
+    maxGroups: Int
+): List<AodDisplayLayoutGroup> = layoutGroups.asSequence()
+    .take(maxGroups.coerceAtLeast(0))
+    .mapNotNull { group ->
+        val start = (group.start - trimOffset).coerceAtLeast(0)
+        val end = (group.end - trimOffset).coerceAtMost(trimmedTextLength)
+        if (end <= start) null else group.copy(
+            start = start,
+            end = end,
+            kind = group.kind.takeUtf16Prefix(AodStateWireLimits.MAX_METADATA_CHARS)
+        )
+    }
+    .toList()
+
 internal fun normalizeAodDisplayState(state: AodDisplayState): AodDisplayState {
     val original = state.original.trim().takeUtf16Prefix(AodStateWireLimits.MAX_LYRIC_CHARS)
     val trimOffset = state.original.length - state.original.trimStart().length
-    val words = state.words.asSequence()
-        .take(AodStateWireLimits.MAX_WORDS)
-        .map { word ->
-            val range = trimAodSourceRange(
-                sourceTextLength = state.original.length,
-                trimmedTextLength = original.length,
-                trimOffset = trimOffset,
-                start = word.sourceStart,
-                end = word.sourceEnd
+    val words = normalizedDisplayWords(
+        state.words, state.original.length, original.length, trimOffset,
+        AodStateWireLimits.MAX_WORDS
+    )
+    val ruby = normalizedDisplayRuby(
+        state.ruby, original.length, trimOffset, AodStateWireLimits.MAX_RUBY
+    )
+    val layoutGroups = normalizedDisplayLayoutGroups(
+        state.layoutGroups, original.length, trimOffset,
+        AodStateWireLimits.MAX_LAYOUT_GROUPS
+    )
+    // The concurrent line shares the wire budgets with the primary, so it is
+    // capped against the remainder to keep the combined snapshot encodable.
+    val incomingSecond = state.secondLine?.takeIf { it.text.isNotBlank() }
+    val secondText = incomingSecond?.text?.trim()
+        ?.takeUtf16Prefix(AodStateWireLimits.MAX_LYRIC_CHARS).orEmpty()
+    val secondTrimOffset = (incomingSecond?.text?.length ?: 0) -
+        (incomingSecond?.text?.trimStart()?.length ?: 0)
+    val secondLine = if (incomingSecond == null || secondText.isBlank()) {
+        null
+    } else {
+        val secondStart = incomingSecond.lineStartMs.coerceAtLeast(0L)
+        incomingSecond.copy(
+            text = secondText,
+            romanized = incomingSecond.romanized.trim()
+                .takeUtf16Prefix(AodStateWireLimits.MAX_LYRIC_CHARS),
+            translated = incomingSecond.translated.trim()
+                .takeUtf16Prefix(AodStateWireLimits.MAX_LYRIC_CHARS),
+            lineStartMs = secondStart,
+            lineEndMs = incomingSecond.lineEndMs.coerceAtLeast(secondStart),
+            words = normalizedDisplayWords(
+                incomingSecond.words, incomingSecond.text.length, secondText.length,
+                secondTrimOffset,
+                AodStateWireLimits.MAX_WORDS - words.size
+            ),
+            ruby = normalizedDisplayRuby(
+                incomingSecond.ruby, secondText.length, secondTrimOffset,
+                AodStateWireLimits.MAX_RUBY - ruby.size
+            ),
+            layoutGroups = normalizedDisplayLayoutGroups(
+                incomingSecond.layoutGroups, secondText.length, secondTrimOffset,
+                AodStateWireLimits.MAX_LAYOUT_GROUPS - layoutGroups.size
             )
-            val startMs = word.startMs.coerceAtLeast(0L)
-            word.copy(
-                text = word.text.takeUtf16Prefix(AodStateWireLimits.MAX_LYRIC_CHARS),
-                romanized = word.romanized.takeUtf16Prefix(AodStateWireLimits.MAX_LYRIC_CHARS),
-                startMs = startMs,
-                endMs = word.endMs.coerceAtLeast(startMs),
-                sourceStart = range.first,
-                sourceEnd = range.second
-            )
-        }
-        .toList()
-    val ruby = state.ruby.asSequence()
-        .take(AodStateWireLimits.MAX_RUBY)
-        .mapNotNull { item ->
-            val start = (item.start - trimOffset).coerceAtLeast(0)
-            val end = (item.end - trimOffset).coerceAtMost(original.length)
-            if (end <= start) null else item.copy(
-                start = start,
-                end = end,
-                reading = item.reading.takeUtf16Prefix(AodStateWireLimits.MAX_LYRIC_CHARS)
-            )
-        }
-        .toList()
-    val layoutGroups = state.layoutGroups.asSequence()
-        .take(AodStateWireLimits.MAX_LAYOUT_GROUPS)
-        .mapNotNull { group ->
-            val start = (group.start - trimOffset).coerceAtLeast(0)
-            val end = (group.end - trimOffset).coerceAtMost(original.length)
-            if (end <= start) null else group.copy(
-                start = start,
-                end = end,
-                kind = group.kind.takeUtf16Prefix(AodStateWireLimits.MAX_METADATA_CHARS)
-            )
-        }
-        .toList()
+        )
+    }
     val lineStart = state.lineStartMs.coerceAtLeast(0L)
     val duration = state.durationMs.coerceIn(0L, AodStateWireLimits.MAX_MEDIA_DURATION_MS)
     val position = state.positionMs.coerceAtLeast(0L).let {
@@ -330,6 +423,23 @@ internal fun normalizeAodDisplayState(state: AodDisplayState): AodDisplayState {
         trackGeneration = state.trackGeneration.coerceAtLeast(0L),
         burnInPattern = normalizeAodBurnInPattern(state.burnInPattern),
         burnInIntervalMs = normalizeAodBurnInInterval(state.burnInIntervalMs),
+        aodRotationMode = normalizeAodRotationMode(state.aodRotationMode),
+        aodCanvasAnchor = normalizeAodCanvasAnchor(state.aodCanvasAnchor),
+        aodRotationSettleMs = normalizeAodRotationSettleMs(state.aodRotationSettleMs),
+        aodCanvasAnchorLandscape = normalizeAodCanvasAnchor(state.aodCanvasAnchorLandscape),
+        aodLandscapeTextScale = normalizeAodLandscapeTextScale(state.aodLandscapeTextScale),
+        aodCanvasPaddingPortraitXPercent = normalizeAodCanvasPaddingPercent(
+            state.aodCanvasPaddingPortraitXPercent
+        ),
+        aodCanvasPaddingPortraitYPercent = normalizeAodCanvasPaddingPercent(
+            state.aodCanvasPaddingPortraitYPercent
+        ),
+        aodCanvasPaddingLandscapeXPercent = normalizeAodCanvasPaddingPercent(
+            state.aodCanvasPaddingLandscapeXPercent
+        ),
+        aodCanvasPaddingLandscapeYPercent = normalizeAodCanvasPaddingPercent(
+            state.aodCanvasPaddingLandscapeYPercent
+        ),
         original = original,
         romanized = state.romanized.trim().takeUtf16Prefix(AodStateWireLimits.MAX_LYRIC_CHARS),
         translated = state.translated.trim().takeUtf16Prefix(AodStateWireLimits.MAX_LYRIC_CHARS),
@@ -345,6 +455,7 @@ internal fun normalizeAodDisplayState(state: AodDisplayState): AodDisplayState {
         words = words,
         ruby = ruby,
         layoutGroups = layoutGroups,
+        secondLine = secondLine,
         weight = normalizeAodWeight(state.weight),
         textSizeMode = normalizeAodTextSize(state.textSizeMode),
         textSizeCustom = state.textSizeCustom.coerceIn(0, 500),
@@ -391,6 +502,46 @@ private fun AodDisplayState.toWireMessage(
             positionFollowingEnabled = positionFollowingEnabled,
             burnInPattern = burnInPattern,
             burnInIntervalMs = burnInIntervalMs,
+            suppressStockAodContent = suppressStockAodContent,
+            aodRotateWithDevice = aodRotateWithDevice,
+            aodRotationMode = aodRotationMode,
+            aodCanvasAnchor = aodCanvasAnchor,
+            aodRotationSettleMs = aodRotationSettleMs,
+            aodCanvasAnchorLandscape = aodCanvasAnchorLandscape,
+            aodLandscapeTextScale = aodLandscapeTextScale,
+            aodCanvasPaddingDp = (aodCanvasPaddingPortraitXPercent * 4f).roundToInt()
+                .coerceIn(0, 64),
+            aodCanvasPaddingXPercent = aodCanvasPaddingPortraitXPercent,
+            aodCanvasPaddingYPercent = aodCanvasPaddingPortraitYPercent,
+            aodCanvasPaddingPortraitXPercent = aodCanvasPaddingPortraitXPercent,
+            aodCanvasPaddingPortraitYPercent = aodCanvasPaddingPortraitYPercent,
+            aodCanvasPaddingLandscapeXPercent = aodCanvasPaddingLandscapeXPercent,
+            aodCanvasPaddingLandscapeYPercent = aodCanvasPaddingLandscapeYPercent,
+            secondLine = secondLine?.let { second ->
+                AodStateWireSecondLine(
+                    text = second.text,
+                    romanized = second.romanized,
+                    translated = second.translated,
+                    alignedRight = second.alignedRight,
+                    lineStartMs = second.lineStartMs,
+                    lineEndMs = second.lineEndMs,
+                    words = second.words.map { word ->
+                        AodStateWireWord(
+                            word.text, word.romanized, word.startMs, word.endMs,
+                            word.boundaryAfter, word.sourceStart, word.sourceEnd
+                        )
+                    },
+                    ruby = second.ruby.map { item ->
+                        AodStateWireRuby(item.start, item.end, item.reading)
+                    },
+                    layoutGroups = second.layoutGroups.map { group ->
+                        AodStateWireLayoutGroup(
+                            group.start, group.end, group.kind, group.keepTogether,
+                            group.confidence
+                        )
+                    }
+                )
+            },
             original = original,
             romanized = romanized,
             translated = translated,

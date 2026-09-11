@@ -7,6 +7,7 @@ import com.eza.hyperglow.bridge.SpicyBridgeState
 import com.eza.hyperglow.bridge.SpicyBridgeWord
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -207,6 +208,101 @@ class AodStateProjectorTest {
         assertEquals("\u2022 \u2022 \u2022", projected.original)
     }
 
+    @Test
+    fun overlappingBackgroundRowProjectsAsSecondLine() {
+        val document = SpicyBridgeDocument(
+            producerId = "producer",
+            generation = 7,
+            trackUri = "spotify:track:test",
+            provider = "test",
+            language = "en",
+            type = "Line",
+            durationMs = 30_000L,
+            processingVersion = 1,
+            rows = listOf(
+                SpicyBridgeRow(
+                    role = "LEAD",
+                    startMs = 12_000L,
+                    endMs = 20_000L,
+                    fillEndMs = 20_000L,
+                    alignedRight = false,
+                    text = "lead",
+                    romanized = "",
+                    translated = "",
+                    words = emptyList()
+                ),
+                SpicyBridgeRow(
+                    role = "BACKGROUND",
+                    startMs = 14_000L,
+                    endMs = 18_000L,
+                    fillEndMs = 18_000L,
+                    alignedRight = false,
+                    text = "background",
+                    romanized = "",
+                    translated = "",
+                    words = emptyList()
+                )
+            )
+        )
+
+        val overlapped = project(state(), document, positionMs = 15_000L)
+
+        assertEquals("lead", overlapped.original)
+        assertEquals("background", overlapped.secondLine?.text)
+        assertEquals(18_000L, overlapped.secondLine?.lineEndMs)
+
+        val lingering = project(state(), document, positionMs = 19_000L)
+
+        assertEquals("lead", lingering.original)
+        assertEquals("background", lingering.secondLine?.text)
+
+        val ended = project(state(), document, positionMs = 21_000L)
+
+        assertNull(ended.secondLine)
+    }
+
+    @Test
+    fun duetToggleWithdrawsTheConcurrentRowAtTheSource() {
+        val document = SpicyBridgeDocument(
+            producerId = "producer",
+            generation = 7,
+            trackUri = "spotify:track:test",
+            provider = "test",
+            language = "en",
+            type = "Line",
+            durationMs = 30_000L,
+            processingVersion = 1,
+            rows = listOf(
+                SpicyBridgeRow(
+                    role = "LEAD",
+                    startMs = 12_000L,
+                    endMs = 20_000L,
+                    fillEndMs = 20_000L,
+                    alignedRight = false,
+                    text = "lead",
+                    romanized = "",
+                    translated = "",
+                    words = emptyList()
+                ),
+                SpicyBridgeRow(
+                    role = "BACKGROUND",
+                    startMs = 14_000L,
+                    endMs = 18_000L,
+                    fillEndMs = 18_000L,
+                    alignedRight = false,
+                    text = "background",
+                    romanized = "",
+                    translated = "",
+                    words = emptyList()
+                )
+            )
+        )
+        val overlapped = project(state(), document, positionMs = 15_000L, duetEnabled = false)
+
+        assertEquals("lead", overlapped.original)
+        assertNull(overlapped.secondLine)
+    }
+
     private fun documentWithIntro() = SpicyBridgeDocument(
         producerId = "producer",
         generation = 7,
@@ -249,6 +345,7 @@ class AodStateProjectorTest {
         nowElapsedMs: Long = 10_000L,
         prefs: AodRenderConfig = AodRenderConfig(keepAwake = true),
         aodEnabled: Boolean = true,
+        duetEnabled: Boolean = true,
         powerSessionPolicy: AodPowerSessionPolicy = AodPowerSessionPolicy()
     ) = projectToDisplay(
         state = state,
@@ -260,7 +357,8 @@ class AodStateProjectorTest {
             prefs = prefs,
             aodEnabled = aodEnabled,
             lockscreenEnabled = true,
-            metadataVisible = true
+            metadataVisible = true,
+            duetEnabled = duetEnabled
         ),
         metadataIntroPolicy = SongMetadataIntroPolicy(),
         powerSessionPolicy = powerSessionPolicy

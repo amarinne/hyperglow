@@ -2,6 +2,7 @@ package com.eza.hyperglow.root.lockscreen
 
 import android.view.MotionEvent
 import com.eza.hyperglow.root.HookLogger
+import com.eza.hyperglow.root.HookRegistry
 import com.eza.hyperglow.root.capability.XiaomiCapability
 import com.eza.hyperglow.root.capability.XiaomiCapabilityResolver
 import io.github.libxposed.api.XposedInterface.Chain
@@ -26,6 +27,7 @@ internal object LockscreenEditorGestureController {
 
 internal object LockscreenEditorGestureHook {
     private const val TAG = "LockscreenEditorGesture"
+    private const val FEATURE_ID = "editor-gesture"
     private const val EDITOR_HELPER = "com.android.keyguard.editor.KeyguardEditorHelper"
     private const val MAGAZINE_CONTROLLER =
         "com.android.keyguard.magazine.LockScreenMagazineController"
@@ -45,12 +47,9 @@ internal object LockscreenEditorGestureHook {
         val showMagazinePreview = magazine.getDeclaredMethod("handleSingleClickEvent").apply {
             isAccessible = true
         }
-        module.deoptimize(touch)
-        module.deoptimize(launch)
-        module.deoptimize(showMagazinePreview)
-        module.hook(touch).intercept(EditorTouchHooker)
-        module.hook(launch).intercept(EditorLaunchHooker)
-        module.hook(showMagazinePreview).intercept(MagazinePreviewHooker)
+        HookRegistry.hook(module, FEATURE_ID, touch, EditorTouchHooker)
+        HookRegistry.hook(module, FEATURE_ID, launch, EditorLaunchHooker)
+        HookRegistry.hook(module, FEATURE_ID, showMagazinePreview, MagazinePreviewHooker)
         installed = true
         HookLogger.i(TAG, "Lockscreen customization hooks installed")
     }

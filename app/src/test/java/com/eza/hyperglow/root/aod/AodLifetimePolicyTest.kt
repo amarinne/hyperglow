@@ -10,6 +10,13 @@ import org.junit.Test
 
 class AodLifetimePolicyTest {
     @Test
+    fun stockMediaPlayerRemovalClearsLiveAndRetainedAodScenes() {
+        assertTrue(shouldClearAodForMediaPlayerRemoval(wasPresent = true, isPresent = false))
+        assertFalse(shouldClearAodForMediaPlayerRemoval(wasPresent = false, isPresent = false))
+        assertFalse(shouldClearAodForMediaPlayerRemoval(wasPresent = true, isPresent = true))
+    }
+
+    @Test
     fun powerLifetimeDoesNotDependOnCanvasVisibility() {
         assertTrue(shouldActivateAodPowerLifetime(true, true, true))
         assertFalse(shouldActivateAodPowerLifetime(false, true, true))

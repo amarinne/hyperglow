@@ -10,6 +10,7 @@ import com.eza.hyperglow.root.capability.XiaomiCapability
 import com.eza.hyperglow.root.capability.XiaomiCapabilityResolver
 import com.eza.hyperglow.root.HookLogger
 import com.eza.hyperglow.root.aod.AodDisplayStateHook
+import com.eza.hyperglow.root.aod.AodPositionHook
 import com.eza.hyperglow.root.projection.LyricSnapshot
 import com.eza.hyperglow.root.projection.LyricSurfaceKind
 import com.eza.hyperglow.root.projection.SystemUiLyricProjectionRuntime
@@ -47,6 +48,17 @@ internal interface LinkageSurface {
 
 internal fun isDimmedAodDisplayState(state: Int): Boolean = state == 3 || state == 4
 
+/**
+ * A linkage-mode AOD target must not complete while the physical display is still bright.
+ * Unknown state is treated as not dimmed so the handoff fails safe until an observed dim edge.
+ */
+internal fun shouldAwaitAodDimOwnership(
+    targetKind: LyricSurfaceKind,
+    linkageMode: Boolean,
+    displayState: Int
+): Boolean = targetKind == LyricSurfaceKind.AOD && linkageMode &&
+    !isDimmedAodDisplayState(displayState)
+
 internal object LinkageTransitionCoordinator {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val surfaces = EnumMap<LyricSurfaceKind, LinkageSurface>(LyricSurfaceKind::class.java)
@@ -60,6 +72,7 @@ internal object LinkageTransitionCoordinator {
     private var activeDurationMs = DEFAULT_DURATION_MS
     private var targetWaitLoggedToken = -1L
     private var awaitingAodDimOwnership = false
+    private var lastAodDisplayState = -1
     private val timeout = Runnable { onTimeout(timeoutToken) }
 
     fun registerSurface(surface: LinkageSurface) = onMain {
@@ -72,7 +85,17 @@ internal object LinkageTransitionCoordinator {
             "Surface registered kind=${surface.linkageSurfaceKind} state=${stateMachine.state} " +
                 "attached=${surfaces.keys}"
         )
-        if (isTransitionActive() && targetKind == surface.linkageSurfaceKind) tryStartTarget()
+        val registeredTarget = targetKind
+        if (isTransitionActive() && registeredTarget == surface.linkageSurfaceKind) {
+            if (registeredTarget == LyricSurfaceKind.AOD) {
+                awaitingAodDimOwnership = shouldAwaitAodDimOwnership(
+                    registeredTarget,
+                    AodPositionHook.isLinkageMode(),
+                    lastAodDisplayState
+                )
+            }
+            tryStartTarget()
+        }
         else if (!isTransitionActive()) {
             SystemUiLyricProjectionRuntime.projection.cachedSnapshot()
                 ?.let(surface::applyTransitionSnapshot)
@@ -125,7 +148,15 @@ internal object LinkageTransitionCoordinator {
             stateMachine.state != LinkageTransitionState.TO_AOD ||
             targetKind != LyricSurfaceKind.AOD
         ) return@onMain
-        awaitingAodDimOwnership = true
+        awaitingAodDimOwnership = shouldAwaitAodDimOwnership(
+            LyricSurfaceKind.AOD,
+            linkageMode,
+            lastAodDisplayState
+        )
+        if (!awaitingAodDimOwnership) {
+            tryStartTarget()
+            return@onMain
+        }
         mainHandler.removeCallbacks(timeout)
         publishAuthority()
         HookLogger.i(
@@ -136,6 +167,7 @@ internal object LinkageTransitionCoordinator {
     }
 
     fun onAodDisplayState(state: Int) = onMain {
+        lastAodDisplayState = state
         if (!isDimmedAodDisplayState(state)) return@onMain
         grantAodDimOwnership(activeToken, "display-state-$state")
     }
@@ -219,7 +251,11 @@ internal object LinkageTransitionCoordinator {
         } else {
             lockscreenProfile?.transition?.durationMs
         } ?: DEFAULT_DURATION_MS.toInt()).toLong().coerceIn(150L, 600L)
-        awaitingAodDimOwnership = false
+        awaitingAodDimOwnership = shouldAwaitAodDimOwnership(
+            nextTarget,
+            nextTarget == LyricSurfaceKind.AOD && AodPositionHook.isLinkageMode(),
+            lastAodDisplayState
+        )
         freeze.start(activeSnapshot, SystemClock.elapsedRealtime())
         publishAuthority()
         surfaces.values.forEach(LinkageSurface::resetTransition)

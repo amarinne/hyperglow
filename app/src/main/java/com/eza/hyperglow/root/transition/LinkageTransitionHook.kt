@@ -2,6 +2,7 @@ package com.eza.hyperglow.root.transition
 
 import android.os.SystemClock
 import com.eza.hyperglow.root.HookLogger
+import com.eza.hyperglow.root.HookRegistry
 import io.github.libxposed.api.XposedInterface.Chain
 import io.github.libxposed.api.XposedInterface.Hooker
 import io.github.libxposed.api.XposedModule
@@ -30,8 +31,7 @@ internal object LinkageTransitionHook {
         }
         if (primary != null) {
             runCatching {
-                module.deoptimize(primary)
-                module.hook(primary).intercept(PrimaryHooker)
+                HookRegistry.hook(module, FEATURE_ID, primary, PrimaryHooker)
             }.onSuccess {
                 HookLogger.i(TAG, "Primary linkage direction hook installed")
             }.onFailure {
@@ -49,8 +49,7 @@ internal object LinkageTransitionHook {
             )
         }.onSuccess { fallback ->
             runCatching {
-                module.deoptimize(fallback)
-                module.hook(fallback).intercept(FallbackHooker)
+                HookRegistry.hook(module, FEATURE_ID, fallback, FallbackHooker)
             }.onSuccess {
                 HookLogger.i(TAG, "Fallback linkage direction hook installed")
             }.onFailure {
@@ -96,4 +95,5 @@ internal object LinkageTransitionHook {
     private const val CONTROLLER_CLASS = "com.android.keyguard.panel.KeyguardPanelViewController"
     private const val ANIMATION_HELPER_CLASS = "com.android.keyguard.clock.animation.AnimationHelper"
     private const val TAG = "LinkageTransitionHook"
+    private const val FEATURE_ID = "linkage"
 }

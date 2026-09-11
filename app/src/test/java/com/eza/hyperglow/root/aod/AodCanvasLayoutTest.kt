@@ -5,6 +5,7 @@ import com.eza.hyperglow.customization.SceneCompiler
 import com.eza.hyperglow.customization.SurfaceProfile
 import com.eza.hyperglow.root.projection.LyricSnapshot
 import com.eza.hyperglow.root.projection.LyricRuby
+import com.eza.hyperglow.root.projection.LyricSecondLine
 import com.eza.hyperglow.root.projection.LyricWord
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -28,6 +29,23 @@ class AodCanvasLayoutTest {
         assertNotEquals(default.primaryText, dimmed.primaryText)
         assertNotEquals(default.metadataText, dimmed.metadataText)
         assertEquals(default.glow, dimmed.glow)
+    }
+
+    @Test
+    fun semanticPaletteSupportsPresetsAndIndependentMetadata() {
+        val lavender = resolveAodPalette(
+            mapOf("primaryText" to "lavender", "metadataText" to "#9998A4")
+        )
+        assertEquals(lavender.primaryText, lavender.sungText)
+        assertEquals(lavender.primaryText, lavender.unsungText)
+        assertNotEquals(lavender.primaryText, lavender.metadataText)
+
+        val mint = resolveAodPalette(
+            mapOf("primaryText" to "mint", "sungText" to "#62D891", "glow" to "#B9A8FF")
+        )
+        assertEquals(0xFF62D891.toInt(), mint.sungText)
+        assertEquals(0xFFB9A8FF.toInt(), mint.glow)
+        assertNotEquals(lavender.primaryText, mint.primaryText)
     }
 
     @Test
@@ -91,11 +109,11 @@ class AodCanvasLayoutTest {
 
     @Test
     fun repeatedTextStillChangesIdentityAcrossRowsAndTracks() {
-        val first = AodCanvasLineIdentity(7L, 1_000L, 2_000L, "same")
+        val first = AodLineTransitionKey(7L, 1_000L, null)
 
-        assertEquals(first, AodCanvasLineIdentity(7L, 1_000L, 2_000L, "same"))
-        assertNotEquals(first, AodCanvasLineIdentity(7L, 3_000L, 4_000L, "same"))
-        assertNotEquals(first, AodCanvasLineIdentity(8L, 1_000L, 2_000L, "same"))
+        assertEquals(first, AodLineTransitionKey(7L, 1_000L, null))
+        assertNotEquals(first, AodLineTransitionKey(7L, 3_000L, null))
+        assertNotEquals(first, AodLineTransitionKey(8L, 1_000L, null))
     }
 
     @Test
@@ -857,6 +875,12 @@ class AodCanvasLayoutTest {
     }
 
     @Test
+    fun landscapeCanvasUsesLongAndShortAxesFromAnyRootOrientation() {
+        assertEquals(AodCanvasSize(2670, 1200), aodLandscapeCanvasSize(1200, 2670))
+        assertEquals(AodCanvasSize(2670, 1200), aodLandscapeCanvasSize(2670, 1200))
+    }
+
+    @Test
     fun pinyinTokensNeverSplitAtNormalBoundaries() {
         val source = secondaryTokens("tiān tiān bǎ tā guà zuǐ biān dào dǐ shén mó shì zhēn ài")
         val lines = balancedTokenLineTexts(
@@ -891,5 +915,551 @@ class AodCanvasLayoutTest {
         val tokens = secondaryTokens("Tut bez tebya, bez tebya vsyo ne tak, vsyo ne tak")
         val lines = balancedTokenLineTexts(tokens, tokens.map { it.length * 8f }, 4f, 190f, 2)
         assertEquals(tokens, lines.flatMap(::secondaryTokens))
+    }
+
+    @Test
+    fun lockscreenMappingStaysSoloWhileAodKeepsOverlap() {
+        val snapshot = LyricSnapshot(
+            original = "lead",
+            secondLine = LyricSecondLine(text = "background")
+        )
+
+        assertEquals("background", snapshot.toAodCanvasContent().secondLine?.text)
+        assertNull(
+            snapshot.toAodCanvasContent(includeSecondLine = false).secondLine
+        )
+    }
+
+    @Test
+    fun lineTransitionKeyIgnoresLaneRevisions() {
+        val base = LyricSnapshot(
+            trackGeneration = 7L,
+            original = "lead",
+            lineStartMs = 1000L,
+            lineEndMs = 5000L,
+            secondLine = LyricSecondLine(text = "bg", lineStartMs = 2000L, lineEndMs = 6000L)
+        ).toAodCanvasContent()
+        val revised = LyricSnapshot(
+            trackGeneration = 7L,
+            original = "lead revised",
+            lineStartMs = 1000L,
+            lineEndMs = 5500L,
+            secondLine = LyricSecondLine(text = "bg revised", lineStartMs = 2000L, lineEndMs = 6200L)
+        ).toAodCanvasContent()
+
+        assertEquals(aodLineTransitionKey(base), aodLineTransitionKey(revised))
+    }
+
+    @Test
+    fun heartbeatRepublishIsLayoutEquivalent() {
+        val base = LyricSnapshot(
+            trackGeneration = 7L,
+            original = "lead",
+            lineStartMs = 1000L,
+            lineEndMs = 5000L,
+            positionMs = 1500L,
+            sampledAtElapsedMs = 100L,
+            words = listOf(LyricWord("lead", "", 1000L, 5000L, true)),
+            secondLine = LyricSecondLine(text = "bg", lineStartMs = 2000L, lineEndMs = 6000L)
+        ).toAodCanvasContent()
+        val heartbeat = base.copy(positionMs = 3000L, sampledAtElapsedMs = 2100L, speed = 1f)
+
+        assertTrue(layoutEquivalent(base, heartbeat))
+        assertFalse(layoutEquivalent(base, heartbeat.copy(original = "changed")))
+        assertFalse(
+            layoutEquivalent(
+                base,
+                heartbeat.copy(
+                    words = listOf(
+                        AodCanvasWord("lead", "", 1000L, 4500L, true, 0, 4)
+                    )
+                )
+            )
+        )
+        assertFalse(layoutEquivalent(base, heartbeat.copy(lineEndMs = 5500L)))
+        assertFalse(
+            layoutEquivalent(
+                base,
+                heartbeat.copy(secondLine = heartbeat.secondLine?.copy(text = "bg revised"))
+            )
+        )
+        assertFalse(layoutEquivalent(base, heartbeat.copy(secondLine = null)))
+    }
+
+    @Test
+    fun lineTransitionKeyFiresOnStructuralChanges() {
+        val solo = LyricSnapshot(
+            trackGeneration = 7L,
+            original = "lead",
+            lineStartMs = 1000L,
+            lineEndMs = 5000L
+        ).toAodCanvasContent()
+        val duet = solo.copy(
+            secondLine = AodCanvasSecondLine(text = "bg", lineStartMs = 2000L, lineEndMs = 6000L)
+        )
+        val replaced = solo.copy(
+            secondLine = AodCanvasSecondLine(text = "bg2", lineStartMs = 3000L, lineEndMs = 7000L)
+        )
+        val nextTrack = solo.copy(trackGeneration = 8L)
+        val nextLine = solo.copy(lineStartMs = 5000L, lineEndMs = 9000L)
+
+        assertEquals(false, aodLineTransitionKey(solo) == aodLineTransitionKey(duet))
+        assertEquals(false, aodLineTransitionKey(duet) == aodLineTransitionKey(solo))
+        assertEquals(false, aodLineTransitionKey(duet) == aodLineTransitionKey(replaced))
+        assertEquals(false, aodLineTransitionKey(solo) == aodLineTransitionKey(nextTrack))
+        assertEquals(false, aodLineTransitionKey(solo) == aodLineTransitionKey(nextLine))
+    }
+
+    @Test
+    fun soloSceneNeverDefers() {
+        assertEquals(emptySet<Int>(), deferredDuetBlockIndices(listOf(1000L), 500L))
+        assertEquals(emptySet<Int>(), deferredDuetBlockIndices(emptyList(), 500L))
+    }
+
+    @Test
+    fun futureSectionDefersUntilItsWindowStarts() {
+        assertEquals(setOf(1), deferredDuetBlockIndices(listOf(1000L, 4000L), 2000L))
+        assertEquals(emptySet<Int>(), deferredDuetBlockIndices(listOf(1000L, 4000L), 4000L))
+        assertEquals(emptySet<Int>(), deferredDuetBlockIndices(listOf(1000L, 4000L), 5000L))
+    }
+
+    @Test
+    fun sharedDuetScaleFitsTheCombinedStack() {
+        // Both stacks together fit the area: nobody shrinks.
+        assertEquals(
+            1f,
+            resolveOverflowShrinkScale(400f + 300f, 1000f),
+            0.0001f
+        )
+        // Combined overflow: one shared scale for both sections.
+        assertEquals(
+            0.8f,
+            resolveOverflowShrinkScale(500f + 750f, 1000f),
+            0.0001f
+        )
+        assertEquals(
+            MIN_OVERFLOW_SHRINK_SCALE,
+            resolveOverflowShrinkScale(4000f, 500f),
+            0.0001f
+        )
+    }
+
+    @Test
+    fun sharedDuetScaleNeverFloorsAboveExactFit() {
+        // Fits: full size.
+        assertEquals(1f, resolveSharedDuetScale(700f, 1000f), 0.0001f)
+        // Exact ratio, not the solo 0.5 floor — a floored overflow clips
+        // a section's bottom rows mid-draw.
+        assertEquals(0.45f, resolveSharedDuetScale(2000f, 900f), 0.0001f)
+        // Deep absolute floor.
+        assertEquals(
+            MIN_SHARED_DUET_SCALE,
+            resolveSharedDuetScale(10000f, 1000f),
+            0.0001f
+        )
+        // Unusable inputs keep full size.
+        assertEquals(1f, resolveSharedDuetScale(0f, 1000f), 0.0001f)
+        assertEquals(1f, resolveSharedDuetScale(700f, 0f), 0.0001f)
+        assertEquals(1f, resolveSharedDuetScale(Float.NaN, 1000f), 0.0001f)
+    }
+
+    @Test
+    fun majorityRangeOwnsResegmentedWords() {
+        val ranges = listOf(0..4, 5..10)
+        assertEquals(0, majorityRangeIndex(ranges, 0..4))
+        assertEquals(1, majorityRangeIndex(ranges, 5..10))
+        assertEquals(0, majorityRangeIndex(ranges, 0..7))
+        assertEquals(1, majorityRangeIndex(ranges, 3..10))
+        assertEquals(0, majorityRangeIndex(ranges, 0..9))
+    }
+
+    @Test
+    fun frozenWrapNeedsExactTextCoverage() {
+        val text = "hello world"
+        val full = FrozenLineWrap(text.length, listOf(0..4, 5..10))
+        assertEquals(listOf(0..4, 5..10), validFrozenWrap(full, text))
+        assertEquals(listOf(0..4, 5..10), validFrozenWrap(full, "hella warld"))
+        assertNull(validFrozenWrap(full, "hello worlds"))
+        assertNull(validFrozenWrap(FrozenLineWrap(text.length, listOf(0..4)), text))
+        assertNull(validFrozenWrap(FrozenLineWrap(text.length, listOf(0..5, 5..10)), text))
+        assertNull(validFrozenWrap(FrozenLineWrap(text.length, listOf(0..4, 6..20)), text))
+        assertNull(validFrozenWrap(FrozenLineWrap(text.length, emptyList()), text))
+        assertNull(validFrozenWrap(null, text))
+    }
+
+    @Test
+    fun frozenRangesDeriveFromLaidOutLines() {
+        assertEquals(
+            FrozenLineWrap(11, listOf(0..4, 5..10)),
+            frozenRangesFrom(listOf(0 to 5, 5 to 11), "hello world")
+        )
+        assertNull(frozenRangesFrom(listOf(0 to 5, null to null), "hello world"))
+        assertNull(frozenRangesFrom(listOf(0 to 0, 0 to 11), "hello world"))
+        assertNull(frozenRangesFrom(emptyList(), "hello world"))
+        assertNull(frozenRangesFrom(listOf(0 to 5), ""))
+    }
+
+    @Test
+    fun fittingStackKeepsFullSize() {
+        assertEquals(1f, resolveOverflowShrinkScale(800f, 1000f), 0.0001f)
+        assertEquals(1f, resolveOverflowShrinkScale(1000f, 1000f), 0.0001f)
+    }
+
+    @Test
+    fun overflowingStackShrinksToExactFit() {
+        assertEquals(0.75f, resolveOverflowShrinkScale(1000f, 750f), 0.0001f)
+    }
+
+    @Test
+    fun shrinkNeverDropsBelowReadableFloor() {
+        assertEquals(
+            MIN_OVERFLOW_SHRINK_SCALE,
+            resolveOverflowShrinkScale(4000f, 1000f),
+            0.0001f
+        )
+    }
+
+    @Test
+    fun unusableGeometryKeepsFullSize() {
+        assertEquals(1f, resolveOverflowShrinkScale(0f, 1000f), 0.0001f)
+        assertEquals(1f, resolveOverflowShrinkScale(1200f, 0f), 0.0001f)
+        assertEquals(1f, resolveOverflowShrinkScale(Float.NaN, 1000f), 0.0001f)
+        assertEquals(1f, resolveOverflowShrinkScale(1200f, Float.NaN), 0.0001f)
+    }
+
+    @Test
+    fun duetJoinKeepsSurvivorSlotAndAppendsNewcomer() {
+        val first = DuetSectionId(7L, 1000L, 5000L)
+        val second = DuetSectionId(7L, 3000L, 7000L)
+        assertEquals(listOf(first, second), assignDuetSlots(listOf(first, second), listOf(first)))
+    }
+
+    @Test
+    fun duetReplacementTakesVacatedSlotInsteadOfAppending() {
+        val first = DuetSectionId(7L, 1000L, 5000L)
+        val second = DuetSectionId(7L, 3000L, 7000L)
+        val third = DuetSectionId(7L, 6000L, 9000L)
+        assertEquals(
+            listOf(third, second),
+            assignDuetSlots(listOf(second, third), listOf(first, second))
+        )
+    }
+
+    @Test
+    fun duetRoleFlipKeepsBothSlots() {
+        val first = DuetSectionId(7L, 1000L, 5000L)
+        val second = DuetSectionId(7L, 3000L, 7000L)
+        assertEquals(
+            listOf(first, second),
+            assignDuetSlots(listOf(second, first), listOf(first, second))
+        )
+    }
+
+    @Test
+    fun duetFullSwapKeepsCurrentOrder() {
+        val third = DuetSectionId(7L, 6000L, 9000L)
+        val fourth = DuetSectionId(7L, 8000L, 12_000L)
+        assertEquals(
+            listOf(third, fourth),
+            assignDuetSlots(
+                listOf(third, fourth),
+                listOf(DuetSectionId(7L, 1000L, 5000L), DuetSectionId(7L, 3000L, 7000L))
+            )
+        )
+    }
+
+    @Test
+    fun duetSoloPassesThrough() {
+        val first = DuetSectionId(7L, 1000L, 5000L)
+        assertEquals(listOf(first), assignDuetSlots(listOf(first), emptyList()))
+        assertEquals(emptyList<DuetSectionId>(), assignDuetSlots(emptyList(), listOf(first)))
+    }
+
+    @Test
+    fun duetSurvivorKeepsTopWhileNewcomerStacksBelow() {
+        val first = DuetSectionId(7L, 1000L, 5000L)
+        val second = DuetSectionId(7L, 3000L, 7000L)
+        val tops = placeDuetSectionTops(
+            listOf(first, second),
+            mapOf(first to 200f, second to 100f),
+            areaCenter = 500f,
+            lastTops = mapOf(first to 400f),
+            lastBlockCenter = 500f
+        )
+
+        assertEquals(400f, tops.getValue(first), 0.0001f)
+        assertEquals(600f, tops.getValue(second), 0.0001f)
+    }
+
+    @Test
+    fun duetNewcomerTakesExpiredTopSlotAboveSurvivor() {
+        val first = DuetSectionId(7L, 1000L, 5000L)
+        val second = DuetSectionId(7L, 3000L, 7000L)
+        val third = DuetSectionId(7L, 6000L, 9000L)
+        val tops = placeDuetSectionTops(
+            listOf(third, second),
+            mapOf(third to 150f, second to 100f),
+            areaCenter = 500f,
+            lastTops = mapOf(second to 600f),
+            lastBlockCenter = 500f
+        )
+
+        assertEquals(600f, tops.getValue(second), 0.0001f)
+        assertEquals(450f, tops.getValue(third), 0.0001f)
+    }
+
+    @Test
+    fun duetRoleFlipKeepsBothSectionsStill() {
+        val first = DuetSectionId(7L, 1000L, 5000L)
+        val second = DuetSectionId(7L, 3000L, 7000L)
+        val tops = placeDuetSectionTops(
+            listOf(second, first),
+            mapOf(first to 200f, second to 100f),
+            areaCenter = 500f,
+            lastTops = mapOf(first to 400f, second to 600f),
+            lastBlockCenter = 500f
+        )
+
+        assertEquals(400f, tops.getValue(first), 0.0001f)
+        assertEquals(600f, tops.getValue(second), 0.0001f)
+    }
+
+    @Test
+    fun duetFullSwapCentersOnLastBlockCenter() {
+        val third = DuetSectionId(7L, 6000L, 9000L)
+        val fourth = DuetSectionId(7L, 8000L, 12_000L)
+        val tops = placeDuetSectionTops(
+            listOf(third, fourth),
+            mapOf(third to 150f, fourth to 100f),
+            areaCenter = 500f,
+            lastTops = emptyMap(),
+            lastBlockCenter = 520f
+        )
+
+        assertEquals(395f, tops.getValue(third), 0.0001f)
+        assertEquals(545f, tops.getValue(fourth), 0.0001f)
+    }
+
+    @Test
+    fun duetChainSoloStaysPut() {
+        val second = DuetSectionId(7L, 3000L, 7000L)
+        val tops = placeDuetSectionTops(
+            listOf(second),
+            mapOf(second to 100f),
+            areaCenter = 500f,
+            lastTops = mapOf(second to 600f),
+            lastBlockCenter = 500f
+        )
+
+        assertEquals(600f, tops.getValue(second), 0.0001f)
+    }
+
+    @Test
+    fun fittingBlockNeverClamps() {
+        assertEquals(0f, resolveBlockClampShift(400f, 800f, 0f, 1000f), 0.0001f)
+    }
+
+    @Test
+    fun topOverhangRepinsToAreaTop() {
+        assertEquals(200f, resolveBlockClampShift(200f, 900f, 400f, 1200f), 0.0001f)
+    }
+
+    @Test
+    fun fittingBottomOverhangShiftsUp() {
+        assertEquals(-100f, resolveBlockClampShift(900f, 1300f, 400f, 1200f), 0.0001f)
+    }
+
+    @Test
+    fun oversizedBlockPinsToTopAsFailSafe() {
+        assertEquals(200f, resolveBlockClampShift(200f, 1500f, 400f, 1200f), 0.0001f)
+    }
+
+    @Test
+    fun overfullBlockStartingInsidePinsTop() {
+        assertEquals(-100f, resolveBlockClampShift(500f, 1900f, 400f, 1200f), 0.0001f)
+    }
+
+    @Test
+    fun unusableClampGeometryHoldsStill() {
+        assertEquals(0f, resolveBlockClampShift(Float.NaN, 800f, 0f, 1000f), 0.0001f)
+        assertEquals(0f, resolveBlockClampShift(400f, 800f, 0f, 0f), 0.0001f)
+    }
+
+    @Test
+    fun secondaryCapAppliesOnlyToAnchoredLandscapeSections() {
+        val legacy = AodLyricCanvasView.MAX_SECONDARY_LINES
+        assertEquals(1, duetSecondaryLineCap(anchored = true, sideStep = true))
+        assertEquals(legacy, duetSecondaryLineCap(anchored = false, sideStep = true))
+        assertEquals(legacy, duetSecondaryLineCap(anchored = true, sideStep = false))
+        assertEquals(legacy, duetSecondaryLineCap(anchored = false, sideStep = false))
+    }
+
+    @Test
+    fun minimalLineCountGreedyPacksUnits() {
+        assertEquals(1, minimalLineCount(listOf(100f, 100f), 250f))
+        assertEquals(2, minimalLineCount(listOf(100f, 100f, 100f), 250f))
+        assertEquals(2, minimalLineCount(listOf(150f, 150f), 200f))
+        assertEquals(3, minimalLineCount(listOf(150f, 150f, 150f), 200f))
+        assertEquals(1, minimalLineCount(emptyList(), 200f))
+        assertEquals(2, minimalLineCount(listOf(300f, 50f), 200f))
+    }
+
+    @Test
+    fun frozenWrapMinimalityRejectsBloatWraps() {
+        val ranges = listOf(0..4, 5..9, 10..14)
+        // Each frozen line is 100 wide: two fit per line at 250, so a
+        // 3-line freeze from a smaller frame is non-minimal.
+        assertEquals(
+            false,
+            frozenWrapIsMinimal(ranges, measureLine = { 100f }, gap = 0f, available = 250f)
+        )
+        assertEquals(
+            true,
+            frozenWrapIsMinimal(ranges, measureLine = { 100f }, gap = 0f, available = 150f)
+        )
+        assertEquals(
+            true,
+            frozenWrapIsMinimal(listOf(0..9), measureLine = { 100f }, gap = 0f, available = 250f)
+        )
+        // A frozen wrap where any line exceeds available width must be rejected
+        // so it can re-wrap properly instead of clipping past viewport margins.
+        assertEquals(
+            false,
+            frozenWrapIsMinimal(ranges, measureLine = { 100f }, gap = 0f, available = 80f)
+        )
+        val overflowPair = listOf(0..3, 4..8)
+        assertEquals(
+            false,
+            frozenWrapIsMinimal(
+                overflowPair,
+                measureLine = { if (it.first == 0) 369f else 477f },
+                gap = 8f,
+                available = 404f
+            )
+        )
+    }
+
+    @Test
+    fun unwrapTriggerKeysOnShrinkWithScaleTolerance() {
+        // Device case: wrapped at 0.81, single line fits at full size.
+        assertTrue(shouldUnwrapShrunkSection(0.813f, 1.0f))
+        // Floor case: wrapped at the floor, single line still better.
+        assertTrue(shouldUnwrapShrunkSection(0.5f, 0.48f))
+        // Wide line: single line far tinier than the wrap stays wrapped.
+        assertFalse(shouldUnwrapShrunkSection(0.9f, 0.4f))
+        // Equal scales unwrap (one-line form preferred).
+        assertTrue(shouldUnwrapShrunkSection(0.8f, 0.8f))
+        // Just outside tolerance stays wrapped.
+        assertFalse(shouldUnwrapShrunkSection(1.0f, 0.8f))
+        // Unusable inputs never unwrap.
+        assertFalse(shouldUnwrapShrunkSection(Float.NaN, 1.0f))
+        assertFalse(shouldUnwrapShrunkSection(0.8f, Float.NaN))
+    }
+
+    @Test
+    fun visualWidthFitBoundsWithoutNaN() {
+        assertEquals(1f, resolveVisualWidthFitScale(50f, 100f), 0.0001f)
+        assertEquals(0.5f, resolveVisualWidthFitScale(200f, 100f), 0.0001f)
+        // Unusable inputs contribute 1f: no NaN or zero transform.
+        assertEquals(1f, resolveVisualWidthFitScale(0f, 100f), 0.0001f)
+        assertEquals(1f, resolveVisualWidthFitScale(Float.NaN, 100f), 0.0001f)
+        assertEquals(1f, resolveVisualWidthFitScale(200f, 0f), 0.0001f)
+    }
+
+    @Test
+    fun transitionPassesSplitSurvivorFromDeparturesAndArrivals() {
+        val a = DuetSectionId(7L, 1000L, 5000L)
+        val b = DuetSectionId(7L, 3000L, 7000L)
+        val c = DuetSectionId(7L, 6000L, 9000L)
+
+        // Join: solo A -> duet A+B. A continues (no crossfade against
+        // itself), B arrives.
+        val join = resolveDuetTransitionPasses(listOf(a), listOf(a, b))
+        assertEquals(setOf(0), join.continuingEnterBlocks)
+        assertEquals(emptySet<Int>(), join.departingExitBlocks)
+        assertEquals(setOf(1), join.arrivingEnterBlocks)
+
+        // Chain: A+B -> C+B. B continues, A departs, C arrives.
+        val chain = resolveDuetTransitionPasses(listOf(a, b), listOf(c, b))
+        assertEquals(setOf(1), chain.continuingEnterBlocks)
+        assertEquals(setOf(0), chain.departingExitBlocks)
+        assertEquals(setOf(0), chain.arrivingEnterBlocks)
+
+        // Line change: solo A -> solo B. Full crossfade, no survivor.
+        val swap = resolveDuetTransitionPasses(listOf(a), listOf(b))
+        assertEquals(emptySet<Int>(), swap.continuingEnterBlocks)
+        assertEquals(setOf(0), swap.departingExitBlocks)
+        assertEquals(setOf(0), swap.arrivingEnterBlocks)
+    }
+
+    @Test
+    fun presentationChangedContinuerCrossfadesInsteadOfSurvivorOnce() {
+        val a = DuetSectionId(7L, 1000L, 5000L)
+        val b = DuetSectionId(7L, 3000L, 7000L)
+        // Join where the continuing section re-presents (2 wrapped lines ->
+        // 1 unwrapped): it must crossfade, not draw survivor-once.
+        val rePresented = resolveDuetTransitionPasses(
+            listOf(a), listOf(a, b),
+            exitLineCounts = listOf(2), enterLineCounts = listOf(1, 2)
+        )
+        assertEquals(emptySet<Int>(), rePresented.continuingEnterBlocks)
+        assertEquals(setOf(0), rePresented.departingExitBlocks)
+        assertEquals(setOf(0, 1), rePresented.arrivingEnterBlocks)
+        // Same presentation keeps the survivor-once fast path.
+        val stable = resolveDuetTransitionPasses(
+            listOf(a), listOf(a, b),
+            exitLineCounts = listOf(2), enterLineCounts = listOf(2, 2)
+        )
+        assertEquals(setOf(0), stable.continuingEnterBlocks)
+        assertEquals(emptySet<Int>(), stable.departingExitBlocks)
+        assertEquals(setOf(1), stable.arrivingEnterBlocks)
+    }
+
+    @Test
+    fun shrinkPivotPreservesAlignmentEdge() {
+        assertEquals(100f, resolveDuetSectionPivotX(AodLyricCanvasView.Alignment.START, 100f, 700f), 0.0001f)
+        assertEquals(700f, resolveDuetSectionPivotX(AodLyricCanvasView.Alignment.END, 100f, 700f), 0.0001f)
+        assertEquals(400f, resolveDuetSectionPivotX(AodLyricCanvasView.Alignment.CENTER, 100f, 700f), 0.0001f)
+    }
+
+    @Test
+    fun mutedExitContentKeepsTimingButDropsEffects() {
+        val content = LyricSnapshot(
+            original = "lead",
+            positionMs = 1500L,
+            words = listOf(LyricWord("lead", "", 1000L, 2000L, true))
+        ).toAodCanvasContent().withMutedEffects()
+
+        assertEquals("Off", content.glowMode)
+        assertEquals("Gradient", content.animationMode)
+        assertEquals("lead", content.original)
+        assertEquals(1500L, content.positionMs)
+        assertEquals(1, content.words.size)
+    }
+
+    @Test
+    fun wrapModeBaseSizeIgnoresLineLength() {
+        assertEquals(
+            baseTextSizeForMode("oh", "Wrap"),
+            baseTextSizeForMode("although my heart is bleeding you still do not feel a thing", "Wrap"),
+            0.0001f
+        )
+    }
+
+    @Test
+    fun clipModeBaseSizeKeepsLengthBuckets() {
+        assertTrue(
+            baseTextSizeForMode("oh", "Clip") >
+                baseTextSizeForMode("although my heart is bleeding you still do not feel a thing", "Clip")
+        )
+    }
+
+    @Test
+    fun blankAndDegeneratePassesNeverCommitLayoutState() {
+        assertTrue(shouldCommitLayoutState(true, true, true))
+        assertFalse(shouldCommitLayoutState(false, true, true))
+        assertFalse(shouldCommitLayoutState(true, false, true))
+        assertFalse(shouldCommitLayoutState(true, true, false))
+        assertFalse(shouldCommitLayoutState(false, false, false))
     }
 }

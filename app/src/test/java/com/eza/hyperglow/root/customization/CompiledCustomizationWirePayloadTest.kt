@@ -17,7 +17,9 @@ class CompiledCustomizationWirePayloadTest {
             available = true,
             pauseLingerMs = 30_000L,
             raiseToAod = true,
-            suppressLockscreenEditorLongPress = true
+            suppressLockscreenEditorLongPress = true,
+            aodBrightnessOverride = true,
+            aodBrightnessLevel = 73
         )
         val payload = CompiledCustomizationBundleCodec.toWirePayload(configuration, userId = 10)
 
@@ -50,6 +52,19 @@ class CompiledCustomizationWirePayloadTest {
                 payload,
                 expectedUserId = 10
             )?.suppressLockscreenEditorLongPress == true
+        )
+        assertTrue(
+            CompiledCustomizationBundleCodec.fromWirePayload(
+                payload,
+                expectedUserId = 10
+            )?.aodBrightnessOverride == true
+        )
+        assertEquals(
+            73,
+            CompiledCustomizationBundleCodec.fromWirePayload(
+                payload,
+                expectedUserId = 10
+            )?.aodBrightnessLevel
         )
         assertNull(
             CompiledCustomizationBundleCodec.fromWirePayload(payload, expectedUserId = 0)

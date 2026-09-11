@@ -193,26 +193,135 @@ internal data class AodCanvasContent(
     val metadataVisible: Boolean,
     val metadataAnchor: String,
     val metadataSizePercent: Int = 100,
+    val secondLine: AodCanvasSecondLine? = null,
     val adaptiveSectioning: Boolean,
     val palette: Map<String, String>,
     val secondaryTextBright: Boolean = true,
     val lyricLineLimit: Int = 3
 )
 
-internal data class AodCanvasLineIdentity(
-    val trackGeneration: Long,
-    val lineStartMs: Long,
-    val lineEndMs: Long,
-    val original: String
+/**
+ * One overlapping sung line rendered next to the primary with the same size:
+ * own text, timed words, readings, and active window. Null renders solo.
+ */
+internal data class AodCanvasSecondLine(
+    val text: String = "",
+    val romanized: String = "",
+    val translated: String = "",
+    val alignedRight: Boolean = false,
+    val lineStartMs: Long = 0L,
+    val lineEndMs: Long = 0L,
+    val words: List<AodCanvasWord> = emptyList(),
+    val ruby: List<AodCanvasRuby> = emptyList(),
+    val layoutGroups: List<AodCanvasLayoutGroup> = emptyList()
 )
 
-internal fun aodCanvasLineIdentity(content: AodCanvasContent): AodCanvasLineIdentity =
-    AodCanvasLineIdentity(
+/**
+ * Transition identity: new generation, new primary start, or second-line
+ * slot change (join, leave, replacement by start). Lane revisions that only
+ * refine text, end timings, or words must not restart the dissolve, or
+ * settling lanes strobe the canvas while the same line sings.
+ */
+internal data class AodLineTransitionKey(
+    val trackGeneration: Long,
+    val lineStartMs: Long,
+    val secondStartMs: Long?
+)
+
+internal fun aodLineTransitionKey(content: AodCanvasContent): AodLineTransitionKey =
+    AodLineTransitionKey(
         content.trackGeneration,
         content.lineStartMs,
-        content.lineEndMs,
-        content.original
+        content.secondLine?.lineStartMs
     )
+
+/**
+ * Whether two snapshots lay out identically: every field the builders read,
+ * compared structurally. Playback progress (position, sample time, speed)
+ * is excluded — heartbeats republish the same line with fresh positions, and
+ * rebuilding the whole layout for that is the visible canvas churn.
+ */
+internal fun layoutEquivalent(a: AodCanvasContent, b: AodCanvasContent): Boolean {
+    if (a.trackGeneration != b.trackGeneration ||
+        a.original != b.original ||
+        a.romanized != b.romanized ||
+        a.translated != b.translated ||
+        a.alignedRight != b.alignedRight ||
+        a.lineStartMs != b.lineStartMs ||
+        a.lineEndMs != b.lineEndMs ||
+        a.words.size != b.words.size ||
+        a.ruby.size != b.ruby.size ||
+        a.layoutGroups.size != b.layoutGroups.size ||
+        a.weight != b.weight ||
+        a.textSizeMode != b.textSizeMode ||
+        a.textSizeCustom != b.textSizeCustom ||
+        a.secondaryMode != b.secondaryMode ||
+        a.animationMode != b.animationMode ||
+        a.glowMode != b.glowMode ||
+        a.lineSyncFillMode != b.lineSyncFillMode ||
+        a.overflowMode != b.overflowMode ||
+        a.transitionMode != b.transitionMode ||
+        a.fontFamily != b.fontFamily ||
+        a.alignmentMode != b.alignmentMode ||
+        a.metadata != b.metadata ||
+        a.metadataVisible != b.metadataVisible ||
+        a.metadataAnchor != b.metadataAnchor ||
+        a.metadataSizePercent != b.metadataSizePercent ||
+        a.adaptiveSectioning != b.adaptiveSectioning ||
+        a.lyricLineLimit != b.lyricLineLimit ||
+        a.palette != b.palette
+    ) return false
+    for (index in a.words.indices) {
+        val wa = a.words[index]
+        val wb = b.words[index]
+        if (wa.text != wb.text || wa.romanized != wb.romanized ||
+            wa.startMs != wb.startMs || wa.endMs != wb.endMs ||
+            wa.boundaryAfter != wb.boundaryAfter ||
+            wa.sourceStart != wb.sourceStart || wa.sourceEnd != wb.sourceEnd
+        ) return false
+    }
+    for (index in a.ruby.indices) {
+        if (a.ruby[index] != b.ruby[index]) return false
+    }
+    for (index in a.layoutGroups.indices) {
+        if (a.layoutGroups[index] != b.layoutGroups[index]) return false
+    }
+    val sa = a.secondLine
+    val sb = b.secondLine
+    if (sa == null || sb == null) return sa == null && sb == null
+    if (sa.text != sb.text || sa.romanized != sb.romanized ||
+        sa.translated != sb.translated || sa.alignedRight != sb.alignedRight ||
+        sa.lineStartMs != sb.lineStartMs || sa.lineEndMs != sb.lineEndMs ||
+        sa.words.size != sb.words.size || sa.ruby.size != sb.ruby.size ||
+        sa.layoutGroups.size != sb.layoutGroups.size
+    ) return false
+    for (index in sa.words.indices) {
+        val wa = sa.words[index]
+        val wb = sb.words[index]
+        if (wa.text != wb.text || wa.romanized != wb.romanized ||
+            wa.startMs != wb.startMs || wa.endMs != wb.endMs ||
+            wa.boundaryAfter != wb.boundaryAfter ||
+            wa.sourceStart != wb.sourceStart || wa.sourceEnd != wb.sourceEnd
+        ) return false
+    }
+    for (index in sa.ruby.indices) {
+        if (sa.ruby[index] != sb.ruby[index]) return false
+    }
+    for (index in sa.layoutGroups.indices) {
+        if (sa.layoutGroups[index] != sb.layoutGroups[index]) return false
+    }
+    return true
+}
+
+/**
+ * Exit-pass content: identical timing, words, and fill state, but glow
+ * muted so an overlapping dissolve cannot double shadow/glow brightness
+ * into a flash. Animation mode stays untouched — Minimal would change
+ * unsung brightness and karaoke progress presentation, and the exit copy
+ * must cross over with the same word states the survivor shows.
+ */
+internal fun AodCanvasContent.withMutedEffects(): AodCanvasContent =
+    copy(glowMode = "Off")
 
 internal data class AodResolvedPalette(
     val primaryText: Int,
@@ -229,19 +338,36 @@ internal fun resolveAodPalette(tokens: Map<String, String>): AodResolvedPalette 
         primaryText = resolvePaletteColor(tokens["primaryText"], Color.WHITE),
         secondaryText = resolvePaletteColor(tokens["secondaryText"], Color.WHITE),
         metadataText = resolvePaletteColor(tokens["metadataText"], 0xFFB3B3B3.toInt()),
-        sungText = resolvePaletteColor(tokens["sungText"], Color.WHITE),
-        unsungText = resolvePaletteColor(tokens["unsungText"], Color.WHITE),
+        sungText = resolvePaletteColor(
+            tokens["sungText"],
+            resolvePaletteColor(tokens["primaryText"], Color.WHITE)
+        ),
+        unsungText = resolvePaletteColor(
+            tokens["unsungText"],
+            resolvePaletteColor(tokens["primaryText"], Color.WHITE)
+        ),
         glow = resolvePaletteColor(tokens["glow"], Color.WHITE),
         accent = resolvePaletteColor(tokens["accent"], Color.WHITE)
     )
 
 private fun resolvePaletteColor(token: String?, fallback: Int): Int = when (token) {
+    "white" -> Color.WHITE
+    "lavender" -> PALETTE_LAVENDER
+    "mint" -> PALETTE_MINT
     "dimmed" -> opaqueRgb(
         (((fallback ushr 16) and 0xFF) * 0.72f).roundToInt(),
         (((fallback ushr 8) and 0xFF) * 0.72f).roundToInt(),
         ((fallback and 0xFF) * 0.72f).roundToInt()
     )
-    else -> fallback
+    else -> token?.let(::parsePaletteHexColor) ?: fallback
+}
+
+private const val PALETTE_LAVENDER = 0xFFB9A8FF.toInt()
+private const val PALETTE_MINT = 0xFF62D891.toInt()
+
+private fun parsePaletteHexColor(value: String): Int? {
+    if (!value.matches(Regex("#[0-9a-fA-F]{6}"))) return null
+    return value.substring(1).toLongOrNull(16)?.toInt()?.let { 0xFF000000.toInt() or it }
 }
 
 private fun opaqueRgb(red: Int, green: Int, blue: Int): Int =
@@ -562,6 +688,20 @@ internal fun baseTextSizeSp(text: String): Float = when {
     else -> 28f
 } * LIVE_CARD_SIZE_MULTIPLIER
 
+/**
+ * Wrap-mode base size: fixed, never bucketed by line length. Length buckets
+ * exist so single-line Clip layouts shrink long lines toward fitting, but in
+ * Wrap mode every primary change to a different-length line would resize all
+ * shared paints and reflow every section. A fixed base keeps all paint sizes
+ * (and therefore all row heights, spans, and fit scales) stable across line
+ * changes; wrapping absorbs length instead.
+ */
+internal const val WRAP_MODE_TEXT_SP = 26f
+
+internal fun baseTextSizeForMode(text: String, overflowMode: String): Float =
+    if (overflowMode != "Wrap") baseTextSizeSp(text)
+    else WRAP_MODE_TEXT_SP * LIVE_CARD_SIZE_MULTIPLIER
+
 internal fun textSizeModeMultiplier(mode: String, custom: Int): Float = when (mode) {
     "small" -> 0.9f
     "large" -> 1.2f
@@ -593,27 +733,27 @@ internal fun rubySpanGeometry(
     )
 }
 
-internal fun rubyTopShift(rubyClipTop: Float, paddingTop: Float): Float =
-    max(0f, paddingTop - rubyClipTop)
+internal fun rubyTopShift(rubyClipTop: Float, logicalPadTop: Float): Float =
+    max(0f, logicalPadTop - rubyClipTop)
 
 internal fun metadataLayoutBounds(
     anchor: String,
     height: Float,
-    paddingTop: Float,
-    paddingBottom: Float,
+    logicalPadTop: Float,
+    logicalPadBottom: Float,
     metadataAscent: Float,
     metadataDescent: Float,
     gap: Float
 ): MetadataLayoutBounds {
     val metadataBaseline = if (anchor == "bottom") {
-        height - paddingBottom - metadataDescent
+        height - logicalPadBottom - metadataDescent
     } else {
-        paddingTop - metadataAscent
+        logicalPadTop - metadataAscent
     }
     return if (anchor == "bottom") {
-        MetadataLayoutBounds(metadataBaseline, paddingTop, metadataBaseline + metadataAscent - gap)
+        MetadataLayoutBounds(metadataBaseline, logicalPadTop, metadataBaseline + metadataAscent - gap)
     } else {
-        MetadataLayoutBounds(metadataBaseline, metadataBaseline + metadataDescent + gap, height - paddingBottom)
+        MetadataLayoutBounds(metadataBaseline, metadataBaseline + metadataDescent + gap, height - logicalPadBottom)
     }
 }
 
@@ -939,6 +1079,97 @@ internal class AodLyricCanvasView(
     private var cadenceMaxDrawGapMs = 0L
     private var cadenceLastDrawAt = 0L
     private var verticalAlignment = AodCanvasVerticalAlignment.CENTER
+    private var verticalBias: Float? = null
+    private var orientationStep = 0
+    private var landscapeTextScale = 1f
+    /** TEMPORARY: last logged wrapped-row index per section (crossing diag). */
+    private val crossingTracker = HashMap<Long, Int>()
+    /**
+     * Committed presentation decisions for the unwrap-on-floor policy:
+     * section id -> (section count at decision time, unwrapped). A committed
+     * section keeps its recorded presentation through same-geometry rebuilds
+     * (late timing refinements may not flip it); a section-count change
+     * (duet join or leave) re-evaluates once.
+     */
+    private val sectionPresentation = HashMap<DuetSectionId, Pair<Int, Boolean>>()
+    /**
+     * Committed draw scales for the conveyor: section id -> scale. An
+     * anchored section keeps its committed scale through partner swaps — the
+     * continuing line never resizes; newcomers size themselves into the
+     * leftover area, and only a genuine combined overflow rescales everyone.
+     */
+    private val sectionScaleCommit = HashMap<DuetSectionId, Float>()
+    /** Last laid-out logical frame, to distinguish real frame changes from size churn. */
+    private var lastLogicalFrameWidth = 0
+    private var lastLogicalFrameHeight = 0
+    /** Visual section ids of the last layout, for positional slot assignment. */
+    private var lastOrderedIds: List<DuetSectionId> = emptyList()
+    /**
+     * Last rendered section tops by line id. A continuing line keeps its
+     * exact top across rebuilds, so the survivor of a join/leave/change
+     * never moves; newcomers stack adjacently. Cleared only when the
+     * coordinate space itself changes (track generation, orientation step,
+     * alignment change) — metadata on/off publication re-solves against the
+     * new area while keeping section anchors.
+     */
+    private var sectionTops: Map<DuetSectionId, Float> = emptyMap()
+    /** Center of the last lyric block, for anchoring full swaps. */
+    private var lastBlockCenter: Float? = null
+    private var anchorGeneration: Long? = null
+    /** Track generations that have shown a duet; stable chain-membership policy. */
+    private val episodeDuetGenerations = HashSet<Long>()
+
+    private fun clearSectionAnchors() {
+        sectionTops = emptyMap()
+        // Section-local decisions key off the same geometry as the anchors:
+        // a frame change re-fits presentations and scales at the new budget
+        // instead of replaying commits from a stale one.
+        sectionPresentation.clear()
+        sectionScaleCommit.clear()
+        lastBlockCenter = null
+        wrapCache.clear()
+    }
+
+    /**
+     * Native-style logical frame: side steps lay out in long-axis x short-axis
+     * coordinates (as if the window itself rotated), then one rigid transform
+     * maps that frame onto the portrait view. Portrait steps use view size.
+     */
+    private fun isSideStep(): Boolean = orientationStep == 90 || orientationStep == 270
+
+    internal fun layoutFrameWidth(): Int =
+        if (isSideStep()) maxOf(width, height) else width
+
+    internal fun layoutFrameHeight(): Int =
+        if (isSideStep()) minOf(width, height) else height
+
+    /**
+     * Logical-frame content padding in pixels. Percent config resolves to px
+     * against the logical axes (X% of frame width, Y% of frame height), which
+     * a symmetric View padding cannot express once the frame is rotated.
+     */
+    private var logicalPadLeft = 0f
+    private var logicalPadTop = 0f
+    private var logicalPadRight = 0f
+    private var logicalPadBottom = 0f
+
+    fun setLogicalPadding(leftPx: Int, topPx: Int, rightPx: Int, bottomPx: Int) {
+        val next = floatArrayOf(
+            leftPx.coerceAtLeast(0).toFloat(),
+            topPx.coerceAtLeast(0).toFloat(),
+            rightPx.coerceAtLeast(0).toFloat(),
+            bottomPx.coerceAtLeast(0).toFloat()
+        )
+        if (logicalPadLeft == next[0] && logicalPadTop == next[1] &&
+            logicalPadRight == next[2] && logicalPadBottom == next[3]
+        ) return
+        logicalPadLeft = next[0]
+        logicalPadTop = next[1]
+        logicalPadRight = next[2]
+        logicalPadBottom = next[3]
+        clearSectionAnchors()
+        rebuildLayout()
+    }
     private val density = resources.displayMetrics.density
     private val scaledDensity = resources.displayMetrics.scaledDensity
     private val fontContext = runCatching {
@@ -998,8 +1229,29 @@ internal class AodLyricCanvasView(
             motionMode = normalizeAodMotion(incomingContent.motionMode),
             overflowMode = normalizeAodOverflow(incomingContent.overflowMode)
         )
+        // Heartbeats republish the same singing line with a fresh position.
+        // A full rebuild for that re-measures every word on the main thread
+        // and reads as a canvas flash; identical layout inputs only advance
+        // timing and cadence state. A paused line can resume through this
+        // path (speed flips 0 <-> 1), so the karaoke gate and frame loop
+        // must re-evaluate; the redraw itself only matters when the draw
+        // depends on timing, transition, or mutable draw-only styling.
+        if (layoutEquivalent(this.content, nextContent)) {
+            this.content = nextContent
+            timingEffectEnabled = hasActiveCanvasTiming(
+                nextContent.lineLevelSync,
+                nextContent.lineSyncFillMode,
+                nextContent.lineStartMs,
+                nextContent.lineEndMs,
+                nextContent.words + nextContent.secondLine?.words.orEmpty(),
+                nextContent.speed
+            )
+            syncCadence()
+            invalidate()
+            return
+        }
         val lineChanged = this.content.original.isNotBlank() &&
-            aodCanvasLineIdentity(this.content) != aodCanvasLineIdentity(nextContent)
+            aodLineTransitionKey(this.content) != aodLineTransitionKey(nextContent)
         val resuming = suppressNextLineTransition
         suppressNextLineTransition = false
         if (shouldStartLineTransition(
@@ -1021,7 +1273,7 @@ internal class AodLyricCanvasView(
             nextContent.lineSyncFillMode,
             nextContent.lineStartMs,
             nextContent.lineEndMs,
-            nextContent.words,
+            nextContent.words + nextContent.secondLine?.words.orEmpty(),
             nextContent.speed
         )
         resolvedPalette = resolveAodPalette(nextContent.palette)
@@ -1036,7 +1288,7 @@ internal class AodLyricCanvasView(
             else -> Alignment.START
         }
         val sizeScale = textSizeModeMultiplier(nextContent.textSizeMode, nextContent.textSizeCustom)
-        val baseSp = baseTextSizeSp(nextContent.original) * sizeScale
+        val baseSp = baseTextSizeForMode(nextContent.original, nextContent.overflowMode) * sizeScale
         val typeface = resolveTypeface(nextContent.fontFamily, nextContent.weight)
         originalPaint.typeface = typeface
         if (nextContent.fontFamily != "auto") {
@@ -1051,17 +1303,45 @@ internal class AodLyricCanvasView(
             translatedPaint.typeface = Typeface.create("sans-serif", Typeface.ITALIC)
             rubyPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
         }
-        originalPaint.textSize = baseSp * scaledDensity
-        metadataPaint.textSize = 14f * metadataTextSizeMultiplier(
-            nextContent.metadataSizePercent
-        ) * scaledDensity
-        romanizedPaint.textSize = max(14f, kotlin.math.round(baseSp * 0.48f)) * scaledDensity
-        translatedPaint.textSize = max(13f, kotlin.math.round(baseSp * 0.48f) - 1f) * scaledDensity
-        rubyPaint.textSize = originalPaint.textSize * 0.46f
+        sizePaints()
         currentRenderStyle = captureRenderStyle()
         rebuildLayout()
         syncCadence()
         invalidate()
+    }
+
+    /**
+     * Landscape-only text multiplier, applied on top of the profile size while
+     * a side orientation step is active. Portrait rendering is untouched.
+     */
+    fun setLandscapeTextScale(scale: Float) {
+        val normalized = if (scale.isFinite()) scale.coerceIn(0.5f, 2f) else 1f
+        if (landscapeTextScale == normalized) return
+        landscapeTextScale = normalized
+        sizePaints()
+        // Text-scale changes resize sections but not the logical frame, so
+        // anchored tops stay valid: the survivor holds its position across
+        // orientation-scale publication, and the clamp re-pins only when the
+        // new heights genuinely cannot fit.
+        currentRenderStyle = captureRenderStyle()
+        rebuildLayout()
+        invalidate()
+    }
+
+    private fun effectiveTextScale(): Float =
+        if (orientationStep == 90 || orientationStep == 270) landscapeTextScale else 1f
+
+    private fun sizePaints() {
+        val sizeScale = textSizeModeMultiplier(content.textSizeMode, content.textSizeCustom) *
+            effectiveTextScale()
+        val baseSp = baseTextSizeForMode(content.original, content.overflowMode) * sizeScale
+        originalPaint.textSize = baseSp * scaledDensity
+        metadataPaint.textSize = 14f * metadataTextSizeMultiplier(
+            content.metadataSizePercent
+        ) * effectiveTextScale() * scaledDensity
+        romanizedPaint.textSize = max(14f, kotlin.math.round(baseSp * 0.48f)) * scaledDensity
+        translatedPaint.textSize = max(13f, kotlin.math.round(baseSp * 0.48f) - 1f) * scaledDensity
+        rubyPaint.textSize = originalPaint.textSize * 0.46f
     }
 
     fun stop() {
@@ -1081,15 +1361,42 @@ internal class AodLyricCanvasView(
     fun setVerticalAlignment(alignment: AodCanvasVerticalAlignment) {
         if (verticalAlignment == alignment) return
         verticalAlignment = alignment
+        clearSectionAnchors()
         rebuildLayout()
         invalidate()
     }
 
     fun visibleContentVerticalBounds(): AodCanvasVerticalBounds? =
         unionAodCanvasVerticalBounds(
-            verticalBounds(layout),
-            exitSnapshot?.layout?.let(::verticalBounds)
+            scaledLayoutBounds(layout),
+            exitSnapshot?.layout?.let(::scaledLayoutBounds)
         )
+
+    /** Layout bounds mapped through per-section fit scales, metadata as-is. */
+    private fun scaledLayoutBounds(state: LayoutState): AodCanvasVerticalBounds? {
+        val tops = measuredSectionTops(state.rows)
+        var top = Float.POSITIVE_INFINITY
+        var bottom = Float.NEGATIVE_INFINITY
+        for (placed in state.rows) {
+            var rowTop = placed.baseline + placed.row.paint.fontMetrics.ascent
+            var rowBottom = rowTop + placed.row.height
+            if (placed.row.kind != RowKind.METADATA) {
+                val scale = state.sectionScales[placed.row.blockIndex] ?: 1f
+                if (scale != 1f) {
+                    val origin = tops[placed.row.blockIndex] ?: rowTop
+                    rowTop = origin + scale * (rowTop - origin)
+                    rowBottom = origin + scale * (rowBottom - origin)
+                }
+            }
+            if (rowTop < top) top = rowTop
+            if (rowBottom > bottom) bottom = rowBottom
+        }
+        if (!top.isFinite() || !bottom.isFinite() || bottom <= top) return null
+        return AodCanvasVerticalBounds(
+            top.coerceIn(0f, layoutFrameHeight().toFloat()),
+            bottom.coerceIn(0f, layoutFrameHeight().toFloat())
+        )
+    }
 
     fun setHandoffActive(active: Boolean) {
         handoffActive = active
@@ -1136,6 +1443,16 @@ internal class AodLyricCanvasView(
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
+        // Xiaomi layout passes publish transient physical size churn that
+        // leaves the logical frame unchanged (side steps render long x short
+        // inside the same portrait view). Only a logical-frame change makes
+        // anchored coordinates meaningless; everything else keeps the
+        // episode and rebuilds silently.
+        val logicalChanged = layoutFrameWidth() != lastLogicalFrameWidth ||
+            layoutFrameHeight() != lastLogicalFrameHeight
+        lastLogicalFrameWidth = layoutFrameWidth()
+        lastLogicalFrameHeight = layoutFrameHeight()
+        if (logicalChanged) clearSectionAnchors()
         rebuildLayout()
     }
 
@@ -1148,10 +1465,28 @@ internal class AodLyricCanvasView(
         super.onDraw(canvas)
         recordDozeDraw()
         syncCadence()
+        // Native-style rotation: layout runs in the logical frame
+        // (long x short for side steps), then one rigid transform maps it
+        // onto the fullscreen portrait view. No oversized child, no manual
+        // translation, no viewport strip.
+        val step = orientationStep
+        val logical = if (step == 90 || step == 270) {
+            canvas.save().also {
+                val logicalWidth = layoutFrameWidth().toFloat()
+                val logicalHeight = layoutFrameHeight().toFloat()
+                canvas.translate(width / 2f, height / 2f)
+                canvas.rotate(if (step == 90) 90f else 270f)
+                canvas.translate(-logicalWidth / 2f, -logicalHeight / 2f)
+                canvas.clipRect(0f, 0f, logicalWidth, logicalHeight)
+            }
+        } else if (step == 180) {
+            canvas.save().also { canvas.rotate(180f, width / 2f, height / 2f) }
+        } else -1
         val snapshot = exitSnapshot
         if (snapshot == null) {
             drawMetadata(canvas, layout)
             drawRows(canvas, layout, content, 1f, 0f)
+            if (logical != -1) canvas.restoreToCount(logical)
             return
         }
         val elapsed = (SystemClock.elapsedRealtime() - transitionStartedAt).coerceAtLeast(0L)
@@ -1177,16 +1512,72 @@ internal class AodLyricCanvasView(
         } else {
             drawMetadata(canvas, layout)
         }
-        drawRows(
-            canvas,
-            snapshot.layout,
-            snapshot.content,
-            1f - exitProgress,
-            if (content.transitionMode == "Fade up") -14f * density * exitProgress else 0f,
-            snapshot.renderStyle,
-            skipOriginal = metadataMorph
-        )
-        drawRows(canvas, layout, content, enterProgress, if (content.transitionMode == "Fade up") 14f * density * (1f - enterProgress) else 0f)
+        // Section-ownership transition: continuing sections draw exactly
+        // once at full opacity from the incoming layout (the survivor never
+        // crossfades against itself — source-over compositing of two 50%
+        // passes yields 75% combined alpha, the join brightness dip);
+        // departing sections fade out with the exit pass; arriving sections
+        // fade in with the enter pass. Solo-to-solo keeps the full
+        // crossfade. Layouts predating section identity fall back to the
+        // legacy full-canvas passes.
+        val sectionIdsKnown = snapshot.layout.sectionIds.isNotEmpty() &&
+            layout.sectionIds.isNotEmpty()
+        if (sectionIdsKnown) {
+            val passes = resolveDuetTransitionPasses(
+                snapshot.layout.sectionIds,
+                layout.sectionIds,
+                snapshot.layout.blocks.map { it.originalLayout.lineCount },
+                layout.blocks.map { it.originalLayout.lineCount }
+            )
+            val duetTransition = snapshot.layout.blocks.size > 1 || layout.blocks.size > 1
+            val slide = content.transitionMode == "Fade up" && !duetTransition
+            drawRows(
+                canvas,
+                snapshot.layout,
+                snapshot.content.withMutedEffects(),
+                1f - exitProgress,
+                if (slide) -14f * density * exitProgress else 0f,
+                snapshot.renderStyle,
+                skipOriginal = metadataMorph,
+                blockFilter = { block -> block in passes.departingExitBlocks }
+            )
+            drawRows(
+                canvas,
+                layout,
+                content,
+                1f,
+                0f,
+                blockFilter = { block -> block in passes.continuingEnterBlocks }
+            )
+            drawRows(
+                canvas,
+                layout,
+                content,
+                enterProgress,
+                if (slide) 14f * density * (1f - enterProgress) else 0f,
+                blockFilter = { block -> block in passes.arrivingEnterBlocks }
+            )
+        } else {
+            val duetTransition = snapshot.layout.blocks.size > 1 || layout.blocks.size > 1
+            val slide = content.transitionMode == "Fade up" && !duetTransition
+            drawRows(
+                canvas,
+                snapshot.layout,
+                snapshot.content.withMutedEffects(),
+                1f - exitProgress,
+                if (slide) -14f * density * exitProgress else 0f,
+                snapshot.renderStyle,
+                skipOriginal = metadataMorph
+            )
+            drawRows(
+                canvas,
+                layout,
+                content,
+                enterProgress,
+                if (slide) 14f * density * (1f - enterProgress) else 0f
+            )
+        }
+        if (logical != -1) canvas.restoreToCount(logical)
         if (enterProgress >= 1f) {
             transitionStartedAt = 0L
             exitSnapshot = null
@@ -1201,10 +1592,13 @@ internal class AodLyricCanvasView(
         alpha: Float,
         translateY: Float,
         renderStyle: RenderStyleSnapshot? = null,
-        skipOriginal: Boolean = false
+        skipOriginal: Boolean = false,
+        blockFilter: ((Int) -> Boolean)? = null
     ) {
         if (alpha <= 0f || drawLayout.rows.none {
-                it.row.kind != RowKind.METADATA && (!skipOriginal || it.row.kind != RowKind.ORIGINAL)
+                it.row.kind != RowKind.METADATA &&
+                    (!skipOriginal || it.row.kind != RowKind.ORIGINAL) &&
+                    blockFilter?.invoke(it.row.blockIndex) != false
             }
         ) return
         val savedContent = content
@@ -1212,30 +1606,47 @@ internal class AodLyricCanvasView(
         if (renderStyle != null) applyRenderStyle(renderStyle)
         content = drawContent
         layout = drawLayout
-        val layer = if (alpha < 1f || translateY != 0f) {
-            val save = canvas.saveLayerAlpha(0f, 0f, width.toFloat(), height.toFloat(), (255f * alpha).toInt())
-            canvas.translate(0f, translateY)
-            save
-        } else canvas.save()
-        val sharedLineLevelSweep = shouldUseSharedLineLevelSweep(
-            drawContent.lineLevelSync,
-            drawLayout.original.lines.isNotEmpty(),
-            drawContent.animationMode,
-            drawContent.lineStartMs,
-            drawContent.lineEndMs
-        )
-        if (sharedLineLevelSweep) {
-            drawSharedLineLevelRows(canvas, drawLayout.rows)
+        val layer = if (alpha < 1f) {
+            canvas.saveLayerAlpha(0f, 0f, layoutFrameWidth().toFloat(), layoutFrameHeight().toFloat(), (255f * alpha).toInt())
         } else {
-            var rowIndex = 0
-            while (rowIndex < drawLayout.rows.size) {
-                val row = drawLayout.rows[rowIndex]
-                when (row.row.kind) {
-                    RowKind.METADATA -> Unit
-                    RowKind.ORIGINAL -> if (!skipOriginal) drawOriginal(canvas, row.baseline)
-                    else -> drawText(canvas, row.row, row.baseline)
+            canvas.save()
+        }
+        if (translateY != 0f) canvas.translate(0f, translateY)
+        // Each section draws at its own fit scale around its precomputed
+        // alignment-aware pivot, so a tall newcomer shrinks itself without
+        // moving the survivor's alignment edge. The common all-full-size
+        // case keeps the exact legacy single pass.
+        val blocks = blockDrawDataFor(drawLayout, drawContent)
+        val deferred = deferredDuetBlockIndices(
+            blocks.map { it.lineStartMs },
+            projectedPosition()
+        )
+        val passesFilter = blockFilter
+        val lyricGroups = drawLayout.rows.filter { it.row.kind != RowKind.METADATA }
+            .groupBy { it.row.blockIndex }.toSortedMap()
+        val needsScales = drawLayout.sectionScales.values.any { it != 1f }
+        if (!needsScales && passesFilter == null) {
+            drawLyricRowGroup(canvas, drawLayout.rows, blocks, deferred, drawContent, skipOriginal)
+        } else {
+            val sectionTops = measuredSectionTops(drawLayout.rows)
+            for ((block, group) in lyricGroups) {
+                if (passesFilter?.invoke(block) == false) continue
+                val scale = drawLayout.sectionScales[block] ?: 1f
+                if (scale == 1f) {
+                    drawLyricRowGroup(canvas, group, blocks, deferred, drawContent, skipOriginal)
+                    continue
                 }
-                rowIndex++
+                val save = canvas.save()
+                val originX = drawLayout.sectionPivotsX[block]
+                    ?: layoutFrameWidth() / 2f
+                val originY = sectionTops[block] ?: group.firstOrNull()?.let {
+                    it.baseline + it.row.paint.fontMetrics.ascent - it.row.gapBefore
+                } ?: 0f
+                canvas.translate(originX, originY)
+                canvas.scale(scale, scale)
+                canvas.translate(-originX, -originY)
+                drawLyricRowGroup(canvas, group, blocks, deferred, drawContent, skipOriginal)
+                canvas.restoreToCount(save)
             }
         }
         canvas.restoreToCount(layer)
@@ -1244,38 +1655,100 @@ internal class AodLyricCanvasView(
         if (renderStyle != null) applyRenderStyle(currentRenderStyle)
     }
 
-    private fun drawSharedLineLevelRows(canvas: Canvas, rows: List<PositionedRow>) {
-        val original = rows.firstOrNull { it.row.kind == RowKind.ORIGINAL } ?: return
-        val progress = lineProgress()
+    /**
+     * Draws one lyric section's rows: shared line-level sweep where it
+     * applies, word-timed originals, and static secondary rows. The caller
+     * owns the canvas transform; all coordinates stay in layout space.
+     */
+    private fun drawLyricRowGroup(
+        canvas: Canvas,
+        group: List<PositionedRow>,
+        blocks: List<BlockDrawData>,
+        deferred: Set<Int>,
+        drawContent: AodCanvasContent,
+        skipOriginal: Boolean
+    ) {
+        val sweepRows = group.filter { positioned ->
+            positioned.row.kind != RowKind.METADATA &&
+                positioned.row.blockIndex !in deferred &&
+                blocks.getOrNull(positioned.row.blockIndex)?.let { block ->
+                    shouldUseSharedLineLevelSweep(
+                        drawContent.lineLevelSync,
+                        block.originalLayout.lines.isNotEmpty(),
+                        drawContent.animationMode,
+                        block.lineStartMs,
+                        block.lineEndMs
+                    )
+                } == true
+        }
+        if (sweepRows.any { it.row.kind == RowKind.ORIGINAL }) {
+            drawSharedLineLevelRows(canvas, sweepRows, blocks)
+        }
+        val sweepSet = sweepRows.toSet()
+        for (row in group) {
+            if (row.row.kind == RowKind.METADATA || row in sweepSet ||
+                row.row.blockIndex in deferred
+            ) {
+                continue
+            }
+            when (row.row.kind) {
+                RowKind.METADATA -> Unit
+                RowKind.ORIGINAL -> if (!skipOriginal) {
+                    blocks.getOrNull(row.row.blockIndex)?.let { block ->
+                        drawOriginal(canvas, row.baseline, block)
+                    }
+                }
+                else -> drawText(canvas, row.row, row.baseline)
+            }
+        }
+    }
+
+    /**
+     * Line-level sweep per lyric section: each concurrent block runs the same
+     * sweep mode with its own progress window, so overlapping lines fill
+     * independently inside their own canvas sections.
+     */
+    private fun drawSharedLineLevelRows(
+        canvas: Canvas,
+        rows: List<PositionedRow>,
+        blocks: List<BlockDrawData>
+    ) {
         clearBlockSweepShaders()
         val mode = resolvedLineSyncFillMode(content.lineLevelSync, content.lineSyncFillMode)
-        if (mode == "Left to right (whole block)") {
-            drawWholeBlockSweepRows(canvas, rows, original.baseline, progress)
-            return
-        }
-        drawSecondaryRowsStatic(canvas, rows, bright = content.secondaryTextBright)
-        drawOriginalRubyRows(canvas, original.baseline, bright = true)
-        when (mode) {
-            "None" -> {
-                drawUntimedLines(canvas, original.baseline, bright = true, progress)
+        val groups = rows.filter { it.row.kind != RowKind.METADATA }
+            .groupBy { it.row.blockIndex }
+        for ((blockIndex, group) in groups) {
+            val original = group.firstOrNull { it.row.kind == RowKind.ORIGINAL } ?: continue
+            val block = blocks.getOrNull(blockIndex) ?: continue
+            val progress = blockProgress(block)
+            if (mode == "Left to right (whole block)") {
+                drawWholeBlockSweepRows(canvas, group, original.baseline, progress, block)
+                continue
             }
-            "Left to right (main only)" -> {
-                drawContinuousLineFill(canvas, original.baseline, progress)
-                clearBlockSweepShaders()
-            }
-            else -> {
-                drawUntimedLines(canvas, original.baseline, false, progress)
-                val blockTop = (original.baseline + original.row.paint.fontMetrics.ascent)
-                    .coerceAtLeast(paddingTop.toFloat())
-                val blockBottom = (blockTop + original.row.height)
-                    .coerceAtMost((height - paddingBottom).toFloat())
-                applyBlockSweepShaders(
-                    origin = blockTop,
-                    progress = progress,
-                    extent = blockBottom - blockTop
-                )
-                drawUntimedLines(canvas, original.baseline, true, progress)
-                clearBlockSweepShaders()
+            drawSecondaryRowsStatic(canvas, group, bright = content.secondaryTextBright)
+            drawOriginalRubyRows(canvas, original.baseline, block, bright = true)
+            when (mode) {
+                "None" -> {
+                    drawUntimedLines(canvas, original.baseline, bright = true, progress, block)
+                }
+                "Left to right (main only)" -> {
+                    drawContinuousLineFill(canvas, original.baseline, progress, block)
+                    clearBlockSweepShaders()
+                }
+                else -> {
+                    drawUntimedLines(canvas, original.baseline, false, progress, block)
+                    val blockTop = (original.baseline + original.row.paint.fontMetrics.ascent)
+                        .coerceAtLeast(logicalPadTop)
+                    val blockBottom = (blockTop + original.row.height)
+                        .coerceAtMost((layoutFrameHeight() - logicalPadBottom))
+                    applyBlockSweepShaders(
+                        origin = blockTop,
+                        progress = progress,
+                        extent = blockBottom - blockTop
+                    )
+                    drawUntimedLines(canvas, original.baseline, true, progress, block)
+                    clearBlockSweepShaders()
+                }
             }
         }
     }
@@ -1284,11 +1757,12 @@ internal class AodLyricCanvasView(
         canvas: Canvas,
         rows: List<PositionedRow>,
         baseline: Float,
-        progress: Float
+        progress: Float,
+        block: BlockDrawData
     ) {
         drawSecondaryRowsStatic(canvas, rows, bright = false)
-        drawOriginalRubyRows(canvas, baseline, bright = false)
-        drawUntimedLines(canvas, baseline, bright = false, progress)
+        drawOriginalRubyRows(canvas, baseline, block, bright = false)
+        drawUntimedLines(canvas, baseline, bright = false, progress, block)
         applyWholeBlockHorizontalSweepShaders(progress)
         drawSecondaryRowsStatic(
             canvas,
@@ -1296,8 +1770,8 @@ internal class AodLyricCanvasView(
             bright = content.secondaryTextBright,
             keepShader = true
         )
-        drawOriginalRubyRows(canvas, baseline, bright = true)
-        drawUntimedLines(canvas, baseline, bright = true, progress)
+        drawOriginalRubyRows(canvas, baseline, block, bright = true)
+        drawUntimedLines(canvas, baseline, bright = true, progress, block)
         clearBlockSweepShaders()
     }
 
@@ -1341,16 +1815,22 @@ internal class AodLyricCanvasView(
         }
     }
 
-    private fun drawOriginalRubyRows(canvas: Canvas, baseline: Float, bright: Boolean) {
+    private fun drawOriginalRubyRows(
+        canvas: Canvas,
+        baseline: Float,
+        block: BlockDrawData,
+        bright: Boolean
+    ) {
+        val originalLayout = block.originalLayout
         var precedingRuby = 0f
-        layout.original.lines.forEachIndexed { lineIndex, line ->
+        originalLayout.lines.forEachIndexed { lineIndex, line ->
             val lineBaseline = originalLineBaseline(
                 baseline,
                 lineIndex,
-                layout.original.lineHeight,
+                originalLayout.lineHeight,
                 precedingRuby,
                 line.rubyHeight,
-                layout.original.lineGap
+                originalLayout.lineGap
             )
             if (line.ruby.isNotEmpty()) drawRuby(canvas, line, lineBaseline, bright)
             precedingRuby += line.rubyHeight
@@ -1389,7 +1869,7 @@ internal class AodLyricCanvasView(
         val metadata = drawLayout.rows.firstOrNull { it.row.kind == RowKind.METADATA } ?: return
         if (renderStyle != null) applyRenderStyle(renderStyle)
         canvas.save()
-        canvas.clipRect(paddingLeft, paddingTop, width - paddingRight, height - paddingBottom)
+        canvas.clipRect(logicalPadLeft, logicalPadTop, layoutFrameWidth() - logicalPadRight, layoutFrameHeight() - logicalPadBottom)
         metadata.row.paint.color = resolvedPalette.metadataText
         metadata.row.paint.alpha = (255f * alpha.coerceIn(0f, 1f)).roundToInt()
         metadata.row.lines.forEachIndexed { index, line ->
@@ -1443,14 +1923,59 @@ internal class AodLyricCanvasView(
         val x = sourceLine.startX + (destinationLine.startX - sourceLine.startX) * value
         val y = sourceRow.baseline + (destinationRow.baseline - sourceRow.baseline) * value
         canvas.save()
-        canvas.clipRect(paddingLeft, paddingTop, width - paddingRight, height - paddingBottom)
+        canvas.clipRect(logicalPadLeft, logicalPadTop, layoutFrameWidth() - logicalPadRight, layoutFrameHeight() - logicalPadBottom)
         canvas.drawText(content.metadata, x, y, paint)
         canvas.restore()
     }
 
     private fun rebuildLayout() {
-        val originalLayout = buildOriginalLayout()
-        val rows = ArrayList<Row>(4)
+        // Episode state snapshot: blank, placeholder, and degenerate passes
+        // restore everything below instead of committing.
+        val savedTops = sectionTops
+        val savedCenter = lastBlockCenter
+        val savedOrder = lastOrderedIds
+        val savedAnchorGen = anchorGeneration
+        // Blank gap builds, song-change intro placeholders, and pre-layout
+        // zero-size frames clear the screen but must not commit episode
+        // state: wiping anchors/order (or flip-flopping the generation) makes
+        // the next real build re-place everything.
+        val built = buildLyricLayout()
+        val frameUsable = layoutFrameWidth() > 0 && layoutFrameHeight() > 0
+        val hasLyricRows = built.first.rows.any { it.row.kind != RowKind.METADATA }
+        val timingValid = content.lineEndMs > content.lineStartMs
+        if (shouldCommitLayoutState(hasLyricRows, frameUsable, timingValid)) {
+            // Anchors commit once per rebuild from the single full-size pass.
+            sectionTops = built.second
+            lastBlockCenter = built.third
+        } else {
+            sectionTops = savedTops
+            lastBlockCenter = savedCenter
+            lastOrderedIds = savedOrder
+            anchorGeneration = savedAnchorGen
+        }
+        layout = built.first
+        contentBoundsChangedListener?.invoke()
+    }
+
+    /** Lyric area vertical bounds (top to bottom) for the current content. */
+    private fun lyricAreaBounds(hasMetadata: Boolean): Pair<Float, Float> {
+        val frameHeight = layoutFrameHeight().toFloat()
+        if (!hasMetadata) return logicalPadTop to (frameHeight - logicalPadBottom)
+        val anchor = if (content.metadataAnchor == "bottom") "bottom" else "top"
+        val bounds = metadataLayoutBounds(
+            anchor,
+            frameHeight,
+            logicalPadTop,
+            logicalPadBottom,
+            metadataPaint.fontMetrics.ascent,
+            metadataPaint.fontMetrics.descent,
+            10f * density
+        )
+        return bounds.lyricStart to bounds.lyricEnd
+    }
+
+    private fun buildLyricLayout(): Triple<LayoutState, Map<DuetSectionId, Float>, Float?> {
+        val metadataRows = ArrayList<Row>(1)
         val metadataPlaceholder = isSongChangeMetadataPlaceholder(
             content.original,
             content.metadata,
@@ -1459,44 +1984,612 @@ internal class AodLyricCanvasView(
             content.words.any { it.endMs > it.startMs }
         )
         if (content.metadataVisible && content.metadata.isNotBlank() && !metadataPlaceholder) {
-            rows += row(RowKind.METADATA, content.metadata, metadataPaint, 0f, false)
+            metadataRows += row(RowKind.METADATA, content.metadata, metadataPaint, 0f, false)
+                .copy(blockIndex = -1)
         }
-        if (content.original.isNotBlank()) {
-            val metrics = originalPaint.fontMetrics
-            val lineHeight = metrics.descent - metrics.ascent + 2f * density
-            rows += Row(
-                RowKind.ORIGINAL,
-                content.original,
-                originalPaint,
-                originalRowHeight(
+        val primary = MainLineData(content)
+        val second = content.secondLine
+            ?.takeIf { it.text.isNotBlank() }
+            ?.let { MainLineData(it) }
+        // Duet slot conveyor, earliest first: the line already on screen
+        // keeps its exact rows while a newcomer stacks adjacently, an
+        // expired line's slot stays logically reserved, and the next arrival
+        // takes it. A lone fresh line centers exactly as before.
+        val primaryId =
+            DuetSectionId(content.trackGeneration, content.lineStartMs, content.lineEndMs)
+        val ordered: List<Pair<DuetSectionId, MainLineData>>
+        if (second == null) {
+            ordered = listOf(primaryId to primary)
+        } else {
+            val secondId =
+                DuetSectionId(content.trackGeneration, second.lineStartMs, second.lineEndMs)
+            val byId = mapOf(primaryId to primary, secondId to second)
+            ordered = if (primaryId == secondId) {
+                listOf(primaryId to primary, secondId to second)
+            } else {
+                // Positional slots: continuing lines keep their slot, the
+                // newcomer inherits the vacated one. Line 3 takes line 1's
+                // place above line 2 instead of appending below it.
+                assignDuetSlots(listOf(primaryId, secondId), lastOrderedIds)
+                    .map { it to byId.getValue(it) }
+            }
+        }
+        lastOrderedIds = ordered.map { it.first }
+        val orderedIds = ordered.map { it.first }
+        forcedHits.clear()
+        sectionPresentation.keys.retainAll(orderedIds.toSet())
+        // Anchor continuity: only a new track invalidates line coordinates.
+        // Metadata on/off publication changes the lyric area, not section
+        // identity, so anchors survive and placement re-solves against the
+        // new area; a full swap (nothing continues) re-centers through the
+        // slot helper on the last block center.
+        if (content.trackGeneration != anchorGeneration) {
+            sectionTops = emptyMap()
+            sectionPresentation.clear()
+            sectionScaleCommit.clear()
+            lastBlockCenter = null
+            anchorGeneration = content.trackGeneration
+        }
+        // A lone line with no anchor is a fresh solo and centers; everything
+        // else (chain solo included) holds its slot through the helper.
+        // Landscape anchored sections cap secondary rows at one line each so
+        // the pair fits without shrinking the survivor; fresh solos and
+        // portrait keep legacy two-line secondaries. Participation comes
+        // from the episode flag, not anchor presence: anchors appear after
+        // the first build, so deriving policy from them flips a solo's
+        // sizing policy on its second rebuild.
+        val episodeHadDuet = episodeDuetGenerations.contains(content.trackGeneration)
+        if (second != null) episodeDuetGenerations.add(content.trackGeneration)
+        if (episodeDuetGenerations.size > 8) episodeDuetGenerations.clear()
+        val freshSolo = orderedIds.size == 1 && !episodeHadDuet
+        val secondaryCap = duetSecondaryLineCap(!freshSolo, isSideStep())
+        var primaryVisualIndex = 0
+        val built = ordered.mapIndexed { index, (_, data) ->
+            if (data.lineStartMs == content.lineStartMs &&
+                data.lineEndMs == content.lineEndMs &&
+                data.text == content.original
+            ) {
+                primaryVisualIndex = index
+            }
+            buildLyricBlock(data, index, secondaryCap)
+        }.toMutableList()
+        val hasMetadata = metadataRows.isNotEmpty()
+        val area = lyricAreaBounds(hasMetadata)
+        val areaHeight = (area.second - area.first).coerceAtLeast(0f)
+        // Shared fit: every section draws at one common scale, sized by the
+        // combined stack against the whole lyric area. A tall section never
+        // pays for the pair alone, sections keep matching glyph sizes, and
+        // nobody shrinks unless the combined content genuinely exceeds the
+        // canvas. A lone section is the degenerate case of the same formula.
+        fun sectionStackHeight(triple: Triple<OriginalLayout, List<Row>, BlockDrawData>): Float {
+            var total = 0f
+            for (row in triple.second) total += row.height + row.gapBefore
+            return total
+        }
+        val sectionTotals = built.map(::sectionStackHeight)
+        val wrappedShared = resolveSharedDuetScale(sectionTotals.sum(), areaHeight)
+        // Unwrap-on-floor policy (landscape only): a section that actually
+        // shrinks (the shared fit drops below full size) presents one line
+        // per row instead of several wrapped rows — but only when the
+        // single-line form stays within tolerance of the wrapped scale, so
+        // wide lines that would unwrap into a far tinier line keep their
+        // wrap. Portrait keeps the wrapped stack: the narrow frame
+        // width-binds every single line, so unwrapping there only shrinks
+        // the section below its wrapped form. A committed decision
+        // reproduces its recorded presentation exactly on every rebuild —
+        // including rebuilding the single-line form — so the section cannot
+        // flip back to wrapped after its anchor commits.
+        val unwrappedSections = HashSet<Int>()
+        val drawAvailableWidth = (layoutFrameWidth() - logicalPadLeft - logicalPadRight).coerceAtLeast(1f)
+        val unwrapAllowed = isSideStep()
+        built.forEachIndexed { index, triple ->
+            val id = orderedIds[index]
+            val recorded = sectionPresentation[id]
+            if (unwrapAllowed && recorded != null && recorded.first == orderedIds.size &&
+                sectionTops.containsKey(id)
+            ) {
+                if (recorded.second) {
+                    built[index] = buildLyricBlock(ordered[index].second, index, 1, forceSingleLine = true)
+                    unwrappedSections.add(index)
+                }
+                return@forEachIndexed
+            }
+            if (!unwrapAllowed || triple.first.lineCount <= 1 || wrappedShared >= 1f) {
+                return@forEachIndexed
+            }
+            val candidate = buildLyricBlock(ordered[index].second, index, 1, forceSingleLine = true)
+            val candidateCombined = sectionTotals.sum() - sectionTotals[index] +
+                sectionStackHeight(candidate)
+            var widest = 0f
+            candidate.first.lines.forEach { line ->
+                val (visualLeft, visualRight) = visualExtents(line.text, originalPaint, line.width)
+                widest = maxOf(widest, visualRight - visualLeft)
+            }
+            for (row in candidate.second) {
+                for (line in row.lines) {
+                    val (visualLeft, visualRight) = visualExtents(line.text, row.paint, line.width)
+                    widest = maxOf(widest, visualRight - visualLeft)
+                }
+            }
+            val candidateScale = minOf(
+                resolveSharedDuetScale(candidateCombined, areaHeight),
+                resolveVisualWidthFitScale(widest, drawAvailableWidth)
+            )
+            val wantUnwrapped = shouldUnwrapShrunkSection(wrappedShared, candidateScale)
+            sectionPresentation[id] = orderedIds.size to wantUnwrapped
+            if (wantUnwrapped) {
+                built[index] = candidate
+                unwrappedSections.add(index)
+            }
+        }
+        val rows = ArrayList<Row>(8)
+        rows += metadataRows
+        built.forEach { rows += it.second }
+        val blocks = built.map { it.third }
+        val layouts = built.map { it.first }
+        val finalTotals = built.map(::sectionStackHeight)
+        val sectionScales = HashMap<Int, Float>()
+        // Conveyor scale: anchored sections keep their committed scale
+        // through partner swaps (the continuing line never resizes).
+        // Newcomers size themselves into the leftover area at an exact fit;
+        // a fresh formation shares one exact scale so the pair keeps
+        // matching glyph sizes; only when a newcomer cannot fit the leftover
+        // at all does the whole set rescale to the uniform shared fit.
+        fun widthCappedScale(index: Int, base: Float): Float = if (index in unwrappedSections) {
+            var widest = 0f
+            built[index].first.lines.forEach { line ->
+                val (visualLeft, visualRight) = visualExtents(line.text, originalPaint, line.width)
+                widest = maxOf(widest, visualRight - visualLeft)
+            }
+            for (row in built[index].second) {
+                for (line in row.lines) {
+                    val (visualLeft, visualRight) = visualExtents(line.text, row.paint, line.width)
+                    widest = maxOf(widest, visualRight - visualLeft)
+                }
+            }
+            minOf(base, resolveVisualWidthFitScale(widest, drawAvailableWidth))
+        } else {
+            base
+        }
+        fun commitScale(index: Int, base: Float) {
+            val scale = widthCappedScale(index, base)
+            sectionScales[index] = scale
+            sectionScaleCommit[orderedIds[index]] = scale
+        }
+        val continuing = built.indices.filter { index ->
+            sectionTops.containsKey(orderedIds[index]) &&
+                sectionScaleCommit.containsKey(orderedIds[index])
+        }
+        val newcomers = built.indices.filter { index -> index !in continuing }
+        val committedDrawn = continuing.sumOf { index ->
+            (finalTotals[index] * sectionScaleCommit.getValue(orderedIds[index])).toDouble()
+        }
+        val leftover = (areaHeight - committedDrawn).toFloat().coerceAtLeast(0f)
+        val leftoverFits = HashMap<Int, Float>()
+        var newcomerOverflow = false
+        for (index in newcomers) {
+            val fit = resolveSharedDuetScale(finalTotals[index], leftover)
+            if (finalTotals[index] > leftover) {
+                newcomerOverflow = true
+                break
+            }
+            leftoverFits[index] = fit
+        }
+        when {
+            // Fully continuing set: the committed scales stand untouched.
+            newcomers.isEmpty() -> Unit
+            // Formation with no committed sections: one shared exact scale.
+            continuing.isEmpty() -> {
+                val shared = resolveSharedDuetScale(finalTotals.sum(), areaHeight)
+                built.indices.forEach { commitScale(it, shared) }
+            }
+            // A newcomer cannot fit the leftover: rescale the whole set to
+            // the uniform shared fit.
+            newcomerOverflow -> {
+                val shared = resolveSharedDuetScale(finalTotals.sum(), areaHeight)
+                built.indices.forEach { commitScale(it, shared) }
+            }
+            // Survivor-first: continuing sections keep their scales; the
+            // newcomer takes what remains.
+            else -> newcomers.forEach { index ->
+                commitScale(index, leftoverFits.getValue(index))
+            }
+        }
+        sectionScaleCommit.keys.retainAll(orderedIds.toSet())
+        built.forEachIndexed { index, triple ->
+            if (sectionScales[index] == null) sectionScales[index] = 1f
+        }
+        val topsByBlock: Map<Int, Float>?
+        if (freshSolo) {
+            topsByBlock = null
+        } else {
+            // Scaled adjacency: stack against drawn edges so a shrunk section
+            // leaves no gap and a tall newcomer lands in the freed slot.
+            val scaled = LinkedHashMap<DuetSectionId, Float>()
+            for ((index, id) in orderedIds.withIndex()) {
+                var total = 0f
+                for (row in built[index].second) total += row.height + row.gapBefore
+                scaled[id] = total * (sectionScales[index] ?: 1f)
+            }
+            // First render of this section set (no anchors yet) centers the
+            // stack at the area center deterministically. A stale
+            // lastBlockCenter from the previous line or the song-change intro
+            // would misplace the whole stack and only settle on the next
+            // line change — exactly the first-render overlap.
+            val tops = LinkedHashMap(placeDuetSectionTops(
+                orderedIds,
+                scaled,
+                (area.first + area.second) / 2f,
+                sectionTops,
+                if (sectionTops.isEmpty()) null else lastBlockCenter
+            ))
+            // Drawn-space chaining with consistency-checked anchors. The
+            // first section owns its anchored top (the conveyor slot). Every
+            // later section keeps its anchor only while it agrees with the
+            // previous section's current drawn bottom; a mismatch means the
+            // survivor's height changed after this anchor was committed
+            // (e.g. the entrance burst where the primary's secondary lanes
+            // publish late and grow the section), and the dependent section
+            // re-chains instead of overlapping or leaving a gap.
+            var expectedTop = tops[orderedIds[0]]
+            var prevBottom = expectedTop?.plus(scaled[orderedIds[0]] ?: 0f)
+            for (index in 1 until orderedIds.size) {
+                val id = orderedIds[index]
+                val anchored = sectionTops[id]
+                val chained = prevBottom
+                val top = when {
+                    anchored != null && chained != null &&
+                        kotlin.math.abs(anchored - chained) <= ANCHOR_CONSISTENCY_PX -> anchored
+                    chained != null -> chained
+                    else -> anchored ?: (area.first + area.second) / 2f
+                }
+                tops[id] = top
+                expectedTop = top
+                prevBottom = top + (scaled[id] ?: 0f)
+            }
+            topsByBlock = tops.mapKeys { (id, _) -> orderedIds.indexOf(id) }
+        }
+        val positioned = positionRows(rows, layouts, topsByBlock)
+        // Anchored sections define their own placement; the free vertical
+        // anchor only moves a fresh lone section, preserving legacy behavior.
+        // Anchored blocks are then clamped on their drawn bounds into the
+        // lyric area as a whole, so the block re-pins instead of running
+        // off-screen. The survivor moves only when clipping is unavoidable.
+        val drawnBeforeClamp = if (topsByBlock != null) {
+            drawnSpanBounds(positioned, topsByBlock, sectionScales)
+        } else {
+            null
+        }
+        val clampShift = if (drawnBeforeClamp != null) {
+            resolveBlockClampShift(
+                drawnBeforeClamp.first,
+                drawnBeforeClamp.second,
+                area.first,
+                area.second
+            )
+        } else {
+            0f
+        }
+        val finalPositioned = if (topsByBlock == null) {
+            applyVerticalBias(positioned)
+        } else if (clampShift == 0f) {
+            positioned
+        } else {
+            positioned.map { it.copy(baseline = it.baseline + clampShift) }
+        }
+        // Anchors are measured from what is actually drawn (post ruby
+        // clearance), so the next pass continues from truth, not intent.
+        val measured = measuredSectionTops(finalPositioned)
+        val committedTops = LinkedHashMap<DuetSectionId, Float>()
+        for ((block, top) in measured) {
+            if (block >= 0 && block < orderedIds.size) committedTops[orderedIds[block]] = top
+        }
+        // Full-swap fallback centers on drawn truth (post clamp shift).
+        val blockCenter = if (drawnBeforeClamp != null) {
+            (drawnBeforeClamp.first + clampShift + drawnBeforeClamp.second + clampShift) / 2f
+        } else {
+            var spanTop = Float.POSITIVE_INFINITY
+            var spanBottom = Float.NEGATIVE_INFINITY
+            for (placed in finalPositioned) {
+                if (placed.row.kind == RowKind.METADATA) continue
+                val rowTop = placed.baseline + placed.row.paint.fontMetrics.ascent
+                val rowBottom = rowTop + placed.row.height
+                if (rowTop < spanTop) spanTop = rowTop
+                if (rowBottom > spanBottom) spanBottom = rowBottom
+            }
+            if (spanTop.isFinite() && spanBottom.isFinite() && spanBottom > spanTop) {
+                (spanTop + spanBottom) / 2f
+            } else {
+                null
+            }
+        }
+        // TEMPORARY full layout-input trace (remove after device capture):
+        // every wrap/size input per section (breaks, texts, words, offsets,
+        // groups, secondary rows, base size, fit scale, tops, transitions).
+        if (HookLogger.traceEnabled) {
+            val inTransition = exitSnapshot != null
+            val baseSp = originalPaint.textSize / scaledDensity
+            val summary = ordered.mapIndexed { index, (id, data) ->
+                val hit = forcedHits.getOrNull(index) ?: false
+                val nullOffsets = data.words.count { transportedWordOffset(data.text, it) == null }
+                var sec = 0
+                if (data.romanized.isNotBlank()) sec += 1
+                if (data.translated.isNotBlank()) sec += 2
+                if (data.ruby.isNotEmpty()) sec += 4
+                val top = committedTops[id]?.roundToInt() ?: -1
+                val fit = sectionScales[index] ?: 1f
+                val sectionRows = built[index].second
+                val rom = sectionRows.filter { it.kind == RowKind.ROMANIZED }.sumOf { it.lines.size }
+                val trans = sectionRows.filter { it.kind == RowKind.TRANSLATED }.sumOf { it.lines.size }
+                "${id.lineStartMs}..${id.lineEndMs}:${built[index].first.lineCount}:" +
+                    "${data.text.length}:${data.words.size}:$nullOffsets:" +
+                    "${data.text.hashCode()}:${if (hit) "f" else "-"}:" +
+                    "${if (index in unwrappedSections) "u" else "-"}:$top:$sec:" +
+                    "${if (inTransition) "t" else "-"}:$fit:$rom:$trans:" +
+                    "${data.layoutGroups.size}"
+            }
+            HookLogger.i(
+                "AodDuetLayout",
+                "DuetLayout gen=${content.trackGeneration} sections=$summary " +
+                    "base=${"%.1f".format(baseSp)} limit=${content.lyricLineLimit} " +
+                    "size=${content.textSizeMode}/${content.textSizeCustom} " +
+                    "landscape=${landscapeTextScale}@step=${orientationStep} " +
+                    "font=${content.fontFamily}/${content.weight} " +
+                    "md=${content.metadata.length}:${content.metadata.hashCode()} " +
+                    "pal=${content.palette.hashCode()} bri=${content.secondaryTextBright} " +
+                    "view=${System.identityHashCode(this)} frame=${width}x${height} " +
+                    "anchors=${sectionTops.size} center=$lastBlockCenter meta=$hasMetadata"
+            )
+        }
+        // Precomputed per-section draw transforms: alignment-aware horizontal
+        // pivot (START/END/CENTER preserves the alignment edge through the
+        // shrink) plus the vertical top. Drawing consumes these; onDraw
+        // never rescans extents.
+        val sectionTopsForPivot = measuredSectionTops(finalPositioned)
+        val sectionPivotsX = HashMap<Int, Float>()
+        built.forEachIndexed { index, triple ->
+            var left = Float.POSITIVE_INFINITY
+            var right = Float.NEGATIVE_INFINITY
+            val block = triple.third
+            block.originalLayout.lines.forEach { line ->
+                if (line.startX < left) left = line.startX
+                if (line.startX + line.width > right) right = line.startX + line.width
+            }
+            for (row in triple.second) {
+                for (line in row.lines) {
+                    if (line.startX < left) left = line.startX
+                    if (line.startX + line.width > right) right = line.startX + line.width
+                }
+            }
+            sectionPivotsX[index] = if (left.isFinite() && right > left) {
+                resolveDuetSectionPivotX(block.alignment, left, right)
+            } else {
+                layoutFrameWidth() / 2f
+            }
+        }
+        return Triple(
+            LayoutState(
+                finalPositioned,
+                built[primaryVisualIndex].first,
+                blocks,
+                sectionScales = sectionScales,
+                sectionIds = orderedIds,
+                sectionPivotsX = sectionPivotsX
+            ),
+            committedTops,
+            blockCenter
+        )
+    }
+
+    /** Section tops measured from drawn rows, keyed by visual block index. */
+    private fun measuredSectionTops(positioned: List<PositionedRow>): Map<Int, Float> {
+        val tops = HashMap<Int, Float>()
+        for (placed in positioned) {
+            if (placed.row.kind == RowKind.METADATA) continue
+            val top = placed.baseline + placed.row.paint.fontMetrics.ascent - placed.row.gapBefore
+            val block = placed.row.blockIndex
+            val current = tops[block]
+            if (current == null || top < current) tops[block] = top
+        }
+        return tops
+    }
+
+    /**
+     * Drawn span of lyric rows: each section mapped through its fit scale
+     * about its top, which is how the canvas actually draws it. Sections at
+     * full size contribute their layout bounds unchanged.
+     */
+    private fun drawnSpanBounds(
+        positioned: List<PositionedRow>,
+        topsByBlock: Map<Int, Float>,
+        scales: Map<Int, Float>
+    ): Pair<Float, Float>? {
+        var top = Float.POSITIVE_INFINITY
+        var bottom = Float.NEGATIVE_INFINITY
+        for (placed in positioned) {
+            if (placed.row.kind == RowKind.METADATA) continue
+            val scale = scales[placed.row.blockIndex] ?: 1f
+            var rowTop = placed.baseline + placed.row.paint.fontMetrics.ascent
+            var rowBottom = rowTop + placed.row.height
+            if (scale != 1f) {
+                val origin = topsByBlock[placed.row.blockIndex] ?: rowTop
+                rowTop = origin + scale * (rowTop - origin)
+                rowBottom = origin + scale * (rowBottom - origin)
+            }
+            if (rowTop < top) top = rowTop
+            if (rowBottom > bottom) bottom = rowBottom
+        }
+        if (!top.isFinite() || !bottom.isFinite() || bottom <= top) return null
+        return top to bottom
+    }
+
+    /**
+     * Lays out one lyric section (original plus its own secondary rows) with
+     * the existing builders by scoping content, alignment, and direction to
+     * that line, so concurrent sections share wrapping, ruby, and secondary
+     * logic with no fork. Returns the wrapped layout, its rows, and the draw
+     * data the frame loop needs beyond shared paints and global modes.
+     */
+    private fun buildLyricBlock(
+        line: MainLineData,
+        blockIndex: Int,
+        maxSecondaryLines: Int = MAX_SECONDARY_LINES,
+        forceSingleLine: Boolean = false
+    ): Triple<OriginalLayout, List<Row>, BlockDrawData> {
+        val savedContent = content
+        val savedAlignment = alignment
+        val savedDirection = textDirection
+        content = content.copy(
+            original = line.text,
+            romanized = line.romanized,
+            translated = line.translated,
+            alignedRight = line.alignedRight,
+            lineStartMs = line.lineStartMs,
+            lineEndMs = line.lineEndMs,
+            words = line.words,
+            ruby = line.ruby,
+            layoutGroups = line.layoutGroups,
+            secondLine = null
+        )
+        val direction = resolvedAodTextDirection(line.text, line.words)
+        textDirection = direction
+        alignment = when (
+            resolvedAodPhysicalAlignment(content.alignmentMode, line.alignedRight, direction)
+        ) {
+            "center" -> Alignment.CENTER
+            "end" -> Alignment.END
+            else -> Alignment.START
+        }
+        try {
+            val lineId = DuetSectionId(
+                content.trackGeneration,
+                content.lineStartMs,
+                content.lineEndMs
+            )
+            val originalLayout = buildOriginalLayout(lineId, forceSingleLine)
+            val rows = ArrayList<Row>(3)
+            if (line.text.isNotBlank()) {
+                val metrics = originalPaint.fontMetrics
+                val lineHeight = metrics.descent - metrics.ascent + 2f * density
+                rows += Row(
+                    RowKind.ORIGINAL,
+                    line.text,
+                    originalPaint,
+                    originalRowHeight(
+                        lineHeight,
+                        originalLayout.lineCount,
+                        originalLayout.rubyHeight,
+                        originalLayout.lineGap
+                    ),
+                    8f * density,
+                    emptyList(),
                     lineHeight,
-                    originalLayout.lineCount,
-                    originalLayout.rubyHeight,
-                    originalLayout.lineGap
-                ),
-                8f * density,
-                emptyList(),
-                lineHeight
+                    blockIndex
+                )
+            }
+            val showReading = content.secondaryMode == "Transliteration" ||
+                content.secondaryMode == "Both"
+            val showTranslation = content.secondaryMode == "Translation" ||
+                content.secondaryMode == "Both"
+            if (showReading && line.romanized.isNotBlank()) {
+                val lines = transliterationLines(originalLayout, maxSecondaryLines, forceSingleLine)
+                    ?: wrapSecondaryText(
+                        line.romanized,
+                        romanizedPaint,
+                        originalLayout.lineCount,
+                        maxSecondaryLines,
+                        forceSingleLine
+                    )
+                rows += rowWithLines(
+                    RowKind.ROMANIZED, line.romanized, romanizedPaint, 2f * density, lines,
+                    blockIndex
+                )
+            }
+            if (showTranslation && line.translated.isNotBlank()) {
+                rows += rowWithLines(
+                    RowKind.TRANSLATED,
+                    line.translated,
+                    translatedPaint,
+                    2f * density,
+                    wrapSecondaryText(
+                        line.translated,
+                        translatedPaint,
+                        originalLayout.lineCount,
+                        maxSecondaryLines,
+                        forceSingleLine
+                    ),
+                    blockIndex
+                )
+            }
+        return Triple(
+                originalLayout,
+                rows,
+                BlockDrawData(
+                    originalLayout,
+                    line.words,
+                    line.lineStartMs,
+                    line.lineEndMs,
+                    alignment,
+                    direction
+                )
             )
+        } finally {
+            content = savedContent
+            alignment = savedAlignment
+            textDirection = savedDirection
         }
-        val showReading = content.secondaryMode == "Transliteration" || content.secondaryMode == "Both"
-        val showTranslation = content.secondaryMode == "Translation" || content.secondaryMode == "Both"
-        if (showReading && content.romanized.isNotBlank()) {
-            val lines = transliterationLines(originalLayout)
-                ?: wrapSecondaryText(content.romanized, romanizedPaint, originalLayout.lineCount)
-            rows += rowWithLines(RowKind.ROMANIZED, content.romanized, romanizedPaint, 2f * density, lines)
+    }
+
+    /**
+     * Free vertical anchor for the full-screen canvas: 0 puts the block at the
+     * top padding, 1 at the bottom padding, 0.5 keeps legacy placement exactly.
+     * Null restores legacy alignment behavior.
+     */
+    fun setVerticalBias(bias: Float?) {
+        val normalized = bias?.takeIf { it.isFinite() }?.coerceIn(0f, 1f)
+        if (verticalBias == normalized) return
+        verticalBias = normalized
+        clearSectionAnchors()
+        rebuildLayout()
+        invalidate()
+    }
+
+    /**
+     * Landscape render step. Layout runs in the logical long-axis frame and
+     * one rigid transform in `onDraw` maps it onto the fullscreen portrait
+     * view, so longer lines survive with no clipping and no oversized child.
+     */
+    fun setOrientationStep(step: Int) {
+        if (step != 0 && step != 90 && step != 180 && step != 270) return
+        if (orientationStep == step) return
+        orientationStep = step
+        sizePaints()
+        currentRenderStyle = captureRenderStyle()
+        clearSectionAnchors()
+        rebuildLayout()
+        invalidate()
+    }
+
+    private fun applyVerticalBias(positioned: List<PositionedRow>): List<PositionedRow> {
+        val bias = verticalBias ?: return positioned
+        if (positioned.isEmpty()) return positioned
+        var spanTop = Float.POSITIVE_INFINITY
+        var spanBottom = Float.NEGATIVE_INFINITY
+        for (row in positioned) {
+            val ascent = row.row.paint.fontMetrics.ascent
+            val descent = row.row.paint.fontMetrics.descent
+            if (row.baseline + ascent < spanTop) spanTop = row.baseline + ascent
+            if (row.baseline + descent > spanBottom) spanBottom = row.baseline + descent
         }
-        if (showTranslation && content.translated.isNotBlank()) {
-            rows += rowWithLines(
-                RowKind.TRANSLATED,
-                content.translated,
-                translatedPaint,
-                2f * density,
-                wrapSecondaryText(content.translated, translatedPaint, originalLayout.lineCount)
-            )
-        }
-        layout = LayoutState(positionRows(rows, originalLayout), originalLayout)
-        contentBoundsChangedListener?.invoke()
+        val shift = resolveVerticalBiasShift(
+            spanTop = spanTop,
+            spanBottom = spanBottom,
+            topBound = logicalPadTop,
+            bottomBound = (layoutFrameHeight() - logicalPadBottom),
+            bias = bias
+        )
+        if (shift == 0f) return positioned
+        return positioned.map { it.copy(baseline = it.baseline + shift) }
     }
 
     private fun verticalBounds(state: LayoutState): AodCanvasVerticalBounds? {
@@ -1510,8 +2603,8 @@ internal class AodLyricCanvasView(
         }
         if (!top.isFinite() || !bottom.isFinite() || bottom <= top) return null
         return AodCanvasVerticalBounds(
-            top.coerceIn(0f, height.toFloat()),
-            bottom.coerceIn(0f, height.toFloat())
+            top.coerceIn(0f, layoutFrameHeight().toFloat()),
+            bottom.coerceIn(0f, layoutFrameHeight().toFloat())
         )
     }
 
@@ -1529,14 +2622,27 @@ internal class AodLyricCanvasView(
         text: String,
         paint: Paint,
         gap: Float,
-        lines: List<TextLine>
+        lines: List<TextLine>,
+        blockIndex: Int = 0
     ): Row {
         val metrics = paint.fontMetrics
         val lineHeight = safeSecondaryLineHeight(metrics.ascent, metrics.descent, metrics.bottom)
-        return Row(kind, text, paint, lineHeight * lines.size, gap, lines, lineHeight)
+        return Row(kind, text, paint, lineHeight * lines.size, gap, lines, lineHeight, blockIndex)
     }
 
-    private fun positionRows(rows: List<Row>, originalLayout: OriginalLayout): List<PositionedRow> {
+    /**
+     * Stacks lyric rows inside the padded frame. A null [sectionTops] keeps
+     * the legacy placement exactly (centered, top-aligned, or metadata
+     * stacked lone section). A provided map pins each visual section at its
+     * top so continuing lines never move; the caller derives those tops from
+     * slot arrival order. [blockLayouts] runs in visual section order,
+     * index-aligned with [Row.blockIndex].
+     */
+    private fun positionRows(
+        rows: List<Row>,
+        blockLayouts: List<OriginalLayout>,
+        sectionTops: Map<Int, Float>?
+    ): List<PositionedRow> {
         val positioned = ArrayList<PositionedRow>(rows.size)
         val metadata = rows.firstOrNull { it.kind == RowKind.METADATA }
         if (metadata != null) {
@@ -1546,9 +2652,9 @@ internal class AodLyricCanvasView(
             }
             val metadataBounds = metadataLayoutBounds(
                 anchor,
-                height.toFloat(),
-                paddingTop.toFloat(),
-                paddingBottom.toFloat(),
+                layoutFrameHeight().toFloat(),
+                logicalPadTop,
+                logicalPadBottom.toFloat(),
                 metadata.paint.fontMetrics.ascent,
                 metadata.paint.fontMetrics.descent,
                 10f * density
@@ -1556,59 +2662,128 @@ internal class AodLyricCanvasView(
             val metadataBaseline = metadataBounds.metadataBaseline
             positioned += PositionedRow(metadata, metadataBaseline, false)
             val lyricRows = rows.filterNot { it.kind == RowKind.METADATA }
-            val gap = 10f * density
-            if (anchor == "bottom") {
-                var bottom = metadataBounds.lyricEnd
-                lyricRows.asReversed().forEach { row ->
-                    bottom -= row.height
-                    positioned += PositionedRow(row, bottom - row.paint.fontMetrics.ascent, true)
-                    bottom -= row.gapBefore
+            if (sectionTops == null) {
+                val gap = 10f * density
+                if (anchor == "bottom") {
+                    var bottom = metadataBounds.lyricEnd
+                    lyricRows.asReversed().forEach { row ->
+                        bottom -= row.height
+                        positioned += PositionedRow(row, bottom - row.paint.fontMetrics.ascent, true)
+                        bottom -= row.gapBefore
+                    }
+                    positioned.sortBy { it.baseline }
+                } else {
+                    var top = metadataBounds.lyricStart
+                    lyricRows.forEach { row ->
+                        top += row.gapBefore
+                        positioned += PositionedRow(row, top - row.paint.fontMetrics.ascent, true)
+                        top += row.height
+                    }
                 }
-                positioned.sortBy { it.baseline }
             } else {
-                var top = metadataBounds.lyricStart
-                lyricRows.forEach { row ->
+                placeSectionsAtTops(
+                    positioned,
+                    lyricRows,
+                    sectionTops,
+                    topPin = metadataBounds.lyricStart
+                )
+            }
+        } else {
+            if (sectionTops == null) {
+                val total = rows.sumOf { (it.height + it.gapBefore).toDouble() }.toFloat()
+                val topPadding = logicalPadTop
+                val bottomPadding = (layoutFrameHeight() - logicalPadBottom)
+                val available = (bottomPadding - topPadding).coerceAtLeast(0f)
+                var top = if (verticalAlignment == AodCanvasVerticalAlignment.TOP) {
+                    topPadding
+                } else {
+                    topPadding + max(0f, (available - total) / 2f)
+                }
+                rows.forEach { row ->
                     top += row.gapBefore
                     positioned += PositionedRow(row, top - row.paint.fontMetrics.ascent, true)
                     top += row.height
                 }
-            }
-        } else {
-            val total = rows.sumOf { (it.height + it.gapBefore).toDouble() }.toFloat()
-            val topPadding = paddingTop.toFloat()
-            val bottomPadding = height - paddingBottom
-            val available = (bottomPadding - topPadding).coerceAtLeast(0f)
-            var top = if (verticalAlignment == AodCanvasVerticalAlignment.TOP) {
-                topPadding
             } else {
-                topPadding + max(0f, (available - total) / 2f)
+                placeSectionsAtTops(
+                    positioned,
+                    rows.filter { it.kind != RowKind.METADATA },
+                    sectionTops,
+                    topPin = logicalPadTop
+                )
             }
-            rows.forEach { row ->
+        }
+        // Ruby clearance runs per lyric section: the top section keeps its
+        // legacy top-padding bound, while lower sections clear their own top
+        // edge so their readings cannot overlap the section above them.
+        // Block layouts run in visual section order, index-aligned with
+        // Row.blockIndex.
+        var result: List<PositionedRow> = positioned
+        val lyricGroups = positioned
+            .filter { it.row.kind != RowKind.METADATA }
+            .groupBy { it.row.blockIndex }
+        for ((blockIndex, group) in lyricGroups) {
+            val blockLayout = blockLayouts.getOrNull(blockIndex)
+                ?: blockLayouts.firstOrNull() ?: continue
+            val firstOriginal = group.firstOrNull { it.row.kind == RowKind.ORIGINAL }
+                ?: continue
+            val firstLine = blockLayout.lines.firstOrNull() ?: continue
+            if (firstLine.rubyHeight <= 0f) continue
+            val bound = if (blockIndex == 0) {
+                logicalPadTop
+            } else {
+                group.minOf { it.baseline + it.row.paint.fontMetrics.ascent }
+            }
+            val firstBaseBaseline = firstOriginal.baseline + firstLine.rubyHeight
+            val top = rubyClipTop(
+                firstBaseBaseline,
+                originalPaint.fontMetrics.ascent,
+                firstLine.rubyHeight
+            )
+            val shift = rubyTopShift(top, bound)
+            if (shift == 0f) continue
+            val groupSet = group.toSet()
+            result = result.map {
+                if (it in groupSet) it.copy(baseline = it.baseline + shift) else it
+            }
+        }
+        return result
+    }
+
+    /**
+     * Lays lyric sections top-down from their slot tops. Sections stay in
+     * visual order, so a newcomer lands adjacently without shifting the
+     * survivor. Unknown blocks (defensive only: every visual block arrives
+     * with a top) continue after the lowest placed row.
+     */
+    private fun placeSectionsAtTops(
+        positioned: ArrayList<PositionedRow>,
+        lyricRows: List<Row>,
+        sectionTops: Map<Int, Float>,
+        topPin: Float
+    ) {
+        var cursor: Float? = null
+        for ((block, group) in lyricRows.groupBy { it.blockIndex }.toSortedMap()) {
+            var top = sectionTops[block] ?: cursor ?: topPin
+            for (row in group) {
                 top += row.gapBefore
                 positioned += PositionedRow(row, top - row.paint.fontMetrics.ascent, true)
                 top += row.height
             }
+            cursor = maxOf(cursor ?: top, top)
         }
-        val original = positioned.firstOrNull { it.row.kind == RowKind.ORIGINAL }
-        val firstLine = originalLayout.lines.firstOrNull()
-        if (original == null || firstLine == null || firstLine.rubyHeight <= 0f) return positioned
-        val firstBaseBaseline = original.baseline + firstLine.rubyHeight
-        val top = rubyClipTop(firstBaseBaseline, originalPaint.fontMetrics.ascent, firstLine.rubyHeight)
-        val shift = rubyTopShift(top, paddingTop.toFloat())
-        return if (shift == 0f) positioned else positioned.map {
-            if (it.row.kind == RowKind.METADATA) it else it.copy(baseline = it.baseline + shift)
-        }
+        positioned.sortBy { it.baseline }
     }
 
-    private fun drawOriginal(canvas: Canvas, baseline: Float) {
-        val originalLayout = layout.original
+    private fun drawOriginal(canvas: Canvas, baseline: Float, block: BlockDrawData) {
+        val originalLayout = block.originalLayout
         val lines = originalLayout.lines
         if (!originalLayout.timed) {
-            val progress = if (content.animationMode == "Minimal") 1f else lineProgress()
+            val progress = if (content.animationMode == "Minimal") 1f else blockProgress(block)
             if (resolvedLineSyncFillMode(content.lineLevelSync, content.lineSyncFillMode) ==
                 "Top to bottom"
             ) {
-                drawUntimedTopToBottom(canvas, baseline, progress)
+                drawUntimedTopToBottom(canvas, baseline, progress, block)
             } else {
                 var precedingRuby = 0f
                 var lineIndex = 0
@@ -1631,7 +2806,8 @@ internal class AodLyricCanvasView(
                         line,
                         lineBaseline,
                         originalLayout.continuousFill(progress, lineIndex),
-                        false
+                        false,
+                        block.textDirection
                     )
                     if (clipSave != -1) canvas.restoreToCount(clipSave)
                     precedingRuby += line.rubyHeight
@@ -1641,6 +2817,29 @@ internal class AodLyricCanvasView(
             return
         }
         val position = projectedPosition()
+        // TEMPORARY wrapped-line crossing diagnostic (remove after capture):
+        // logs once per wrapped-row change per section — transition state,
+        // section scale, and the crossing indices — to isolate the
+        // wrapped-line-crossing blink from the duet-join dissolve.
+        if (HookLogger.traceEnabled && lines.size > 1) {
+            val activeIndex = lines.indexOfFirst { line ->
+                line.words.any { position >= it.word.startMs && position < it.word.endMs }
+            }.takeIf { it >= 0 } ?: lines.indexOfFirst { line ->
+                line.words.any { position < it.word.endMs }
+            }
+            if (activeIndex >= 0) {
+                val key = block.lineStartMs
+                if (crossingTracker[key] != activeIndex) {
+                    crossingTracker[key] = activeIndex
+                    HookLogger.i(
+                        "AodDuetCrossing",
+                        "crossing block=${block.lineStartMs} row=$activeIndex/${lines.size} " +
+                            "pos=$position exit=${exitSnapshot != null} " +
+                            "scale=${layout.sectionScales[layout.blocks.indexOf(block)] ?: 1f}"
+                    )
+                }
+            }
+        }
         var precedingRuby = 0f
         var lineIndex = 0
         while (lineIndex < lines.size) {
@@ -1668,7 +2867,7 @@ internal class AodLyricCanvasView(
                     line.width,
                     precedingWidth,
                     width,
-                    textDirection
+                    block.textDirection
                 )
                 val progress = timedWordProgress(position, word.startMs, word.endMs)
                 val active = position >= word.startMs && position < word.endMs
@@ -1708,7 +2907,7 @@ internal class AodLyricCanvasView(
                         progress = progress,
                         extent = width,
                         vertical = false,
-                        direction = textDirection
+                        direction = block.textDirection
                     )
                     drawDirectionalText(
                         canvas,
@@ -1731,44 +2930,55 @@ internal class AodLyricCanvasView(
         }
     }
 
-    private fun drawUntimedTopToBottom(canvas: Canvas, baseline: Float, progress: Float) {
-        val lines = layout.original.lines
+    private fun drawUntimedTopToBottom(
+        canvas: Canvas,
+        baseline: Float,
+        progress: Float,
+        block: BlockDrawData
+    ) {
+        val originalLayout = block.originalLayout
+        val lines = originalLayout.lines
         val firstLine = lines.firstOrNull()
         val firstLineBaseline = firstLine?.let {
             originalLineBaseline(
                 baseline,
                 0,
-                layout.original.lineHeight,
+                originalLayout.lineHeight,
                 0f,
                 it.rubyHeight,
-                layout.original.lineGap
+                originalLayout.lineGap
             )
         } ?: baseline
         val blockTop = max(
-            paddingTop.toFloat(),
+            logicalPadTop,
             rubyClipTop(firstLineBaseline, originalPaint.fontMetrics.ascent, firstLine?.rubyHeight ?: 0f)
         )
         val blockHeight = originalRowHeight(
-            layout.original.lineHeight,
+            originalLayout.lineHeight,
             lines.size,
-            layout.original.rubyHeight,
-            layout.original.lineGap
+            originalLayout.rubyHeight,
+            originalLayout.lineGap
         )
         clearBlockSweepShaders()
-        drawUntimedLines(canvas, baseline, false, progress)
-        drawOriginalRubyRows(canvas, baseline, bright = false)
+        drawUntimedLines(canvas, baseline, false, progress, block)
+        drawOriginalRubyRows(canvas, baseline, block, bright = false)
         applyBlockSweepShaders(
             origin = blockTop,
             progress = progress,
             extent = blockHeight
         )
-        drawUntimedLines(canvas, baseline, true, progress)
-        drawOriginalRubyRows(canvas, baseline, bright = true)
+        drawUntimedLines(canvas, baseline, true, progress, block)
+        drawOriginalRubyRows(canvas, baseline, block, bright = true)
         clearBlockSweepShaders()
     }
 
-    private fun drawContinuousLineFill(canvas: Canvas, baseline: Float, progress: Float) {
-        val originalLayout = layout.original
+    private fun drawContinuousLineFill(
+        canvas: Canvas,
+        baseline: Float,
+        progress: Float,
+        block: BlockDrawData
+    ) {
+        val originalLayout = block.originalLayout
         var precedingRuby = 0f
         var lineIndex = 0
         while (lineIndex < originalLayout.lines.size) {
@@ -1787,7 +2997,8 @@ internal class AodLyricCanvasView(
                 line,
                 lineBaseline,
                 originalLayout.continuousFill(progress, lineIndex),
-                false
+                false,
+                block.textDirection
             )
             if (clipSave != -1) canvas.restoreToCount(clipSave)
             precedingRuby += line.rubyHeight
@@ -1795,18 +3006,25 @@ internal class AodLyricCanvasView(
         }
     }
 
-    private fun drawUntimedLines(canvas: Canvas, baseline: Float, bright: Boolean, progress: Float) {
+    private fun drawUntimedLines(
+        canvas: Canvas,
+        baseline: Float,
+        bright: Boolean,
+        progress: Float,
+        block: BlockDrawData
+    ) {
+        val originalLayout = block.originalLayout
         var precedingRuby = 0f
         var lineIndex = 0
-        while (lineIndex < layout.original.lines.size) {
-            val line = layout.original.lines[lineIndex]
+        while (lineIndex < originalLayout.lines.size) {
+            val line = originalLayout.lines[lineIndex]
             val lineBaseline = originalLineBaseline(
                 baseline,
                 lineIndex,
-                layout.original.lineHeight,
+                originalLayout.lineHeight,
                 precedingRuby,
                 line.rubyHeight,
-                layout.original.lineGap
+                originalLayout.lineGap
             )
             val clipSave = clipOriginalLine(canvas, lineBaseline, line.rubyHeight)
             val glow = if (content.animationMode != "Minimal" && content.glowMode != "Off" && !bright) {
@@ -1819,7 +3037,7 @@ internal class AodLyricCanvasView(
                 1f,
                 if (bright) resolvedPalette.sungText else resolvedPalette.unsungText
             )
-            drawOriginalText(canvas, line, lineBaseline)
+            drawOriginalText(canvas, line, lineBaseline, block.textDirection)
             originalPaint.clearShadowLayer()
             if (clipSave != -1) canvas.restoreToCount(clipSave)
             precedingRuby += line.rubyHeight
@@ -1855,10 +3073,10 @@ internal class AodLyricCanvasView(
         if (content.overflowMode == "Wrap") return -1
         val save = canvas.save()
         canvas.clipRect(
-            paddingLeft.toFloat(),
-            max(paddingTop.toFloat(), rubyClipTop(baseBaseline, originalPaint.fontMetrics.ascent, rubyHeight)),
-            width - paddingRight.toFloat(),
-            (height - paddingBottom).toFloat()
+            logicalPadLeft,
+            max(logicalPadTop, rubyClipTop(baseBaseline, originalPaint.fontMetrics.ascent, rubyHeight)),
+            layoutFrameWidth() - logicalPadRight,
+            (layoutFrameHeight() - logicalPadBottom)
         )
         return save
     }
@@ -1936,28 +3154,90 @@ internal class AodLyricCanvasView(
         cadenceDrawCount++
     }
 
-    private fun buildOriginalLayout(): OriginalLayout {
+    /** Break cache by line id: first layout wins, later builds reuse its ranges. */
+    private var wrapCache = HashMap<DuetSectionId, FrozenLineWrap>()
+    /** TEMPORARY: per-section frozen-break hit flags for the current build. */
+    private var forcedHits = ArrayList<Boolean>()
+
+    private fun buildOriginalLayout(
+        lineId: DuetSectionId?,
+        forceSingleLine: Boolean = false
+    ): OriginalLayout {
         val words = coalesceRubyWords(
             content.original,
             content.words.filter { it.text.isNotBlank() },
             content.ruby
         )
-        val lines = if (words.isEmpty()) {
-            if (content.adaptiveSectioning) layoutTextByGroups()
-            else wrapText(content.original, originalPaint)
+        val available = (layoutFrameWidth() - logicalPadLeft - logicalPadRight).coerceAtLeast(1f)
+        val forced = if (lineId != null && !forceSingleLine && content.overflowMode == "Wrap" &&
+            layoutFrameWidth() > 0 && layoutFrameHeight() > 0 && available > 1f
+        ) {
+            // A freeze from a smaller frame (pre-layout, portrait step,
+            // metadata-present area) locks a bloated wrap in forever; repair
+            // it once by re-wrapping under the canonical minimal-count policy.
+            validFrozenWrap(wrapCache[lineId], content.original)
+                ?.takeIf { frozen ->
+                    frozenWrapIsMinimal(
+                        frozen,
+                        measureLine = { range ->
+                            originalPaint.measureText(
+                                content.original.substring(range.first, range.last + 1)
+                            )
+                        },
+                        gap = 8f * density,
+                        available = available
+                    )
+                }
         } else {
-            layoutWordLines(words, 8f * density)
+            null
+        }
+        forcedHits.add(forced != null)
+        val lines = when {
+            // Explicit single-line presentation: every timed word stays an
+            // independent timed word on one visual line — no bucket
+            // assignment, no frozen ranges, no wrap-cache traffic. Ruby and
+            // source offsets survive because the line spans the full text.
+            forceSingleLine && words.isNotEmpty() ->
+                layoutWordLines(words, 8f * density, forceSingleLine = true)
+            forceSingleLine && content.original.isNotEmpty() -> listOf(
+                originalLine(
+                    content.original,
+                    originalPaint.measureText(content.original),
+                    0,
+                    content.original.length
+                )
+            )
+            words.isEmpty() ->
+                if (content.adaptiveSectioning) layoutTextByGroups(forced)
+                else wrapText(content.original, originalPaint, forced)
+            else -> layoutWordLines(words, 8f * density, forced)
         }
         val metrics = originalPaint.fontMetrics
-        return OriginalLayout(
+        val laidOut = OriginalLayout(
             assignRuby(lines),
             metrics.descent - metrics.ascent + 2f * density,
             ORIGINAL_LINE_GAP_DP * density,
             words.isNotEmpty()
         )
+        if (lineId != null && !forceSingleLine && content.overflowMode == "Wrap" &&
+            layoutFrameWidth() > 0 && layoutFrameHeight() > 0 && available > 1f
+        ) {
+            frozenRangesFrom(laidOut.lines.map { it.charStart to it.charEnd }, content.original)?.let {
+                if (wrapCache.size >= 256) wrapCache.clear()
+                wrapCache[lineId] = it
+            }
+        }
+        return laidOut
     }
 
-    private fun layoutTextByGroups(): List<OriginalLine> {
+    private fun layoutTextByGroups(forced: List<IntRange>? = null): List<OriginalLine> {
+        if (forced != null) {
+            val synthetic = forced.map { range ->
+                val slice = content.original.substring(range.first, range.last + 1)
+                AodCanvasWord(slice, "", 0L, 0L, false, range.first, range.last + 1)
+            }
+            return layoutWordLines(synthetic, 8f * density, forced)
+        }
         val ranges = coveredLayoutRanges(content.original, content.layoutGroups)
         if (ranges.isEmpty()) return wrapText(content.original, originalPaint)
         val synthetic = ranges.mapIndexed { index, range ->
@@ -1977,8 +3257,13 @@ internal class AodLyricCanvasView(
         return layoutWordLines(synthetic, 8f * density)
     }
 
-    private fun layoutWordLines(words: List<AodCanvasWord>, gap: Float): List<OriginalLine> {
-        val available = (width - paddingLeft - paddingRight).coerceAtLeast(1).toFloat()
+    private fun layoutWordLines(
+        words: List<AodCanvasWord>,
+        gap: Float,
+        forced: List<IntRange>? = null,
+        forceSingleLine: Boolean = false
+    ): List<OriginalLine> {
+        val available = (layoutFrameWidth() - logicalPadLeft - logicalPadRight).coerceAtLeast(1f)
         val maxLines = lyricLayoutLineLimit(words.size)
         val offsets = wordOffsets(words)
         val placed = words.mapIndexed { index, word ->
@@ -1992,8 +3277,26 @@ internal class AodLyricCanvasView(
             }
             PlacedWord(word, wordWidth, gapAfter, offsets[index])
         }
-        if (content.overflowMode != "Wrap") {
+        if (content.overflowMode != "Wrap" || forceSingleLine) {
             return listOf(wordLine(placed))
+        }
+        if (forced != null) {
+            // Frozen breaks from the line's first layout: every word lands in
+            // the range owning most of it, so resegmented publications keep
+            // the sentence shape with fresh timings. Offset-less words fall
+            // back to free layout; empty buckets drop (a degenerate
+            // segmentation converges through the derived store below).
+            val offsets = wordOffsets(words)
+            if (offsets.all { it != null }) {
+                val buckets = Array(forced.size) { mutableListOf<PlacedWord>() }
+                for ((index, placedWord) in placed.withIndex()) {
+                    buckets[majorityRangeIndex(forced, offsets[index]!!)] += placedWord
+                }
+                val lines = buckets.filter { it.isNotEmpty() }.map { wordLine(it) }
+                if (lines.isNotEmpty() && lines.all { it.width <= available }) {
+                    return lines
+                }
+            }
         }
         if (!content.adaptiveSectioning) {
             return legacyAttachedWordLineRanges(
@@ -2020,8 +3323,11 @@ internal class AodLyricCanvasView(
             else chunks += chunk.toList()
             index = end
         }
+        // Packing widths exclude each chunk's trailing separator: rendering
+        // subtracts it, so including it can split a line that actually fits.
         val chunkWidths = chunks.map { chunk ->
-            chunk.sumOf { (it.width + it.gapAfter).toDouble() }.toFloat()
+            chunk.sumOf { (it.width + it.gapAfter).toDouble() }.toFloat() -
+                (chunk.lastOrNull()?.gapAfter ?: 0f)
         }
         val lines = balancedChunkRanges(chunkWidths, available, maxLines).map { range ->
             val lineWords = range.flatMap { chunks[it] }
@@ -2056,9 +3362,20 @@ internal class AodLyricCanvasView(
             .copy(words = words)
     }
 
-    private fun wrapText(text: String, paint: Paint): List<OriginalLine> {
+    private fun wrapText(
+        text: String,
+        paint: Paint,
+        forced: List<IntRange>? = null
+    ): List<OriginalLine> {
         if (text.isBlank()) return emptyList()
-        val available = (width - paddingLeft - paddingRight).coerceAtLeast(1).toFloat()
+        val available = (layoutFrameWidth() - logicalPadLeft - logicalPadRight).coerceAtLeast(1f)
+        if (forced != null) {
+            val frozen = forced.map { range ->
+                val slice = text.substring(range.first, range.last + 1)
+                originalLine(slice, paint.measureText(slice), range.first, range.last + 1)
+            }
+            if (frozen.all { it.width <= available }) return frozen
+        }
         if (content.overflowMode != "Wrap") {
             return listOf(originalLine(text, paint.measureText(text), 0, text.length))
         }
@@ -2083,9 +3400,13 @@ internal class AodLyricCanvasView(
             wordCount
         )
 
-    private fun transliterationLines(originalLayout: OriginalLayout): List<TextLine>? {
+    private fun transliterationLines(
+        originalLayout: OriginalLayout,
+        maxLines: Int = MAX_SECONDARY_LINES,
+        hardSingleLine: Boolean = false
+    ): List<TextLine>? {
         if (originalLayout.lines.isEmpty() || originalLayout.lines.any { it.words.isEmpty() }) return null
-        val available = (width - paddingLeft - paddingRight).coerceAtLeast(1).toFloat()
+        val available = (layoutFrameWidth() - logicalPadLeft - logicalPadRight).coerceAtLeast(1f)
         val sourceWords = originalLayout.lines.flatMap { it.words }.map { it.word }
         if (sourceWords.isEmpty()) return null
         val spaceWidth = romanizedPaint.measureText(" ")
@@ -2103,10 +3424,21 @@ internal class AodLyricCanvasView(
             )
         }
         if (segments.isEmpty()) return null
+        val mergedWidth = segments.sumOf { (it.width + it.gapAfter).toDouble() }.toFloat()
+        // Single-line cap applies only when the merged line fits: genuinely
+        // long readings keep two lines instead of clipping. Hard single-line
+        // mode (unwrap-on-floor) drops the escape instead — the section
+        // scale now handles width, and the timed segments stay intact on
+        // the one line for word-accurate karaoke.
+        val effectiveMax = when {
+            hardSingleLine -> 1
+            maxLines <= 1 && mergedWidth > available -> MAX_SECONDARY_LINES
+            else -> maxLines.coerceAtLeast(1)
+        }
         return secondaryTimedVisualRanges(
             segments,
             available,
-            MAX_SECONDARY_LINES,
+            effectiveMax,
             wrap = content.adaptiveSectioning && content.overflowMode == "Wrap"
         ).map { range ->
             val lineSegments = range.map(segments::get).mapIndexed { index, segment ->
@@ -2123,11 +3455,20 @@ internal class AodLyricCanvasView(
         }
     }
 
-    private fun wrapSecondaryText(text: String, paint: Paint, preferredLines: Int): List<TextLine> {
-        if (!content.adaptiveSectioning || content.overflowMode != "Wrap") {
+    private fun wrapSecondaryText(
+        text: String,
+        paint: Paint,
+        preferredLines: Int,
+        maxLines: Int = MAX_SECONDARY_LINES,
+        hardSingleLine: Boolean = false
+    ): List<TextLine> {
+        // Hard single-line mode (unwrap-on-floor) bypasses token wrapping
+        // and the two-line escape: one TextLine with the complete text; the
+        // section scale handles the width.
+        if (!content.adaptiveSectioning || content.overflowMode != "Wrap" || hardSingleLine) {
             return listOf(textLine(text, paint.measureText(text), paint))
         }
-        val available = (width - paddingLeft - paddingRight).coerceAtLeast(1).toFloat()
+        val available = (layoutFrameWidth() - logicalPadLeft - logicalPadRight).coerceAtLeast(1f)
         val tokens = secondaryTokens(text).flatMap { token ->
             if (paint.measureText(token) <= available) {
                 listOf(token)
@@ -2143,17 +3484,22 @@ internal class AodLyricCanvasView(
             }
         }
         if (tokens.isEmpty()) return emptyList()
-        val maxLines = if (paint.measureText(text) > available) {
-            maxOf(preferredLines, MAX_SECONDARY_LINES)
+        val effectiveCap = if (maxLines <= 1 && paint.measureText(text) > available) {
+            MAX_SECONDARY_LINES
+        } else {
+            maxLines.coerceAtLeast(1)
+        }
+        val resolvedMaxLines = if (paint.measureText(text) > available) {
+            maxOf(preferredLines, effectiveCap)
         } else {
             preferredLines
-        }.coerceIn(1, MAX_SECONDARY_LINES)
+        }.coerceIn(1, effectiveCap)
         return balancedTokenLineTexts(
             tokens,
             tokens.map(paint::measureText),
             paint.measureText(" "),
             available,
-            maxLines
+            resolvedMaxLines
         ).map { line -> textLine(line, paint.measureText(line), paint) }
     }
 
@@ -2289,18 +3635,19 @@ internal class AodLyricCanvasView(
         line: OriginalLine,
         baseline: Float,
         progress: Float,
-        clipToPaddedWidth: Boolean
+        clipToPaddedWidth: Boolean,
+        direction: AodTextDirection
     ) {
         val x = line.startX
         val clipSave = if (clipToPaddedWidth) canvas.save() else -1
-        if (clipToPaddedWidth) canvas.clipRect(paddingLeft, paddingTop, width - paddingRight, height - paddingBottom)
+        if (clipToPaddedWidth) canvas.clipRect(logicalPadLeft, logicalPadTop, layoutFrameWidth() - logicalPadRight, layoutFrameHeight() - logicalPadBottom)
         val glow = if (content.animationMode != "Minimal" && content.glowMode != "Off") {
             0.55f * glowSpline(progress)
         } else 0f
         applyGlow(originalPaint, glow)
         originalPaint.shader = null
         setTextAlpha(originalPaint, 0.35f, 1f, resolvedPalette.unsungText)
-        drawOriginalText(canvas, line, baseline)
+        drawOriginalText(canvas, line, baseline, direction)
         setTextAlpha(originalPaint, 1f, 1f, resolvedPalette.sungText)
         applySoftSweep(
             originalPaint,
@@ -2309,21 +3656,26 @@ internal class AodLyricCanvasView(
             progress = progress,
             extent = line.width,
             vertical = false,
-            direction = textDirection
+            direction = direction
         )
-        drawOriginalText(canvas, line, baseline)
+        drawOriginalText(canvas, line, baseline, direction)
         originalPaint.shader = null
         originalPaint.clearShadowLayer()
         if (clipToPaddedWidth) canvas.restoreToCount(clipSave)
     }
 
-    private fun drawOriginalText(canvas: Canvas, line: OriginalLine, baseline: Float) {
+    private fun drawOriginalText(
+        canvas: Canvas,
+        line: OriginalLine,
+        baseline: Float,
+        direction: AodTextDirection
+    ) {
         if (line.ruby.isEmpty()) {
-            drawDirectionalText(canvas, line.text, line.startX, baseline, originalPaint, textDirection)
+            drawDirectionalText(canvas, line.text, line.startX, baseline, originalPaint, direction)
             return
         }
         if (line.textRuns.isEmpty()) {
-            drawDirectionalText(canvas, line.text, line.startX, baseline, originalPaint, textDirection)
+            drawDirectionalText(canvas, line.text, line.startX, baseline, originalPaint, direction)
             return
         }
         var index = 0
@@ -2337,7 +3689,7 @@ internal class AodLyricCanvasView(
                 line.startX + run.x,
                 baseline,
                 originalPaint,
-                textDirection
+                direction
             )
             index++
         }
@@ -2345,7 +3697,7 @@ internal class AodLyricCanvasView(
 
     private fun drawText(canvas: Canvas, row: Row, baseline: Float) {
         canvas.save()
-        canvas.clipRect(paddingLeft, paddingTop, width - paddingRight, height - paddingBottom)
+        canvas.clipRect(logicalPadLeft, logicalPadTop, layoutFrameWidth() - logicalPadRight, layoutFrameHeight() - logicalPadBottom)
         var lineIndex = 0
         while (lineIndex < row.lines.size) {
             val line = row.lines[lineIndex]
@@ -2379,9 +3731,9 @@ internal class AodLyricCanvasView(
         visualLeft: Float = 0f,
         visualRight: Float = textWidth
     ): Float = edgeSafeAlignedStart(
-        canvasWidth = width.toFloat(),
-        paddingLeft = paddingLeft.toFloat(),
-        paddingRight = paddingRight.toFloat(),
+        canvasWidth = layoutFrameWidth().toFloat(),
+        paddingLeft = logicalPadLeft,
+        paddingRight = logicalPadRight,
         visualLeft = visualLeft,
         visualRight = visualRight,
         alignment = when (lineAlignment) {
@@ -2404,7 +3756,30 @@ internal class AodLyricCanvasView(
         return content.positionMs + (elapsed * content.speed).toLong()
     }
 
-    private fun lineProgress(): Float = progress(projectedPosition(), content.lineStartMs, content.lineEndMs)
+    private fun blockProgress(block: BlockDrawData): Float =
+        progress(projectedPosition(), block.lineStartMs, block.lineEndMs)
+
+    /**
+     * Draw data for every lyric section in [drawLayout], falling back to the
+     * primary line when a layout predates sections (initial empty layout).
+     */
+    private fun blockDrawDataFor(
+        drawLayout: LayoutState,
+        drawContent: AodCanvasContent
+    ): List<BlockDrawData> = if (drawLayout.blocks.isNotEmpty()) {
+        drawLayout.blocks
+    } else {
+        listOf(
+            BlockDrawData(
+                drawLayout.original,
+                drawContent.words,
+                drawContent.lineStartMs,
+                drawContent.lineEndMs,
+                alignment,
+                textDirection
+            )
+        )
+    }
 
     private fun progress(position: Long, start: Long, end: Long): Float =
         if (end <= start) if (position >= end) 1f else 0f
@@ -2494,8 +3869,8 @@ internal class AodLyricCanvasView(
     }
 
     private fun applyWholeBlockHorizontalSweepShaders(progress: Float) {
-        val origin = paddingLeft.toFloat()
-        val extent = (width - paddingLeft - paddingRight).coerceAtLeast(0).toFloat()
+        val origin = logicalPadLeft
+        val extent = (layoutFrameWidth() - logicalPadLeft - logicalPadRight).coerceAtLeast(0f)
         applySoftSweep(
             originalPaint, resolvedPalette.sungText, origin, progress, extent, false, textDirection
         )
@@ -2646,7 +4021,9 @@ internal class AodLyricCanvasView(
         val height: Float,
         val gapBefore: Float,
         val lines: List<TextLine>,
-        val lineHeight: Float
+        val lineHeight: Float,
+        /** Lyric section this row belongs to, in visual arrival order: -1 metadata, then 0, 1. */
+        val blockIndex: Int = 0
     )
     private data class PlacedWord(
         val word: AodCanvasWord,
@@ -2728,12 +4105,71 @@ internal class AodLyricCanvasView(
     }
     private data class LayoutState(
         val rows: List<PositionedRow>,
-        val original: OriginalLayout
+        val original: OriginalLayout,
+        /** Per-section draw data in visual order, index-aligned with [Row.blockIndex]. */
+        val blocks: List<BlockDrawData> = emptyList(),
+        /** Per-section fit scale by visual block index; missing means full size. */
+        val sectionScales: Map<Int, Float> = emptyMap(),
+        /** Section identity in visual order, for transition pass matching. */
+        val sectionIds: List<DuetSectionId> = emptyList(),
+        /** Precomputed alignment-aware horizontal pivot per visual block. */
+        val sectionPivotsX: Map<Int, Float> = emptyMap()
     )
+
+    /**
+     * Everything draw needs for one lyric section beyond shared paints and
+     * global modes: its own wrapped layout, timed words, active window, and
+     * resolved reading direction.
+     */
+    private data class BlockDrawData(
+        val originalLayout: OriginalLayout,
+        val words: List<AodCanvasWord>,
+        val lineStartMs: Long,
+        val lineEndMs: Long,
+        val alignment: Alignment,
+        val textDirection: AodTextDirection
+    )
+
+    /** One sung line to lay out: the primary or the concurrent overlap. */
+    private data class MainLineData(
+        val text: String,
+        val romanized: String,
+        val translated: String,
+        val alignedRight: Boolean,
+        val lineStartMs: Long,
+        val lineEndMs: Long,
+        val words: List<AodCanvasWord>,
+        val ruby: List<AodCanvasRuby>,
+        val layoutGroups: List<AodCanvasLayoutGroup>
+    ) {
+        constructor(content: AodCanvasContent) : this(
+            content.original,
+            content.romanized,
+            content.translated,
+            content.alignedRight,
+            content.lineStartMs,
+            content.lineEndMs,
+            content.words,
+            content.ruby,
+            content.layoutGroups
+        )
+
+        constructor(second: AodCanvasSecondLine) : this(
+            second.text,
+            second.romanized,
+            second.translated,
+            second.alignedRight,
+            second.lineStartMs,
+            second.lineEndMs,
+            second.words,
+            second.ruby,
+            second.layoutGroups
+        )
+    }
     private data class TypefaceKey(val family: String, val weight: String)
 
     companion object {
-        private const val MAX_SECONDARY_LINES = 2
+        internal const val MAX_SECONDARY_LINES = 2
         private const val ENTER_TRANSITION_MS = 210L
         private const val EXIT_TRANSITION_MS = 130L
         private const val ORIGINAL_LINE_GAP_DP = 4f
@@ -2741,4 +4177,447 @@ internal class AodLyricCanvasView(
         private const val CADENCE_DIAGNOSTIC_WINDOW_MS = 10_000L
         private const val CADENCE_DIAGNOSTIC_TAG = "AodCanvasCadence"
     }
+}
+
+/**
+ * Free-anchor shift for a laid-out row span. Null bias and overfull spans
+ * return zero, so legacy placement is preserved exactly. The result is
+ * clamped to keep the whole span inside the padded bounds.
+ */
+internal fun resolveVerticalBiasShift(
+    spanTop: Float,
+    spanBottom: Float,
+    topBound: Float,
+    bottomBound: Float,
+    bias: Float?
+): Float {
+    if (bias == null || !bias.isFinite()) return 0f
+    val free = (bottomBound - topBound) - (spanBottom - spanTop)
+    if (free <= 0f) return 0f
+    return (free * (bias.coerceIn(0f, 1f) - 0.5f))
+        .coerceIn(topBound - spanTop, bottomBound - spanBottom)
+}
+
+/**
+ * Identity of one sung line for duet slot memory. Timings survive producer
+ * text corrections, so a corrected line keeps its canvas slot.
+ */
+internal data class DuetSectionId(
+    val trackGeneration: Long,
+    val lineStartMs: Long,
+    val lineEndMs: Long
+)
+
+/**
+ * Visual section order by slot: lines present in the previous build keep
+ * their slot, so a continuing line never moves between sections; newcomers
+ * inherit vacated slots in current-list order, so a replacement takes the
+ * exiting line's position instead of appending below. A full swap (nothing
+ * continues) keeps current order. At most two sections exist.
+ */
+internal fun assignDuetSlots(
+    current: List<DuetSectionId>,
+    previous: List<DuetSectionId>
+): List<DuetSectionId> {
+    if (current.size <= 1) return current
+    val previousSlot = HashMap<DuetSectionId, Int>(previous.size)
+    previous.forEachIndexed { index, id -> previousSlot.putIfAbsent(id, index) }
+    val taken = BooleanArray(current.size)
+    val slotted = arrayOfNulls<DuetSectionId>(current.size)
+    for (index in current.indices) {
+        val id = current[index]
+        val slot = previousSlot[id]
+        if (slot != null && slot < slotted.size && slotted[slot] == null) {
+            slotted[slot] = id
+            taken[index] = true
+        }
+    }
+    var free = 0
+    for (index in current.indices) {
+        if (taken[index]) continue
+        while (free < slotted.size && slotted[free] != null) free++
+        if (free < slotted.size) {
+            slotted[free] = current[index]
+            free++
+        }
+    }
+    return slotted.filterNotNull()
+}
+
+/**
+ * Visual block indices whose first sung word still lies ahead of the playhead:
+ * prerender placeholders that reserve layout, shrink, and slot space but stay
+ * invisible until their window starts. Solo scenes never defer.
+ */
+internal fun deferredDuetBlockIndices(
+    blockStartMs: List<Long>,
+    positionMs: Long
+): Set<Int> =
+    if (blockStartMs.size <= 1) {
+        emptySet()
+    } else {
+        blockStartMs.indices.filter { blockStartMs[it] > positionMs }.toSet()
+    }
+
+/**
+ * Frozen range owning most of [offset]. Word segmentations flap across
+ * publications for the same text, so strict containment would abort the
+ * freeze on every resegmentation; majority overlap keeps every word placed
+ * and the sentence shape frozen.
+ */
+internal fun majorityRangeIndex(ranges: List<IntRange>, offset: IntRange): Int {
+    var best = 0
+    var bestOverlap = Int.MIN_VALUE
+    for (index in ranges.indices) {
+        val overlap = minOf(offset.last, ranges[index].last) -
+            maxOf(offset.first, ranges[index].first) + 1
+        if (overlap > bestOverlap) {
+            bestOverlap = overlap
+            best = index
+        }
+    }
+    return best
+}
+
+/**
+ * Secondary-row cap for one lyric section: landscape anchored sections
+ * (duets and chain solos) keep one pinyin/translation line each so the pair
+ * fits without shrinking the survivor; fresh solos and portrait keep legacy
+ * multi-line secondaries.
+ */
+internal fun duetSecondaryLineCap(anchored: Boolean, sideStep: Boolean): Int =
+    if (anchored && sideStep) 1 else AodLyricCanvasView.MAX_SECONDARY_LINES
+
+/**
+ * Frozen line breaks for one lyric line: the text length they were laid out
+ * for plus the wrapped ranges. Timing lanes settle across publications for
+ * the same timings, which would otherwise re-wrap (and rebalance) the
+ * sentence on every refinement. The first layout wins; later builds reuse
+ * its breaks with freshly measured widths and current words, so karaoke
+ * fill stays accurate while the sentence shape never moves. Length-keyed
+ * rather than text-keyed, so same-length refinements (punctuation, spacing,
+ * spelling) hold their shape; a width check at apply time still lets
+ * genuinely wider text re-lay out instead of clipping.
+ */
+internal data class FrozenLineWrap(val textLength: Int, val ranges: List<IntRange>)
+
+/**
+ * Usable frozen breaks for [text], or null when the cache misses or the
+ * ranges do not cover the text. Ranges may leave a one-character separator
+ * (the authored space between wrapped words) uncited between lines; every
+ * other character must be covered exactly once.
+ */
+internal fun validFrozenWrap(cached: FrozenLineWrap?, text: String): List<IntRange>? {
+    if (cached == null || cached.textLength != text.length || cached.ranges.isEmpty()) return null
+    var cursor = 0
+    for (range in cached.ranges) {
+        if (range.isEmpty() || range.first < cursor || range.last >= text.length) return null
+        if (range.first - cursor > 1) return null
+        cursor = range.last + 1
+    }
+    if (cursor != text.length && cursor + 1 != text.length) return null
+    return cached.ranges
+}
+
+/** Frozen breaks derived from laid-out lines, or null when any line lacks offsets. */
+internal fun frozenRangesFrom(
+    lineBounds: List<Pair<Int?, Int?>>,
+    text: String
+): FrozenLineWrap? {
+    if (text.isEmpty()) return null
+    val ranges = ArrayList<IntRange>(lineBounds.size)
+    for ((start, end) in lineBounds) {
+        if (start == null || end == null || end <= start) return null
+        ranges += IntRange(start, end - 1)
+    }
+    return validFrozenWrap(FrozenLineWrap(text.length, ranges), text)?.let {
+        FrozenLineWrap(text.length, it)
+    }
+}
+
+/**
+ * Minimum visual lines needed to lay out unit widths within [available]:
+ * greedy packing of indivisible units. Contiguous fixed-width units pack
+ * optimally greedily, so this is the true minimum for a chunk sequence.
+ */
+internal fun minimalLineCount(widths: List<Float>, available: Float): Int {
+    if (widths.isEmpty() || available <= 0f) return widths.size.coerceAtLeast(1)
+    var count = 1
+    var width = 0f
+    for (item in widths) {
+        if (width > 0f && width + item > available) {
+            count++
+            width = item
+        } else {
+            width += item
+        }
+    }
+    return count
+}
+
+/**
+ * Whether frozen breaks are still the minimal wrap under the current
+ * geometry: each frozen line measured at its current width, packed greedily.
+ * Fewer packed lines than frozen lines means the freeze came from a smaller
+ * frame (pre-layout, portrait step, metadata-present area) and must be
+ * repaired once instead of locking a bloated wrap in forever.
+ */
+internal fun frozenWrapIsMinimal(
+    ranges: List<IntRange>,
+    measureLine: (IntRange) -> Float,
+    gap: Float,
+    available: Float
+): Boolean {
+    if (ranges.isEmpty()) return true
+    val widths = ranges.map(measureLine)
+    if (widths.any { it > available }) return false
+    var count = 1
+    var width = 0f
+    widths.forEachIndexed { index, item ->
+        val effective = if (index == 0) item else item + gap
+        if (width > 0f && width + effective > available) {
+            count++
+            width = item
+        } else {
+            width += effective
+        }
+    }
+    return count >= ranges.size
+}
+
+/**
+ * Alignment-aware horizontal pivot for one section's draw-scale transform.
+ * Scaling around the same reference `alignedStart` positions text with
+ * preserves the section's alignment after the shrink: START keeps its
+ * physical left edge, END its physical right edge, CENTER its drawn
+ * center. A center pivot on a start-aligned section would inset the left
+ * edge by (1 - scale) * width / 2 — the one-sided gap.
+ */
+internal fun resolveDuetSectionPivotX(
+    alignment: AodLyricCanvasView.Alignment,
+    extentLeft: Float,
+    extentRight: Float
+): Float = when (alignment) {
+    AodLyricCanvasView.Alignment.START -> extentLeft
+    AodLyricCanvasView.Alignment.END -> extentRight
+    AodLyricCanvasView.Alignment.CENTER -> (extentLeft + extentRight) / 2f
+}
+
+/**
+ * Transition pass split for a duet-safe crossfade: sections present in both
+ * layouts continue (drawn once from the incoming layout at full opacity, so
+ * the survivor never crossfades against itself); outgoing-only sections
+ * fade out with the exit pass; incoming-only sections fade in with the
+ * enter pass. Returns per-pass block-index filters in visual order.
+ */
+internal data class DuetTransitionPasses(
+    val continuingEnterBlocks: Set<Int>,
+    val departingExitBlocks: Set<Int>,
+    val arrivingEnterBlocks: Set<Int>
+)
+
+internal fun resolveDuetTransitionPasses(
+    exitIds: List<DuetSectionId>,
+    enterIds: List<DuetSectionId>,
+    exitLineCounts: List<Int> = emptyList(),
+    enterLineCounts: List<Int> = emptyList()
+): DuetTransitionPasses {
+    val exitSet = exitIds.toSet()
+    val enterSet = enterIds.toSet()
+    // A continuing section whose wrapped-line count changed re-presented
+    // (e.g. the unwrap-on-floor upgrade at a duet join). Survivor-once
+    // would swap it instantly; instead it crossfades — drawn fading out in
+    // the exit pass and fading in with the enter pass. Without line-count
+    // inputs the classification falls back to pure section identity.
+    val continuing = buildSet {
+        enterIds.forEachIndexed { enterIndex, id ->
+            if (id !in exitSet) return@forEachIndexed
+            val exitIndex = exitIds.indexOf(id)
+            val presentationChanged = exitLineCounts.getOrNull(exitIndex) != null &&
+                enterLineCounts.getOrNull(enterIndex) != null &&
+                exitLineCounts[exitIndex] != enterLineCounts[enterIndex]
+            if (!presentationChanged) add(id)
+        }
+    }
+    return DuetTransitionPasses(
+        continuingEnterBlocks = enterIds.indices.filter { enterIds[it] in continuing }.toSet(),
+        departingExitBlocks = exitIds.indices.filter { exitIds[it] !in continuing }.toSet(),
+        arrivingEnterBlocks = enterIds.indices.filter { enterIds[it] !in continuing }.toSet()
+    )
+}
+
+/** Floor for shrink-to-fit: below half size the canvas clips instead. */
+internal const val MIN_OVERFLOW_SHRINK_SCALE = 0.5f
+
+/**
+ * Unwrap-on-floor tolerance: the single-line presentation must come within
+ * this much of the wrapped scale to replace it, so wide lines that would
+ * unwrap into a far tinier single line stay wrapped while genuinely shrunk
+ * sections upgrade to the cleaner one-line form.
+ */
+internal const val UNWRAP_SCALE_TOLERANCE = 0.15f
+
+/**
+ * Whether the unwrapped single-line presentation replaces the shrunk
+ * wrapped one.
+ */
+internal fun shouldUnwrapShrunkSection(
+    wrappedScale: Float,
+    singleLineScale: Float,
+    tolerance: Float = UNWRAP_SCALE_TOLERANCE
+): Boolean =
+    wrappedScale.isFinite() && singleLineScale.isFinite() &&
+        singleLineScale + tolerance >= wrappedScale
+
+/**
+ * Exact fit for one-line presentation from drawn (ink) extents — the same
+ * bounds drawing uses, so a wide single line shrinks instead of clipping.
+ * Unusable inputs contribute 1f: no NaN or zero transform.
+ */
+internal fun resolveVisualWidthFitScale(
+    widestDrawnWidth: Float,
+    availableWidth: Float
+): Float = when {
+    !widestDrawnWidth.isFinite() || !availableWidth.isFinite() ||
+        widestDrawnWidth <= 0f || availableWidth <= 0f -> 1f
+    widestDrawnWidth <= availableWidth -> 1f
+    else -> availableWidth / widestDrawnWidth
+}
+
+/**
+ * Low absolute floor for the shared duet fit: below this the canvas clips,
+ * but a clipped section reads worse than any small scale, so the shared
+ * fit stays exact far below the solo shrink floor.
+ */
+internal const val MIN_SHARED_DUET_SCALE = 0.3f
+
+/**
+ * Shared fit for the combined duet stack: full size when it fits, the exact
+ * ratio otherwise — floored only at the deep absolute minimum, because a
+ * floored overflow clips a section's bottom rows mid-draw.
+ */
+internal fun resolveSharedDuetScale(
+    combinedHeight: Float,
+    areaHeight: Float
+): Float {
+    if (!combinedHeight.isFinite() || !areaHeight.isFinite()) return 1f
+    if (combinedHeight <= 0f || areaHeight <= 0f) return 1f
+    if (combinedHeight <= areaHeight) return 1f
+    return (areaHeight / combinedHeight)
+        .coerceIn(MIN_SHARED_DUET_SCALE.coerceIn(0f, 1f), 1f)
+}
+
+/** Drawn-space anchor tolerance: within this, a stored top equals the
+ * chained position and the anchor holds; outside it, the survivor's height
+ * changed after the anchor was committed and the dependent re-chains. */
+internal const val ANCHOR_CONSISTENCY_PX = 2f
+
+/**
+ * Uniform lyric text scale so an overfull stack fits its area. Returns 1
+ * when the stack fits or the inputs are unusable; otherwise the exact fit
+ * ratio clamped to the readable floor.
+ */
+internal fun resolveOverflowShrinkScale(
+    totalHeight: Float,
+    availableHeight: Float,
+    minScale: Float = MIN_OVERFLOW_SHRINK_SCALE
+): Float {
+    if (!totalHeight.isFinite() || !availableHeight.isFinite()) return 1f
+    if (totalHeight <= 0f || availableHeight <= 0f) return 1f
+    if (totalHeight <= availableHeight) return 1f
+    return (availableHeight / totalHeight).coerceIn(minScale.coerceIn(0f, 1f), 1f)
+}
+
+/**
+ * Shift that keeps a laid-out lyric block inside its area. A fitting block
+ * never moves. An overfull block pins its top and clips at the bottom, so
+ * the current line stays visible; a fitting overhang re-pins to the nearest
+ * edge instead of running off-screen.
+ */
+internal fun resolveBlockClampShift(
+    spanTop: Float,
+    spanBottom: Float,
+    areaTop: Float,
+    areaBottom: Float
+): Float {
+    if (!spanTop.isFinite() || !spanBottom.isFinite() ||
+        !areaTop.isFinite() || !areaBottom.isFinite()
+    ) return 0f
+    if (spanBottom <= spanTop || areaBottom <= areaTop) return 0f
+    if (spanBottom - spanTop > areaBottom - areaTop) return areaTop - spanTop
+    if (spanTop < areaTop) return areaTop - spanTop
+    if (spanBottom > areaBottom) return areaBottom - spanBottom
+    return 0f
+}
+
+/**
+ * Whether a layout pass may commit episode state (anchors, order, scale,
+ * generation). Blank gap/hidden snapshots, degenerate placeholder timings,
+ * and pre-layout zero-size frames still clear the screen, but they must not
+ * wipe the episode: the next real build would otherwise re-place and
+ * re-settle everything, reading as a resize on every gap. Placeholder
+ * snapshots carry the real generation with an empty timing window, so the
+ * window check (not the generation) tells them apart.
+ */
+internal fun shouldCommitLayoutState(
+    hasLyricRows: Boolean,
+    frameUsable: Boolean,
+    timingValid: Boolean
+): Boolean = hasLyricRows && frameUsable && timingValid
+
+/**
+ * Duet slot tops for one layout pass, in lyric-area coordinates. Sections
+ * the canvas already shows keep their exact tops, so a joining, leaving, or
+ * changing partner never moves the survivor; newcomers stack adjacently
+ * above or below their nearest placed neighbor, keeping the sections
+ * connected instead of spread across the frame. With no anchor at all (full
+ * swap) the block centers on the last known center so the motion is minimal.
+ * Consumed heights include each section's leading gap, matching the row
+ * stacking loop exactly.
+ */
+internal fun placeDuetSectionTops(
+    order: List<DuetSectionId>,
+    consumed: Map<DuetSectionId, Float>,
+    areaCenter: Float,
+    lastTops: Map<DuetSectionId, Float>,
+    lastBlockCenter: Float?
+): Map<DuetSectionId, Float> {
+    if (order.isEmpty()) return emptyMap()
+    val result = LinkedHashMap<DuetSectionId, Float>()
+    for (id in order) {
+        lastTops[id]?.let { result[id] = it }
+    }
+    if (result.size == order.size) return result
+    val unplaced = order.filter { it !in result }.toMutableList()
+    var progressed = true
+    while (unplaced.isNotEmpty() && progressed) {
+        progressed = false
+        val iterator = unplaced.iterator()
+        while (iterator.hasNext()) {
+            val id = iterator.next()
+            val index = order.indexOf(id)
+            val previous = order.subList(0, index).lastOrNull { it in result }
+            if (previous != null) {
+                result[id] = result.getValue(previous) + (consumed[previous] ?: 0f)
+                iterator.remove()
+                progressed = true
+                continue
+            }
+            val next = order.subList(index + 1, order.size).firstOrNull { it in result }
+            if (next != null) {
+                result[id] = result.getValue(next) - (consumed[id] ?: 0f)
+                iterator.remove()
+                progressed = true
+            }
+        }
+    }
+    if (unplaced.isNotEmpty()) {
+        val total = order.sumOf { (consumed[it] ?: 0f).toDouble() }.toFloat()
+        var cursor = (lastBlockCenter ?: areaCenter) - total / 2f
+        for (id in order) {
+            result[id] = cursor
+            cursor += consumed[id] ?: 0f
+        }
+    }
+    return result
 }

@@ -9,44 +9,65 @@ object CustomizationRepository {
     private const val PREFS = "surface_customization"
     private const val KEY_DOCUMENT = "document_json"
     private const val KEY_PREVIOUS_DOCUMENT = "previous_document_json"
-    private const val KEY_MIGRATION_VERSION = "migration_version"
 
+    // Projection ticks run at 10 Hz while a song is playing. Keep the compiled scene in memory
+    // and only decode/canonicalize when the persisted inputs change; parsing and compiling the
+    // JSON document on every tick otherwise burns CPU and allocates a full profile graph.
+    private var compiledCacheInitialized = false
+    private var cachedCurrentRaw: String? = null
+    private var cachedPreviousRaw: String? = null
+    private var cachedLegacyConfig: AodRenderConfig? = null
+    private var cachedCompiled: CompiledCustomization? = null
+
+    /**
+     * Resolves the stored customization through the single recovery ladder
+     * ([recoverDocument]: current → previous → legacy preferences → safe default) and persists the
+     * recovered canonical form only when it differs from the stored raw JSON, so the next read
+     * takes the no-write fast path. A failed commit reads as a failed load and the safe default
+     * is returned instead.
+     */
     @Synchronized
     fun loadDocument(context: Context): CustomizationDocument {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val stored = prefs.getString(KEY_DOCUMENT, null)
-        val current = stored?.let(::decodeCurrentDocument)
-        if (current != null) {
-            if (prefs.getInt(KEY_MIGRATION_VERSION, 0) != CURRENT_CUSTOMIZATION_VERSION) {
-                prefs.edit()
-                    .putString(KEY_DOCUMENT, SceneCompiler.json.encodeToString(current))
-                    .putInt(KEY_MIGRATION_VERSION, CURRENT_CUSTOMIZATION_VERSION)
-                    .commit()
-            }
-            return current
-        }
-        val previousRaw = prefs.getString(KEY_PREVIOUS_DOCUMENT, null)
-        val previous = previousRaw?.let(::decodeCurrentDocument)
-        if (previous != null) {
-            prefs.edit()
-                .putString(KEY_DOCUMENT, SceneCompiler.json.encodeToString(previous))
-                .putInt(KEY_MIGRATION_VERSION, CURRENT_CUSTOMIZATION_VERSION)
-                .commit()
-            return previous
-        }
-        val migrated = canonicalizeDocument(documentFromLegacy(AodRenderPreferences.read(context)))
-            ?: SceneCompiler.safeDefaultDocument()
-        val encoded = SceneCompiler.json.encodeToString(migrated)
-        val saved = prefs.edit()
-            .putString(KEY_DOCUMENT, encoded)
-            .putInt(KEY_MIGRATION_VERSION, CURRENT_CUSTOMIZATION_VERSION)
-            .commit()
-        return if (saved) migrated else SceneCompiler.safeDefaultDocument()
+        val storedRaw = prefs.getString(KEY_DOCUMENT, null)
+        val recovered = recoverDocument(
+            currentRaw = storedRaw,
+            previousRaw = prefs.getString(KEY_PREVIOUS_DOCUMENT, null),
+            legacy = AodRenderPreferences.read(context)
+        )
+        val encoded = SceneCompiler.json.encodeToString(recovered)
+        val saved = storedRaw == encoded ||
+            prefs.edit().putString(KEY_DOCUMENT, encoded).commit()
+        return if (saved) recovered else SceneCompiler.safeDefaultDocument()
     }
 
     @Synchronized
-    fun loadCompiled(context: Context): CompiledCustomization =
-        SceneCompiler.compile(loadDocument(context))
+    fun loadCompiled(context: Context): CompiledCustomization {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val currentRaw = prefs.getString(KEY_DOCUMENT, null)
+        val previousRaw = prefs.getString(KEY_PREVIOUS_DOCUMENT, null)
+        // Legacy values matter only while no canonical document exists. AodRenderPreferences is
+        // itself cached, so this comparison is inexpensive and still notices first-run edits.
+        val legacy = if (currentRaw == null && previousRaw == null) {
+            AodRenderPreferences.read(context)
+        } else {
+            null
+        }
+        if (compiledCacheInitialized &&
+            currentRaw == cachedCurrentRaw &&
+            previousRaw == cachedPreviousRaw &&
+            legacy == cachedLegacyConfig
+        ) {
+            return requireNotNull(cachedCompiled)
+        }
+        val compiled = SceneCompiler.compile(loadDocument(context))
+        compiledCacheInitialized = true
+        cachedCurrentRaw = prefs.getString(KEY_DOCUMENT, null)
+        cachedPreviousRaw = prefs.getString(KEY_PREVIOUS_DOCUMENT, null)
+        cachedLegacyConfig = legacy
+        cachedCompiled = compiled
+        return compiled
+    }
 
     @Synchronized
     fun saveDocument(context: Context, document: CustomizationDocument): Boolean {
@@ -58,7 +79,6 @@ object CustomizationRepository {
         }
         val editor = prefs.edit()
             .putString(KEY_DOCUMENT, encoded)
-            .putInt(KEY_MIGRATION_VERSION, CURRENT_CUSTOMIZATION_VERSION)
         if (previous != null) editor.putString(KEY_PREVIOUS_DOCUMENT, previous)
         return editor.commit()
     }
@@ -109,31 +129,43 @@ object CustomizationRepository {
                     enabled = config.lockscreenEnabled,
                     maxHeightFraction = 0.46f
                 ),
-                SceneCompiler.SURFACE_AOD to common.copy(enabled = config.aodEnabled)
+                SceneCompiler.SURFACE_AOD to common.copy(
+                    enabled = config.aodEnabled,
+                    maxHeightFraction = DEFAULT_AOD_MAX_HEIGHT_FRACTION
+                )
             )
         )
     }
 
-    internal fun migrateDocument(document: CustomizationDocument): CustomizationDocument? {
-        if (document.version < 0 || document.version > CURRENT_CUSTOMIZATION_VERSION) return null
-        var migrated = document
-        while (migrated.version < CURRENT_CUSTOMIZATION_VERSION) {
-            migrated = when (migrated.version) {
-                0 -> migrated.copy(version = 1)
-                else -> return null
-            }
-        }
-        return migrated
-    }
-
     internal fun canonicalizeDocument(document: CustomizationDocument): CustomizationDocument? {
-        val migrated = migrateDocument(document) ?: return null
+        // Version gate: unknown past/future documents are rejected whole; known documents are
+        // canonicalized to the current version by the rebuild below. Version 2 is the one
+        // stepped migration: v1 documents predate the canvas-height setting, so their AOD
+        // 0.42 is the old implicit default rather than a choice and moves to the new
+        // default. Version 2+ documents carry explicit selections and are preserved.
+        if (document.version < 0 || document.version > CURRENT_CUSTOMIZATION_VERSION) return null
+        val migrated = if (document.version < 2) {
+            document.copy(
+                version = CURRENT_CUSTOMIZATION_VERSION,
+                profiles = document.profiles.mapValues { (surface, profile) ->
+                    if (surface == SceneCompiler.SURFACE_AOD &&
+                        profile.maxHeightFraction == LEGACY_AOD_MAX_HEIGHT_FRACTION
+                    ) {
+                        profile.copy(maxHeightFraction = DEFAULT_AOD_MAX_HEIGHT_FRACTION)
+                    } else {
+                        profile
+                    }
+                }
+            )
+        } else {
+            document
+        }
         val compiled = SceneCompiler.compile(migrated)
         if (compiled.hash.isBlank()) return null
         return CustomizationDocument(
             version = CURRENT_CUSTOMIZATION_VERSION,
             id = compiled.sourceId,
-            name = migrated.name.trim().take(100).ifBlank { "Customization" },
+            name = document.name.trim().take(100).ifBlank { "Customization" },
             linkSurfaces = compiled.linkSurfaces,
             profiles = linkedMapOf(
                 SceneCompiler.SURFACE_LOCKSCREEN to compiled.profiles
@@ -185,7 +217,10 @@ object CustomizationRepository {
         lineSyncFillMode = lineSyncFillMode,
         overflow = overflow,
         adaptiveSectioning = adaptiveSectioning,
+        duetEnabled = duetEnabled,
         palette = palette,
-        backgroundStyle = backgroundStyle
+        backgroundStyle = backgroundStyle,
+        cardColor = cardColor,
+        cardAlpha = cardAlpha
     )
 }

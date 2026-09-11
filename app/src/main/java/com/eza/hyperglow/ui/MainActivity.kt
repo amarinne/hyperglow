@@ -27,12 +27,21 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -51,7 +60,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color as ComposeColor
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.size
 import com.eza.hyperglow.BuildConfig
 import com.eza.hyperglow.R
 import com.eza.hyperglow.AppLog
@@ -62,15 +79,24 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.eza.hyperglow.aod.AOD_ROTATION_MODE_AUTO
+import com.eza.hyperglow.aod.AOD_ROTATION_MODE_LANDSCAPE
+import com.eza.hyperglow.aod.AOD_ROTATION_MODE_LANDSCAPE_REVERSE
+import com.eza.hyperglow.aod.AOD_ROTATION_MODE_PORTRAIT
 import com.eza.hyperglow.aod.AodLyricBridgeService
 import com.eza.hyperglow.aod.AodRenderPreferences
 import com.eza.hyperglow.aod.XiaomiCapabilityStore
 import com.eza.hyperglow.aod.XiaomiRuntimeSupportState
+import com.eza.hyperglow.aod.normalizeAodCanvasAnchor
+import com.eza.hyperglow.aod.normalizeAodCanvasPaddingPercent
+import com.eza.hyperglow.aod.normalizeAodLandscapeTextScale
+import com.eza.hyperglow.aod.normalizeAodRotationMode
 import com.eza.hyperglow.customization.CustomizationDocument
 import com.eza.hyperglow.customization.CustomizationEditorState
 import com.eza.hyperglow.customization.CustomizationRepository
 import com.eza.hyperglow.customization.SceneCompiler
 import com.eza.hyperglow.customization.SurfaceProfile
+import com.eza.hyperglow.customization.MAX_LYRIC_TEXT_SIZE_PERCENT
 import com.eza.hyperglow.root.aod.metadataWidgetHeightDp
 import com.eza.hyperglow.root.capability.XiaomiCapability
 import com.eza.hyperglow.root.projection.LyricRuby
@@ -88,6 +114,7 @@ import kotlinx.serialization.encodeToString
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.basic.Slider
 import top.yukonga.miuix.kmp.basic.FloatingNavigationBar
 import top.yukonga.miuix.kmp.basic.FloatingNavigationBarItem
 import top.yukonga.miuix.kmp.basic.Icon
@@ -162,54 +189,20 @@ class MainActivity : ComponentActivity() {
                         ).show()
                     }
                 }
-                var editingSurface by rememberSaveable { mutableStateOf<String?>(null) }
                 var selectedTabName by rememberSaveable {
                     mutableStateOf(SettingsTab.OVERVIEW.name)
                 }
-                AnimatedContent(
-                    targetState = editingSurface,
-                    modifier = Modifier.fillMaxSize(),
-                    transitionSpec = {
-                        if (targetState != null) {
-                            (slideInHorizontally(
-                                animationSpec = tween(320, easing = FastOutSlowInEasing),
-                                initialOffsetX = { it }
-                            ) + fadeIn(tween(220))) togetherWith
-                                (slideOutHorizontally(
-                                    animationSpec = tween(320, easing = FastOutSlowInEasing),
-                                    targetOffsetX = { -it }
-                                ) + fadeOut(tween(180)))
-                        } else {
-                            (slideInHorizontally(
-                                animationSpec = tween(320, easing = FastOutSlowInEasing),
-                                initialOffsetX = { -it }
-                            ) + fadeIn(tween(220))) togetherWith
-                                (slideOutHorizontally(
-                                    animationSpec = tween(320, easing = FastOutSlowInEasing),
-                                    targetOffsetX = { it }
-                                ) + fadeOut(tween(180)))
-                        }
-                    },
-                    label = "settingsDestination"
-                ) { surface ->
-                    if (surface == DIAGNOSTICS_DESTINATION) {
-                        DiagnosticsScreen(onBack = { editingSurface = null })
-                    } else if (surface != null) {
-                        LyricLayoutScreen(
-                            session = session,
-                            initialSurface = surface,
-                            onBack = { editingSurface = null }
-                        )
-                    } else {
-                        HomeScreen(
-                            session = session,
-                            showRestartResult = ::showRestartResult,
-                            selectedTabName = selectedTabName,
-                            onSelectTab = { selectedTabName = it },
-                            onOpenDiagnostics = { editingSurface = DIAGNOSTICS_DESTINATION },
-                            onOpenLyricLayout = { target -> editingSurface = target }
-                        )
-                    }
+                var showReport by rememberSaveable { mutableStateOf(false) }
+                if (showReport) {
+                    DiagnosticsScreen(onBack = { showReport = false })
+                } else {
+                    HomeScreen(
+                        session = session,
+                        showRestartResult = ::showRestartResult,
+                        selectedTabName = selectedTabName,
+                        onSelectTab = { selectedTabName = it },
+                        onOpenDiagnostics = { showReport = true }
+                    )
                 }
             }
         }
@@ -233,14 +226,261 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/** Inline surface appearance controls. They stay under the surface gate. */
+@Composable
+private fun SurfaceAppearanceSettings(session: SettingsSession, surface: String) {
+    val context = LocalContext.current
+    var activeChoice by remember { mutableStateOf<AodChoice?>(null) }
+    var customColorKey by remember { mutableStateOf<String?>(null) }
+    var customColorText by remember { mutableStateOf("#FFFFFF") }
+    val document by session.document.collectAsState()
+    val profile = document.profiles[surface] ?: SurfaceProfile()
+    val renderConfig by session.config.collectAsState()
+    val isAod = surface == SceneCompiler.SURFACE_AOD
+
+    fun update(update: (SurfaceProfile) -> SurfaceProfile) {
+        session.updateSelectedProfile(surface, update)
+    }
+    fun choose(kind: AodChoiceKind, values: List<String>, current: String, onSelect: (String) -> Unit) {
+        activeChoice = AodChoice(kind, values, current, onSelect)
+    }
+    fun chooseColor(kind: AodChoiceKind, key: String, current: String) {
+        choose(kind, if (key == "cardColor") CARD_COLOR_CHOICES else COLOR_CHOICES, current) { value ->
+            if (value == "custom") {
+                activeChoice = null
+                customColorKey = key
+                customColorText = if (key == "cardColor") {
+                    profile.cardColor.takeIf { it.startsWith("#") } ?: "#151519"
+                } else {
+                    profile.palette[key]?.takeIf { it.startsWith("#") } ?: "#FFFFFF"
+                }
+            } else {
+                update { currentProfile ->
+                    if (key == "cardColor") currentProfile.copy(cardColor = value)
+                    else currentProfile.withPaletteColor(key, value)
+                }
+            }
+        }
+    }
+
+    SmallTitle(text = stringResource(R.string.section_appearance))
+    if (!isAod || !renderConfig.suppressStockAodContent) {
+    SettingsCard {
+        AodChoiceRow(AodChoiceKind.POSITION, profile.anchor) {
+            choose(AodChoiceKind.POSITION, listOf("below_stock_clock", "screen_center", "screen_top_safe", "screen_bottom_safe", "custom_vertical_bias"), profile.anchor) { value -> update { it.copy(anchor = value) } }
+        }
+        PercentSliderPreference(title = stringResource(R.string.choice_width), percent = (profile.widthFraction * 100).roundToInt(), range = 40..100, step = 1, onPercentChange = { value -> update { it.copy(widthFraction = value / 100f) } })
+        if (profile.anchor == "custom_vertical_bias") {
+            CanvasAnchorPreference(stringResource(R.string.choice_vertical_position), profile.verticalBias) { value -> update { it.copy(verticalBias = value) } }
+        }
+        PercentSliderPreference(title = stringResource(R.string.choice_height), percent = (profile.maxHeightFraction * 100).roundToInt(), range = 15..(if (isAod) 90 else 80), step = 1, onPercentChange = { value -> update { it.copy(maxHeightFraction = value / 100f) } })
+        if (!isAod) AodChoiceRow(AodChoiceKind.OVERLAP, profile.collisionPolicy) {
+            choose(AodChoiceKind.OVERLAP, listOf("avoid", "hide_scene"), profile.collisionPolicy) { value -> update { it.copy(collisionPolicy = value) } }
+        }
+    }
+    }
+    SmallTitle(text = stringResource(R.string.section_text_language))
+    SettingsCard {
+        AodChoiceRow(AodChoiceKind.TEXT_WEIGHT, profile.weight) {
+            choose(AodChoiceKind.TEXT_WEIGHT, listOf("Regular", "Medium", "Bold"), profile.weight) { value -> update { it.copy(weight = value) } }
+        }
+        TextSizePreference(
+            title = stringResource(R.string.setting_lyric_size),
+            percent = effectiveTextSizePercent(profile),
+            maxPercent = MAX_LYRIC_TEXT_SIZE_PERCENT,
+            onDecrease = { update { it.copy(textSize = "custom", textSizeCustom = (effectiveTextSizePercent(it) - 5).coerceIn(50, MAX_LYRIC_TEXT_SIZE_PERCENT)) } },
+            onIncrease = { update { it.copy(textSize = "custom", textSizeCustom = (effectiveTextSizePercent(it) + 5).coerceIn(50, MAX_LYRIC_TEXT_SIZE_PERCENT)) } }
+        )
+        AodChoiceRow(AodChoiceKind.FONT, profile.fontFamily) {
+            choose(AodChoiceKind.FONT, listOf("noto", "spotify", "apple"), profile.fontFamily) { value -> update { it.copy(fontFamily = value) } }
+        }
+        AodChoiceRow(AodChoiceKind.ALIGNMENT, profile.alignment) {
+            choose(AodChoiceKind.ALIGNMENT, listOf("auto", "start", "center", "end"), profile.alignment) { value -> update { it.copy(alignment = value) } }
+        }
+        AodChoiceRow(AodChoiceKind.SECONDARY_TEXT, profile.secondaryMode) {
+            choose(AodChoiceKind.SECONDARY_TEXT, listOf("Main only", "Transliteration", "Translation", "Both"), profile.secondaryMode) { value -> update { it.copy(secondaryMode = value) } }
+        }
+        if (profile.secondaryMode != "Main only") {
+            SwitchPreference(profile.secondaryTextBright, { value -> update { it.copy(secondaryTextBright = value) } }, stringResource(R.string.setting_bright_secondary_text))
+        }
+        if (isAod) SwitchPreference(profile.duetEnabled, { value -> update { it.copy(duetEnabled = value) } }, stringResource(R.string.setting_duet_display))
+        SwitchPreference(profile.rubyVisible, { value -> update { it.copy(rubyVisible = value) } }, stringResource(R.string.setting_show_furigana))
+        AodChoiceRow(AodChoiceKind.LONG_LINES, profile.overflow) {
+            choose(AodChoiceKind.LONG_LINES, listOf("Wrap", "Clip"), profile.overflow) { value -> update { it.copy(overflow = value) } }
+        }
+        if (profile.overflow == "Wrap") {
+            AodChoiceRow(AodChoiceKind.LYRIC_LINES, profile.lyricLineLimit.toString()) {
+                choose(AodChoiceKind.LYRIC_LINES, listOf("1", "2", "3", "4", "5", "0"), profile.lyricLineLimit.toString()) { value -> update { it.copy(lyricLineLimit = value.toInt()) } }
+            }
+            SwitchPreference(profile.adaptiveSectioning, { value -> update { it.copy(adaptiveSectioning = value) } }, stringResource(R.string.setting_keep_phrases_together))
+        }
+    }
+    SmallTitle(text = stringResource(R.string.section_song_information))
+    SettingsCard {
+        if (isAod) SwitchPreference(renderConfig.songChangeInfoEnabled, { value -> session.updateConfig { it.copy(songChangeInfoEnabled = value) } }, stringResource(R.string.setting_song_change_info))
+        SwitchPreference(profile.metadataVisible, { value -> update { withMetadataVisible(it, value) } }, stringResource(R.string.setting_show_song_info))
+        if (profile.metadataVisible) {
+            AodChoiceRow(AodChoiceKind.SONG_INFO_POSITION, profile.metadataAnchor) {
+                choose(AodChoiceKind.SONG_INFO_POSITION, listOf("top", "bottom"), profile.metadataAnchor) { value -> update { it.copy(metadataAnchor = value) } }
+            }
+            TextSizePreference(
+                title = stringResource(R.string.setting_song_info_size),
+                percent = profile.metadataSizePercent.coerceIn(50, 200),
+                maxPercent = 200,
+                onDecrease = { update { it.copy(metadataSizePercent = (it.metadataSizePercent - 5).coerceIn(50, 200)) } },
+                onIncrease = { update { it.copy(metadataSizePercent = (it.metadataSizePercent + 5).coerceIn(50, 200)) } }
+            )
+        }
+
+    }
+    SmallTitle(text = stringResource(R.string.section_effects))
+    SettingsCard {
+        AodChoiceRow(AodChoiceKind.WORD_ANIMATION, profile.animation) {
+            choose(AodChoiceKind.WORD_ANIMATION, listOf("Minimal", "Gradient"), profile.animation) { value -> update { it.copy(animation = value) } }
+        }
+        SwitchPreference(
+            profile.glow == "On",
+            { value -> update { it.copy(glow = if (value) "On" else "Off") } },
+            stringResource(R.string.choice_glow)
+        )
+        AodChoiceRow(AodChoiceKind.LINE_PROGRESS, profile.lineSyncFillMode) {
+            choose(AodChoiceKind.LINE_PROGRESS, listOf("None", "Top to bottom", "Left to right (main only)", "Left to right (whole block)"), profile.lineSyncFillMode) { value -> update { it.copy(lineSyncFillMode = value) } }
+        }
+        if (!isAod) IntSliderPreference(title = stringResource(R.string.choice_scene_transition_speed), value = profile.transition.durationMs, range = 150..600, step = 50, suffix = " ms", onValueChange = session::updateHandoffDuration)
+    }
+    SmallTitle(text = stringResource(R.string.section_colors))
+    SettingsCard {
+        AodChoiceRow(AodChoiceKind.LYRIC_COLOR, paletteChoice(profile.palette, "primaryText")) {
+            chooseColor(AodChoiceKind.LYRIC_COLOR, "primaryText", paletteChoice(profile.palette, "primaryText"))
+        }
+        if (profile.metadataVisible) {
+            AodChoiceRow(AodChoiceKind.METADATA_COLOR, paletteChoice(profile.palette, "metadataText")) {
+                chooseColor(AodChoiceKind.METADATA_COLOR, "metadataText", paletteChoice(profile.palette, "metadataText"))
+            }
+        }
+    }
+    if (surface == SceneCompiler.SURFACE_LOCKSCREEN) {
+        SmallTitle(text = stringResource(R.string.section_lockscreen_card))
+        SettingsCard {
+            val cardVisible = profile.backgroundStyle != "none"
+            SwitchPreference(cardVisible, { value -> update { it.copy(backgroundStyle = if (value) "card" else "none") } }, stringResource(R.string.setting_show_lyric_card))
+            if (cardVisible) {
+                AodChoiceRow(AodChoiceKind.CARD_COLOR, profile.cardColor) {
+                    chooseColor(AodChoiceKind.CARD_COLOR, "cardColor", profile.cardColor)
+                }
+                PercentSliderPreference(title = stringResource(R.string.setting_card_transparency), percent = ((1f - profile.cardAlpha) * 100).roundToInt().coerceIn(0, 100), range = 0..100, step = 5, onPercentChange = { value -> update { it.copy(cardAlpha = 1f - value / 100f) } })
+            }
+            val progressEnabled = profile.widgets.any { it.type == "media_progress" }
+            SwitchPreference(progressEnabled, { value -> update { current ->
+                val widgets = current.widgets.filterNot { it.type == "media_progress" }.toMutableList()
+                if (value) widgets += com.eza.hyperglow.customization.WidgetSpec("media_progress", optional = true)
+                current.copy(widgets = widgets)
+            } }, stringResource(R.string.setting_show_playback_progress))
+        }
+    }
+    customColorKey?.let { key ->
+        WindowDialog(
+            title = stringResource(R.string.setting_custom_color),
+            show = true,
+            onDismissRequest = { customColorKey = null }
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                ColorPicker(
+                    initialHex = customColorText,
+                    onColorChanged = { customColorText = it }
+                )
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(32.dp).clip(CircleShape).background(customColorText.toComposeColorOrNull() ?: ComposeColor.Gray))
+                    Spacer(Modifier.width(12.dp))
+                    BasicTextField(
+                        value = customColorText,
+                        onValueChange = { customColorText = it.take(7) },
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(color = MiuixTheme.colorScheme.onSurface),
+                        cursorBrush = SolidColor(MiuixTheme.colorScheme.primary),
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(
+                        text = stringResource(R.string.action_apply),
+                        colors = ButtonDefaults.textButtonColorsPrimary(),
+                        enabled = customColorText.matches(Regex("#[0-9a-fA-F]{6}")),
+                        onClick = {
+                            update { currentProfile ->
+                                if (key == "cardColor") currentProfile.copy(cardColor = customColorText.uppercase(Locale.ROOT))
+                                else currentProfile.withPaletteColor(key, customColorText.uppercase(Locale.ROOT))
+                            }
+                            customColorKey = null
+                        }
+                    )
+                }
+            }
+        }
+    }
+    activeChoice?.let { selected ->
+        WindowDialog(title = stringResource(selected.kind.titleRes), show = true, onDismissRequest = { activeChoice = null }) {
+            Column {
+                selected.values.forEach { value ->
+                    if (selected.kind == AodChoiceKind.LYRIC_COLOR || selected.kind == AodChoiceKind.METADATA_COLOR || selected.kind == AodChoiceKind.CARD_COLOR) {
+                        ColorChoiceRow(value, selected.current, selected.kind, context) { selected.onSelect(value); activeChoice = null }
+                    } else RadioButtonPreference(choiceDisplayLabel(context, selected.kind, value), selected.current == value, { selected.onSelect(value); activeChoice = null })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AodCanvasInlineSettings(session: SettingsSession) {
+    val context = LocalContext.current
+    val config by session.config.collectAsState()
+    var activeChoice by remember { mutableStateOf<AodChoice?>(null) }
+    SmallTitle(text = stringResource(R.string.setting_aod_canvas))
+    SettingsCard {
+        AodChoiceRow(AodChoiceKind.CANVAS_ORIENTATION, config.aodRotationMode) {
+            activeChoice = AodChoice(
+                AodChoiceKind.CANVAS_ORIENTATION,
+                AOD_ROTATION_MODES,
+                config.aodRotationMode
+            ) { value -> session.updateConfig { it.copy(aodRotationMode = normalizeAodRotationMode(value), aodRotateWithDevice = value == AOD_ROTATION_MODE_AUTO) } }
+        }
+        if (config.aodRotationMode == AOD_ROTATION_MODE_AUTO) {
+            AodChoiceRow(AodChoiceKind.ROTATION_SETTLE, config.aodRotationSettleMs.toString()) {
+                activeChoice = AodChoice(AodChoiceKind.ROTATION_SETTLE, ROTATION_SETTLE_OPTIONS.map(Long::toString), config.aodRotationSettleMs.toString()) { value -> session.updateConfig { it.copy(aodRotationSettleMs = value.toLong()) } }
+            }
+        }
+        if (config.aodRotationMode != AOD_ROTATION_MODE_PORTRAIT) {
+            PercentSliderPreference(title = stringResource(R.string.setting_landscape_text_size), percent = (config.aodLandscapeTextScale * 100).roundToInt(), range = 50..200, step = 5, onPercentChange = { value -> session.updateConfig { it.copy(aodLandscapeTextScale = normalizeAodLandscapeTextScale(value / 100f)) } })
+        }
+        val document by session.document.collectAsState()
+        val aodProfile = document.profiles[SceneCompiler.SURFACE_AOD] ?: SceneCompiler.safeAodProfile()
+        SmallTitle(text = stringResource(R.string.section_canvas_size))
+        PercentSliderPreference(title = stringResource(R.string.choice_width), percent = (aodProfile.widthFraction * 100).roundToInt(), range = 40..100, step = 1,
+            onPercentChange = { value -> session.updateSelectedProfile(SceneCompiler.SURFACE_AOD) { it.copy(widthFraction = value / 100f) } })
+        PercentSliderPreference(title = stringResource(R.string.choice_height), percent = (aodProfile.maxHeightFraction * 100).roundToInt(), range = 15..90, step = 1,
+            onPercentChange = { value -> session.updateSelectedProfile(SceneCompiler.SURFACE_AOD) { it.copy(maxHeightFraction = value / 100f) } })
+        SmallTitle(text = stringResource(R.string.section_canvas_position))
+        CanvasAnchorPreference(stringResource(R.string.setting_canvas_anchor), config.aodCanvasAnchor) { value -> session.updateConfig { it.copy(aodCanvasAnchor = normalizeAodCanvasAnchor(value)) } }
+        CanvasAnchorPreference(stringResource(R.string.setting_canvas_anchor_landscape), config.aodCanvasAnchorLandscape) { value -> session.updateConfig { it.copy(aodCanvasAnchorLandscape = normalizeAodCanvasAnchor(value)) } }
+        SmallTitle(text = stringResource(R.string.section_canvas_padding))
+        PercentSliderPreference(title = stringResource(R.string.setting_canvas_padding_portrait_x), percent = config.aodCanvasPaddingPortraitXPercent.roundToInt(), range = 0..20, step = 1, onPercentChange = { value -> session.updateConfig { it.copy(aodCanvasPaddingPortraitXPercent = normalizeAodCanvasPaddingPercent(value.toFloat())) } })
+        PercentSliderPreference(title = stringResource(R.string.setting_canvas_padding_portrait_y), percent = config.aodCanvasPaddingPortraitYPercent.roundToInt(), range = 0..20, step = 1, onPercentChange = { value -> session.updateConfig { it.copy(aodCanvasPaddingPortraitYPercent = normalizeAodCanvasPaddingPercent(value.toFloat())) } })
+        PercentSliderPreference(title = stringResource(R.string.setting_canvas_padding_landscape_x), percent = config.aodCanvasPaddingLandscapeXPercent.roundToInt(), range = 0..20, step = 1, onPercentChange = { value -> session.updateConfig { it.copy(aodCanvasPaddingLandscapeXPercent = normalizeAodCanvasPaddingPercent(value.toFloat())) } })
+        PercentSliderPreference(title = stringResource(R.string.setting_canvas_padding_landscape_y), percent = config.aodCanvasPaddingLandscapeYPercent.roundToInt(), range = 0..20, step = 1, onPercentChange = { value -> session.updateConfig { it.copy(aodCanvasPaddingLandscapeYPercent = normalizeAodCanvasPaddingPercent(value.toFloat())) } })
+    }
+    activeChoice?.let { selected ->
+        WindowDialog(title = stringResource(selected.kind.titleRes), show = true, onDismissRequest = { activeChoice = null }) {
+            Column { selected.values.forEach { value -> RadioButtonPreference(aodCanvasChoiceLabel(context, selected.kind, value), selected.current == value, { selected.onSelect(value); activeChoice = null }) } }
+        }
+    }
+}
+
 @Composable
 private fun HomeScreen(
     session: SettingsSession,
     showRestartResult: (Boolean) -> Unit,
     selectedTabName: String,
     onSelectTab: (String) -> Unit,
-    onOpenDiagnostics: () -> Unit,
-    onOpenLyricLayout: (String) -> Unit
+    onOpenDiagnostics: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -295,6 +535,7 @@ private fun HomeScreen(
     val positionFollowing = config.experimentalPositionFollowing
     val burnInPattern = config.burnInPattern
     val burnInIntervalMs = config.burnInIntervalMs
+    val suppressStockAodContent = config.suppressStockAodContent
     val pauseLingerMs = config.pauseLingerMs
     val hideLauncherIcon = config.hideLauncherIcon
     val hideFromRecents = config.hideFromRecents
@@ -388,12 +629,28 @@ private fun HomeScreen(
                     label = stringResource(R.string.nav_overview)
                 )
                 FloatingNavigationBarItem(
-                    selected = pagerState.currentPage == SettingsTab.CONFIG.ordinal,
+                    selected = pagerState.currentPage == SettingsTab.LOCKSCREEN.ordinal,
                     onClick = {
-                        scope.launch { pagerState.animateScrollToPage(SettingsTab.CONFIG.ordinal) }
+                        scope.launch { pagerState.animateScrollToPage(SettingsTab.LOCKSCREEN.ordinal) }
                     },
-                    icon = LucideIcons.Settings,
-                    label = stringResource(R.string.nav_settings)
+                    icon = LucideIcons.Lock,
+                    label = stringResource(R.string.nav_lockscreen)
+                )
+                FloatingNavigationBarItem(
+                    selected = pagerState.currentPage == SettingsTab.AOD.ordinal,
+                    onClick = {
+                        scope.launch { pagerState.animateScrollToPage(SettingsTab.AOD.ordinal) }
+                    },
+                    icon = LucideIcons.MoonStar,
+                    label = stringResource(R.string.nav_aod)
+                )
+                FloatingNavigationBarItem(
+                    selected = pagerState.currentPage == SettingsTab.DIAGNOSTICS.ordinal,
+                    onClick = {
+                        scope.launch { pagerState.animateScrollToPage(SettingsTab.DIAGNOSTICS.ordinal) }
+                    },
+                    icon = LucideIcons.Info,
+                    label = stringResource(R.string.nav_diagnostics)
                 )
             }
         }
@@ -412,377 +669,229 @@ private fun HomeScreen(
             ) {
                 when (SettingsTab.entries[page]) {
                 SettingsTab.OVERVIEW -> {
-                    (updateAvailability as? UpdateAvailability.UpdateAvailable)?.let { available ->
-                        // The banner inserts at the top of the list; animateItem keeps it from
-                        // shifting the rest of the content in a single frame.
-                        item(key = "update_banner") {
-                            SettingsCard(
-                                modifier = Modifier.animateItem()
-                            ) {
-                                ArrowPreference(
-                                    title = stringResource(R.string.update_available_title),
-                                    summary = stringResource(
-                                        R.string.update_available_summary,
-                                        available.latest.versionName,
-                                        BuildConfig.VERSION_NAME
-                                    ),
-                                    onClick = { openExternalUrl(context, GITHUB_RELEASES_URL) },
-                                    startAction = { Icon(LucideIcons.Download, contentDescription = null) }
-                                )
-                            }
-                        }
-                    }
                     item { SmallTitle(text = stringResource(R.string.section_runtime_status)) }
+                    item { SettingsCard {
+                        val source by com.eza.hyperglow.bridge.SpicyBridgeStore.state.collectAsState()
+                        BasicComponent(title = stringResource(R.string.setting_source_connection),
+                            summary = stringResource(if (source != null) R.string.status_source_connected else R.string.status_source_waiting))
+                        BasicComponent(title = stringResource(R.string.setting_active_track),
+                            summary = source?.let { "${it.title} · ${it.artist}" } ?: stringResource(R.string.status_no_track))
+                        BasicComponent(title = stringResource(R.string.label_compatibility),
+                            summary = supportStateLabel(context, supportState, capabilityReport.availableCapabilityCount, capabilityReport.totalCapabilityCount))
+                    } }
+                }
+
+                SettingsTab.LOCKSCREEN -> {
                     item {
-                        SettingsCard {
-                            BasicComponent(
-                                title = stringResource(R.string.label_compatibility),
-                                summary = supportStateLabel(
-                                    context,
-                                    supportState,
-                                    capabilityReport.availableCapabilityCount,
-                                    capabilityReport.totalCapabilityCount
+                        SurfaceSettingsPage(
+                            session = session,
+                            surface = SceneCompiler.SURFACE_LOCKSCREEN,
+                            enabled = lockscreenEnabled,
+                            supported = lockscreenSupported,
+                            onEnabledChange = { enabled ->
+                                if (lockscreenSupported) {
+                                    session.updateSurfaceEnabled(SceneCompiler.SURFACE_LOCKSCREEN, enabled)
+                                }
+                            },
+                            onRestoreDefaults = {
+                                session.resetSurface(SceneCompiler.SURFACE_LOCKSCREEN)
+                            },
+                            behavior = {
+                                SwitchPreference(
+                                    lockscreenKeepAwake,
+                                    { enabled ->
+                                        session.updatePublishedConfig {
+                                            it.copy(lockscreenKeepAwake = enabled)
+                                        }
+                                    },
+                                    stringResource(R.string.setting_keep_lockscreen_awake),
+                                    summary = stringResource(R.string.summary_keep_lockscreen_awake),
+                                    enabled = lockscreenSupported
                                 )
-                            )
-                            BasicComponent(
-                                title = stringResource(R.string.label_systemui_aod),
-                                summary = "${capabilityReport.systemUiVersion} / ${capabilityReport.aodVersion}"
-                            )
-                            BasicComponent(
-                                title = stringResource(R.string.label_aod_lyrics),
-                                summary = runtimeSurfaceSummary(
-                                    context = context,
-                                    configured = aodEnabled,
-                                    supported = aodSupported,
-                                    surfaceName = context.getString(R.string.surface_aod)
-                                ),
-                                startAction = { Icon(LucideIcons.MoonStar, contentDescription = null) }
-                            )
-                            BasicComponent(
-                                title = stringResource(R.string.label_lockscreen_lyrics),
-                                summary = runtimeSurfaceSummary(
-                                    context = context,
-                                    configured = lockscreenEnabled,
-                                    supported = lockscreenSupported,
-                                    surfaceName = context.getString(R.string.surface_lockscreen)
-                                ),
-                                startAction = { Icon(LucideIcons.Lock, contentDescription = null) }
-                            )
-                            SwitchPreference(
-                                diagnosticLogging,
-                                { enabled -> session.setDiagnosticLogging(enabled) },
-                                stringResource(R.string.label_diagnostic_logging),
-                                summary = if (BuildConfig.TRACE_LOGGING_AVAILABLE) {
-                                    stringResource(R.string.summary_diagnostic_logging_available)
-                                } else {
-                                    stringResource(R.string.summary_diagnostic_logging_unavailable)
-                                },
-                                enabled = BuildConfig.TRACE_LOGGING_AVAILABLE
-                            )
-                            ArrowPreference(
-                                title = if (supportState == XiaomiRuntimeSupportState.NO_SYSTEM_UI_REPORT ||
-                                    supportState == XiaomiRuntimeSupportState.UNSUPPORTED_PROFILE ||
-                                    supportState == XiaomiRuntimeSupportState.EXPERIMENTAL_ACTIVE ||
-                                    capabilityReport.availableCapabilityCount <
-                                    capabilityReport.totalCapabilityCount
-                                ) {
-                                    stringResource(R.string.action_send_compatibility_report)
-                                } else {
-                                    stringResource(R.string.action_report_problem)
-                                },
-                                onClick = onOpenDiagnostics,
-                                startAction = { Icon(LucideIcons.Bug, contentDescription = null) }
-                            )
-                            ArrowPreference(
-                                title = stringResource(R.string.action_restart_systemui),
-                                onClick = { showRestartDialog = true },
-                                startAction = { Icon(LucideIcons.RefreshCw, contentDescription = null) }
-                            )
-                        }
-                    }
-                    item { SmallTitle(text = stringResource(R.string.section_system_integration)) }
-                    item {
-                        SettingsCard {
-                            SwitchPreference(
-                                hideLauncherIcon,
-                                { hidden ->
-                                    // The component flip follows the persisted snapshot inside
-                                    // the store's config write, so a failed flush cannot leave
-                                    // the launcher state diverged from the preference.
-                                    session.updateConfig { it.copy(hideLauncherIcon = hidden) }
-                                },
-                                stringResource(R.string.setting_hide_launcher_icon),
-                                startAction = { Icon(LucideIcons.EyeOff, contentDescription = null) }
-                            )
-                            SwitchPreference(
-                                hideFromRecents,
-                                { excluded ->
-                                    session.updateConfig { it.copy(hideFromRecents = excluded) }
-                                },
-                                stringResource(R.string.setting_hide_from_recents),
-                                startAction = { Icon(LucideIcons.SquareStack, contentDescription = null) }
-                            )
-                        }
-                    }
-                    item { SmallTitle(text = stringResource(R.string.section_config_backup)) }
-                    item {
-                        SettingsCard {
-                            ArrowPreference(
-                                title = stringResource(R.string.action_export_config),
-                                onClick = {
-                                    configExportLauncher.launch(CONFIG_BACKUP_FILE_NAME)
-                                }
-                            )
-                            ArrowPreference(
-                                title = stringResource(R.string.action_import_config),
-                                onClick = {
-                                    configImportLauncher.launch(arrayOf("application/json"))
-                                }
-                            )
-                        }
-                    }
-                    item { SmallTitle(text = stringResource(R.string.section_spotify_integration)) }
-                    item {
-                        SettingsCard {
-                            ArrowPreference(
-                                title = stringResource(R.string.action_download_spicy_ex),
-                                onClick = {
-                                    openExternalUrl(context, SPICY_EX_GITHUB_URL)
-                                },
-                                startAction = { Icon(LucideIcons.Download, contentDescription = null) }
-                            )
-                            ArrowPreference(
-                                title = stringResource(R.string.action_open_spotify),
-                                onClick = {
-                                    val launchIntent = context.packageManager
-                                        .getLaunchIntentForPackage("com.spotify.music")
-                                    if (launchIntent != null) {
-                                        context.startActivity(launchIntent)
+                                SwitchPreference(
+                                    suppressLockscreenEditorLongPress,
+                                    { enabled ->
+                                        session.updatePublishedConfig {
+                                            it.copy(suppressLockscreenEditorLongPress = enabled)
+                                        }
+                                    },
+                                    stringResource(R.string.setting_block_lockscreen_customization),
+                                    summary = if (lockscreenEditorGestureSupported) {
+                                        stringResource(R.string.summary_block_lockscreen_customization)
                                     } else {
-                                        Toast.makeText(
-                                            context,
-                                            context.getString(R.string.toast_spotify_not_installed),
-                                            Toast.LENGTH_LONG
-                                        ).show()
-                                    }
-                                }
-                            )
-                        }
-                    }
-                    item { SmallTitle(text = stringResource(R.string.section_project)) }
-                    item {
-                        SettingsCard {
-                            ArrowPreference(
-                                title = stringResource(R.string.action_hyperglow_github),
-                                onClick = {
-                                    openExternalUrl(context, GITHUB_URL)
-                                },
-                                startAction = { Icon(LucideIcons.ExternalLink, contentDescription = null) }
-                            )
-                        }
+                                        stringResource(R.string.summary_unavailable_systemui_version)
+                                    },
+                                    enabled = lockscreenEditorGestureSupported
+                                )
+
+                            }
+                        )
                     }
                 }
 
-                SettingsTab.CONFIG -> {
-                    item { SmallTitle(text = stringResource(R.string.section_language)) }
+                SettingsTab.AOD -> {
                     item {
-                        SettingsCard {
-                            ArrowPreference(
-                                title = englishInterfaceLanguageLabel(context),
-                                summary = uiLanguageLabel(
-                                    context,
-                                    currentUiLanguage(context)
-                                ),
-                                onClick = { showLanguageDialog = true },
-                                startAction = { Icon(LucideIcons.Globe, contentDescription = null) }
-                            )
-                        }
-                    }
-                    item { SmallTitle(text = stringResource(R.string.section_surfaces)) }
-                    item {
-                        SettingsCard {
-                            SwitchPreference(
-                                aodEnabled,
-                                { enabled ->
-                                    if (!aodSupported) return@SwitchPreference
-                                    session.updateSurfaceEnabled(
-                                        SceneCompiler.SURFACE_AOD,
-                                        enabled
-                                    )
-                                },
-                                stringResource(R.string.setting_show_aod),
-                                summary = if (aodSupported) {
-                                    null
-                                } else {
-                                    stringResource(R.string.summary_show_aod_unsupported)
-                                },
-                                enabled = aodSupported,
-                                startAction = { Icon(LucideIcons.MoonStar, contentDescription = null) }
-                            )
-                            SwitchPreference(
-                                lockscreenEnabled,
-                                { enabled ->
-                                    if (!lockscreenSupported) {
-                                        Toast.makeText(
-                                            context,
-                                            context.getString(R.string.toast_lockscreen_unsupported),
-                                            Toast.LENGTH_LONG
-                                        ).show()
-                                        return@SwitchPreference
-                                    }
-                                    session.updateSurfaceEnabled(
-                                        SceneCompiler.SURFACE_LOCKSCREEN,
-                                        enabled
-                                    )
-                                },
-                                stringResource(R.string.setting_show_lockscreen),
-                                summary = if (lockscreenSupported) {
-                                    null
-                                } else {
-                                    stringResource(R.string.summary_unavailable_systemui_version)
-                                },
-                                enabled = lockscreenSupported,
-                                startAction = { Icon(LucideIcons.Lock, contentDescription = null) }
-                            )
-                        }
-                    }
-                    item { SmallTitle(text = stringResource(R.string.section_appearance)) }
-                    item {
-                        SettingsCard {
-                            ArrowPreference(
-                                title = stringResource(R.string.title_aod_appearance),
-                                onClick = { onOpenLyricLayout(SceneCompiler.SURFACE_AOD) },
-                                startAction = { Icon(LucideIcons.Palette, contentDescription = null) }
-                            )
-                            ArrowPreference(
-                                title = stringResource(R.string.title_lockscreen_appearance),
-                                onClick = { onOpenLyricLayout(SceneCompiler.SURFACE_LOCKSCREEN) },
-                                startAction = { Icon(LucideIcons.Palette, contentDescription = null) }
-                            )
-                        }
-                    }
-                    item { SmallTitle(text = stringResource(R.string.section_playback_behavior)) }
-                    item {
-                        SettingsCard {
-                            ArrowPreference(
-                                title = stringResource(R.string.setting_after_spotify_pauses),
-                                summary = pauseLingerLabel(context, pauseLingerMs),
-                                onClick = { showPauseLingerDialog = true },
-                                enabled = runtimeProfileAvailable && (aodSupported || lockscreenSupported),
-                                startAction = { Icon(LucideIcons.Pause, contentDescription = null) }
-                            )
-                        }
-                    }
-                    item { SmallTitle(text = stringResource(R.string.section_aod_behavior)) }
-                    item {
-                        SettingsCard {
-                            SwitchPreference(
-                                keepAwake,
-                                { enabled -> session.updateConfig { it.copy(keepAwake = enabled) } },
-                                stringResource(R.string.setting_keep_aod_active),
-                                summary =
-                                    if (aodSupported) {
+                        SurfaceSettingsPage(
+                            session = session,
+                            surface = SceneCompiler.SURFACE_AOD,
+                            enabled = aodEnabled,
+                            supported = aodSupported,
+                            onEnabledChange = { enabled ->
+                                if (aodSupported) {
+                                    session.updateSurfaceEnabled(SceneCompiler.SURFACE_AOD, enabled)
+                                }
+                            },
+                            onRestoreDefaults = {
+                                session.resetSurface(SceneCompiler.SURFACE_AOD)
+                            },
+                            behavior = {
+                                SwitchPreference(
+                                    keepAwake,
+                                    { enabled -> session.updateConfig { it.copy(keepAwake = enabled) } },
+                                    stringResource(R.string.setting_keep_aod_active),
+                                    summary = if (aodSupported) {
                                         stringResource(R.string.summary_keep_aod_active)
                                     } else {
                                         stringResource(R.string.summary_unavailable_systemui_profile)
-                                },
-                                enabled = aodSupported
-                            )
-                            ArrowPreference(
-                                title = stringResource(R.string.setting_keep_aod_active_for),
-                                summary = keepAwakeDurationLabel(context, keepAwakeDurationMs),
-                                onClick = { showKeepAwakeDurationDialog = true },
-                                enabled = aodSupported && keepAwake
-                            )
-                            SwitchPreference(
-                                keepAwakeUnsynced,
-                                { enabled ->
-                                    session.updateConfig { it.copy(keepAwakeUnsynced = enabled) }
-                                },
-                                stringResource(R.string.setting_keep_aod_unsynced),
-                                enabled = aodSupported && keepAwake
-                            )
-                            ArrowPreference(
-                                title = stringResource(R.string.setting_aod_clock_image),
-                                summary = if (positionFollowingSupported) {
-                                    aodMovementLabel(context, positionFollowing, burnInPattern)
-                                } else {
-                                    stringResource(R.string.summary_aod_placement_unsupported)
-                                },
-                                onClick = {
-                                    if (positionFollowingSupported) {
-                                        showBurnInPatternDialog = true
-                                    } else {
-                                        Toast.makeText(
-                                            context,
-                                            context.getString(R.string.summary_aod_placement_unsupported),
-                                            Toast.LENGTH_LONG
-                                        ).show()
-                                    }
-                                },
-                                enabled = aodSupported && positionFollowingSupported
-                            )
-                            if (aodSupported && positionFollowingSupported && positionFollowing &&
-                                !burnInPattern.isStaticClockPlacement()
-                            ) {
-                                ArrowPreference(
-                                    title = stringResource(R.string.setting_movement_interval),
-                                    summary = burnInIntervalLabel(context, burnInIntervalMs),
-                                    onClick = { showBurnInIntervalDialog = true }
+                                    },
+                                    enabled = aodSupported
                                 )
+                                ArrowPreference(
+                                    title = stringResource(R.string.setting_keep_aod_active_for),
+                                    summary = keepAwakeDurationLabel(context, keepAwakeDurationMs),
+                                    onClick = { showKeepAwakeDurationDialog = true },
+                                    enabled = aodSupported && keepAwake
+                                )
+                                SwitchPreference(
+                                    keepAwakeUnsynced,
+                                    { enabled -> session.updateConfig { it.copy(keepAwakeUnsynced = enabled) } },
+                                    stringResource(R.string.setting_keep_aod_unsynced),
+                                    enabled = aodSupported && keepAwake
+                                )
+                                SwitchPreference(
+                                    config.aodBrightnessOverride,
+                                    { value -> session.updatePublishedConfig { it.copy(aodBrightnessOverride = value) } },
+                                    stringResource(R.string.setting_aod_brightness_override),
+                                    summary = stringResource(R.string.summary_aod_brightness_override),
+                                    enabled = aodSupported
+                                )
+                                if (config.aodBrightnessOverride) {
+                                    IntSliderPreference(title = stringResource(R.string.setting_aod_brightness_level),
+                                        value = config.aodBrightnessLevel, range = 10..255, step = 1,
+                                        onValueChange = { value -> session.updatePublishedConfig { it.copy(aodBrightnessLevel = value) } })
+                                }
+                                SwitchPreference(
+                                    raiseToAod,
+                                    { enabled ->
+                                        session.updatePublishedConfig { it.copy(raiseToAod = enabled) }
+                                    },
+                                    stringResource(R.string.setting_raise_to_aod),
+                                    enabled = raiseToAodSupported
+                                )
+                                SwitchPreference(
+                                    suppressStockAodContent,
+                                    { enabled -> session.updateConfig { it.copy(suppressStockAodContent = enabled) } },
+                                    stringResource(R.string.setting_hide_stock_aod_content),
+                                    enabled = aodSupported
+                                )
+                                if (!suppressStockAodContent) {
+                                ArrowPreference(
+                                    title = stringResource(R.string.setting_aod_clock_image),
+                                    summary = if (positionFollowingSupported) {
+                                        aodMovementLabel(context, positionFollowing, burnInPattern)
+                                    } else {
+                                        stringResource(R.string.summary_aod_placement_unsupported)
+                                    },
+                                    onClick = { if (positionFollowingSupported) showBurnInPatternDialog = true },
+                                    enabled = aodSupported && positionFollowingSupported
+                                )
+                                if (aodSupported && positionFollowingSupported && positionFollowing &&
+                                    !burnInPattern.isStaticClockPlacement()
+                                ) {
+                                    ArrowPreference(
+                                        title = stringResource(R.string.setting_movement_interval),
+                                        summary = burnInIntervalLabel(context, burnInIntervalMs),
+                                        onClick = { showBurnInIntervalDialog = true }
+                                    )
+                                }
+                                }
                             }
-                        }
+                        )
                     }
-                    item { SmallTitle(text = stringResource(R.string.section_lockscreen_behavior)) }
-                    item {
-                        SettingsCard {
-                            SwitchPreference(
-                                lockscreenKeepAwake,
-                                { enabled ->
-                                    session.updatePublishedConfig {
-                                        it.copy(lockscreenKeepAwake = enabled)
-                                    }
-                                },
-                                stringResource(R.string.setting_keep_lockscreen_awake),
-                                summary =
-                                    stringResource(R.string.summary_keep_lockscreen_awake),
-                                enabled = lockscreenSupported && lockscreenEnabled
-                            )
-                            SwitchPreference(
-                                suppressLockscreenEditorLongPress,
-                                { enabled ->
-                                    session.updatePublishedConfig {
-                                        it.copy(suppressLockscreenEditorLongPress = enabled)
-                                    }
-                                },
-                                stringResource(R.string.setting_block_lockscreen_customization),
-                                summary = if (lockscreenEditorGestureSupported) {
-                                    stringResource(R.string.summary_block_lockscreen_customization)
-                                } else {
-                                    stringResource(R.string.summary_unavailable_systemui_version)
-                                },
-                                enabled = lockscreenEditorGestureSupported
-                            )
-                        }
+                }
+
+                SettingsTab.DIAGNOSTICS -> {
+                    (updateAvailability as? UpdateAvailability.UpdateAvailable)?.let { available ->
+                        item { SettingsCard { ArrowPreference(
+                            title = stringResource(R.string.update_available_title),
+                            summary = stringResource(R.string.update_available_summary, available.latest.versionName, BuildConfig.VERSION_NAME),
+                            onClick = { openExternalUrl(context, GITHUB_RELEASES_URL) }
+                        ) } }
                     }
-                    item { SmallTitle(text = stringResource(R.string.section_wake_gestures)) }
-                    item {
-                        SettingsCard {
-                            SwitchPreference(
-                                raiseToAod,
-                                { enabled ->
-                                    session.updatePublishedConfig { it.copy(raiseToAod = enabled) }
-                                },
-                                stringResource(R.string.setting_raise_to_aod),
-                                summary = if (raiseToAodSupported) {
-                                    stringResource(R.string.summary_raise_to_aod)
-                                } else {
-                                    stringResource(R.string.summary_unavailable_systemui_version)
-                                },
-                                enabled = raiseToAodSupported
-                            )
-                        }
-                    }
+
+                    item { SmallTitle(text = stringResource(R.string.section_language)) }
+                    item { SettingsCard {
+                        ArrowPreference(
+                            title = englishInterfaceLanguageLabel(context),
+                            summary = uiLanguageLabel(context, currentUiLanguage(context)),
+                            onClick = { showLanguageDialog = true },
+                            startAction = { Icon(LucideIcons.Globe, contentDescription = null) }
+                        )
+                    } }
+                    item { SmallTitle(text = stringResource(R.string.section_runtime_status)) }
+                    item { SettingsCard {
+                        SwitchPreference(
+                            diagnosticLogging,
+                            { enabled -> session.setDiagnosticLogging(enabled) },
+                            stringResource(R.string.label_diagnostic_logging),
+                            summary = if (BuildConfig.TRACE_LOGGING_AVAILABLE) stringResource(R.string.summary_diagnostic_logging_available) else stringResource(R.string.summary_diagnostic_logging_unavailable),
+                            enabled = BuildConfig.TRACE_LOGGING_AVAILABLE
+                        )
+                        ArrowPreference(
+                            title = stringResource(R.string.action_restart_systemui),
+                            onClick = { showRestartDialog = true },
+                            startAction = { Icon(LucideIcons.RefreshCw, contentDescription = null) }
+                        )
+                    } }
+                    item { Spacer(Modifier.height(12.dp)) }
+                    item { SettingsCard {
+                        ArrowPreference(title = stringResource(R.string.action_report_problem), onClick = onOpenDiagnostics)
+                        BasicComponent(
+                            title = stringResource(R.string.label_systemui_aod),
+                            summary = "${capabilityReport.systemUiVersion} / ${capabilityReport.aodVersion}",
+                            startAction = { Icon(LucideIcons.Info, contentDescription = null) }
+                        )
+                    } }
+                    item { SmallTitle(text = stringResource(R.string.section_playback_behavior)) }
+                    item { SettingsCard {
+                        ArrowPreference(
+                            title = stringResource(R.string.setting_after_spotify_pauses),
+                            summary = pauseLingerLabel(context, pauseLingerMs) + " · " + stringResource(R.string.summary_shared_surfaces),
+                            onClick = { showPauseLingerDialog = true },
+                            enabled = runtimeProfileAvailable && (aodSupported || lockscreenSupported),
+                            startAction = { Icon(LucideIcons.Pause, contentDescription = null) }
+                        )
+                    } }
+                    item { SmallTitle(text = stringResource(R.string.section_system_integration)) }
+                    item { SettingsCard {
+                        SwitchPreference(hideLauncherIcon, { value -> session.updateConfig { it.copy(hideLauncherIcon = value) } }, stringResource(R.string.setting_hide_launcher_icon))
+                        SwitchPreference(hideFromRecents, { value -> session.updateConfig { it.copy(hideFromRecents = value) } }, stringResource(R.string.setting_hide_from_recents))
+                        ArrowPreference(title = stringResource(R.string.action_export_config), onClick = { configExportLauncher.launch(CONFIG_BACKUP_FILE_NAME) })
+                        ArrowPreference(title = stringResource(R.string.action_import_config), onClick = { configImportLauncher.launch(arrayOf("application/json")) })
+                    } }
+                    item { SmallTitle(text = stringResource(R.string.section_spotify_integration)) }
+                    item { SettingsCard {
+                        ArrowPreference(title = stringResource(R.string.action_download_spicy_ex), onClick = { openExternalUrl(context, SPICY_EX_GITHUB_URL) }, startAction = { Icon(LucideIcons.Download, contentDescription = null) })
+                        ArrowPreference(title = stringResource(R.string.action_open_spotify), onClick = {
+                            context.packageManager.getLaunchIntentForPackage("com.spotify.music")?.let(context::startActivity)
+                                ?: Toast.makeText(context, context.getString(R.string.toast_spotify_not_installed), Toast.LENGTH_LONG).show()
+                        })
+                    } }
+                    item { SmallTitle(text = stringResource(R.string.section_project)) }
+                    item { SettingsCard {
+                        BasicComponent(title = "HyperGlow", summary = "${BuildConfig.VERSION_NAME} · vC${BuildConfig.VERSION_CODE}")
+                        ArrowPreference(title = stringResource(R.string.action_hyperglow_github), onClick = { openExternalUrl(context, GITHUB_URL) }, startAction = { Icon(LucideIcons.ExternalLink, contentDescription = null) })
+                    } }
                 }
 
                 }
@@ -943,6 +1052,315 @@ private fun HomeScreen(
             }
         }
     }
+
+}
+
+@Composable
+private fun SurfaceSettingsPage(
+    session: SettingsSession,
+    surface: String,
+    enabled: Boolean,
+    supported: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    onRestoreDefaults: () -> Unit,
+    behavior: @Composable () -> Unit
+) {
+    val isAod = surface == SceneCompiler.SURFACE_AOD
+    var confirmRestore by remember { mutableStateOf(false) }
+    if (confirmRestore) {
+        WindowDialog(title = stringResource(if (isAod) R.string.dialog_restore_aod_title else R.string.dialog_restore_lockscreen_title),
+            show = true, onDismissRequest = { confirmRestore = false }) {
+            Row(modifier = Modifier.fillMaxWidth()) {
+                TextButton(text = stringResource(R.string.action_cancel), modifier = Modifier.weight(1f), onClick = { confirmRestore = false })
+                Spacer(Modifier.width(12.dp))
+                TextButton(text = stringResource(R.string.action_restore_surface_defaults), modifier = Modifier.weight(1f), colors = ButtonDefaults.textButtonColorsPrimary(), onClick = { onRestoreDefaults(); confirmRestore = false })
+            }
+        }
+    }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        itemTitle(
+            if (isAod) stringResource(R.string.surface_aod)
+            else stringResource(R.string.surface_lockscreen)
+        )
+        SettingsCard {
+            SwitchPreference(
+                checked = enabled,
+                onCheckedChange = onEnabledChange,
+                title = if (isAod) {
+                    stringResource(R.string.setting_show_aod)
+                } else {
+                    stringResource(R.string.setting_show_lockscreen)
+                },
+                summary = if (!supported) stringResource(if (isAod) R.string.summary_show_aod_unsupported else R.string.summary_show_lockscreen_unsupported) else null,
+                enabled = supported,
+                startAction = {
+                    Icon(
+                        if (isAod) LucideIcons.MoonStar else LucideIcons.Lock,
+                        contentDescription = null
+                    )
+                }
+            )
+        }
+
+        if (enabled) {
+            SmallTitle(text = stringResource(if (isAod) R.string.section_aod_behavior else R.string.section_lockscreen_behavior))
+            SettingsCard { behavior() }
+            val surfaceConfig by session.config.collectAsState()
+            if (isAod && surfaceConfig.suppressStockAodContent) AodCanvasInlineSettings(session)
+            SurfaceAppearanceSettings(session = session, surface = surface)
+            Spacer(Modifier.height(12.dp))
+            SettingsCard {
+                TextButton(
+                    text = stringResource(R.string.action_restore_surface_defaults),
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { confirmRestore = true }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun itemTitle(text: String) {
+    SmallTitle(text = text)
+}
+
+@Composable
+private fun AodCanvasScreen(
+    session: SettingsSession,
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    var showRotationModeDialog by remember { mutableStateOf(false) }
+    var showRotationSettleDialog by remember { mutableStateOf(false) }
+    val config by session.config.collectAsState()
+    val aodRotationMode = config.aodRotationMode
+    val aodCanvasAnchor = config.aodCanvasAnchor
+    val aodRotationSettleMs = config.aodRotationSettleMs
+    val aodCanvasAnchorLandscape = config.aodCanvasAnchorLandscape
+    val aodLandscapeTextScale = config.aodLandscapeTextScale
+    val aodCanvasPaddingPortraitXPercent = config.aodCanvasPaddingPortraitXPercent
+    val aodCanvasPaddingPortraitYPercent = config.aodCanvasPaddingPortraitYPercent
+    val aodCanvasPaddingLandscapeXPercent = config.aodCanvasPaddingLandscapeXPercent
+    val aodCanvasPaddingLandscapeYPercent = config.aodCanvasPaddingLandscapeYPercent
+
+    BackHandler(
+        enabled = !showRotationModeDialog && !showRotationSettleDialog,
+        onBack = onBack
+    )
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = stringResource(R.string.setting_aod_canvas),
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            LucideIcons.ChevronLeft,
+                            contentDescription = stringResource(R.string.action_back)
+                        )
+                    }
+                }
+            )
+        }
+    ) { innerPadding ->
+        LazyColumn(
+            contentPadding = PaddingValues(
+                top = innerPadding.calculateTopPadding() + 12.dp,
+                bottom = innerPadding.calculateBottomPadding() + 20.dp
+            )
+        ) {
+            item { SmallTitle(text = stringResource(R.string.section_canvas_orientation)) }
+            item {
+                SettingsCard {
+                    ArrowPreference(
+                        title = stringResource(R.string.setting_aod_rotation_mode),
+                        summary = aodRotationModeLabel(context, aodRotationMode),
+                        onClick = { showRotationModeDialog = true }
+                    )
+                    if (aodRotationMode == AOD_ROTATION_MODE_AUTO) {
+                        ArrowPreference(
+                            title = stringResource(R.string.setting_rotation_settle),
+                            summary = rotationSettleLabel(context, aodRotationSettleMs),
+                            onClick = { showRotationSettleDialog = true }
+                        )
+                        PercentSliderPreference(
+                            title = stringResource(
+                                R.string.setting_landscape_text_size
+                            ),
+                            percent = (aodLandscapeTextScale * 100).roundToInt(),
+                            range = 50..200,
+                            onPercentChange = { percent ->
+                                session.updateConfig {
+                                    it.copy(
+                                        aodLandscapeTextScale =
+                                            normalizeAodLandscapeTextScale(
+                                                percent / 100f
+                                            )
+                                    )
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+            item { SmallTitle(text = stringResource(R.string.section_canvas_position)) }
+            item {
+                SettingsCard {
+                    CanvasAnchorPreference(
+                        title = stringResource(R.string.setting_canvas_anchor),
+                        anchor = aodCanvasAnchor,
+                        onAnchorChange = { value ->
+                            session.updateConfig {
+                                it.copy(
+                                    aodCanvasAnchor =
+                                        normalizeAodCanvasAnchor(value)
+                                )
+                            }
+                        }
+                    )
+                    CanvasAnchorPreference(
+                        title = stringResource(
+                            R.string.setting_canvas_anchor_landscape
+                        ),
+                        anchor = aodCanvasAnchorLandscape,
+                        onAnchorChange = { value ->
+                            session.updateConfig {
+                                it.copy(
+                                    aodCanvasAnchorLandscape =
+                                        normalizeAodCanvasAnchor(value)
+                                )
+                            }
+                        }
+                    )
+                }
+            }
+            item { SmallTitle(text = stringResource(R.string.section_canvas_padding)) }
+            item {
+                SettingsCard {
+                    PercentSliderPreference(
+                        title = stringResource(
+                            R.string.setting_canvas_padding_portrait_x
+                        ),
+                        percent = aodCanvasPaddingPortraitXPercent.roundToInt(),
+                        range = 0..20,
+                        step = 1,
+                        onPercentChange = { percent ->
+                            session.updateConfig {
+                                it.copy(
+                                    aodCanvasPaddingPortraitXPercent =
+                                        normalizeAodCanvasPaddingPercent(
+                                            percent.toFloat()
+                                        )
+                                )
+                            }
+                        }
+                    )
+                    PercentSliderPreference(
+                        title = stringResource(
+                            R.string.setting_canvas_padding_portrait_y
+                        ),
+                        percent = aodCanvasPaddingPortraitYPercent.roundToInt(),
+                        range = 0..20,
+                        step = 1,
+                        onPercentChange = { percent ->
+                            session.updateConfig {
+                                it.copy(
+                                    aodCanvasPaddingPortraitYPercent =
+                                        normalizeAodCanvasPaddingPercent(
+                                            percent.toFloat()
+                                        )
+                                )
+                            }
+                        }
+                    )
+                    PercentSliderPreference(
+                        title = stringResource(
+                            R.string.setting_canvas_padding_landscape_x
+                        ),
+                        percent = aodCanvasPaddingLandscapeXPercent.roundToInt(),
+                        range = 0..20,
+                        step = 1,
+                        onPercentChange = { percent ->
+                            session.updateConfig {
+                                it.copy(
+                                    aodCanvasPaddingLandscapeXPercent =
+                                        normalizeAodCanvasPaddingPercent(
+                                            percent.toFloat()
+                                        )
+                                )
+                            }
+                        }
+                    )
+                    PercentSliderPreference(
+                        title = stringResource(
+                            R.string.setting_canvas_padding_landscape_y
+                        ),
+                        percent = aodCanvasPaddingLandscapeYPercent.roundToInt(),
+                        range = 0..20,
+                        step = 1,
+                        onPercentChange = { percent ->
+                            session.updateConfig {
+                                it.copy(
+                                    aodCanvasPaddingLandscapeYPercent =
+                                        normalizeAodCanvasPaddingPercent(
+                                            percent.toFloat()
+                                        )
+                                )
+                            }
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    if (showRotationModeDialog) {
+        WindowDialog(
+            title = stringResource(R.string.setting_aod_rotation_mode),
+            summary = stringResource(R.string.summary_aod_rotation_mode),
+            show = true,
+            onDismissRequest = { showRotationModeDialog = false }
+        ) {
+            Column {
+                AOD_ROTATION_MODES.forEach { value ->
+                    RadioButtonPreference(
+                        aodRotationModeLabel(context, value),
+                        aodRotationMode == value,
+                        {
+                            session.updateConfig {
+                                it.copy(
+                                    aodRotationMode = normalizeAodRotationMode(value),
+                                    aodRotateWithDevice = value == AOD_ROTATION_MODE_AUTO
+                                )
+                            }
+                            showRotationModeDialog = false
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    if (showRotationSettleDialog) {
+        WindowDialog(
+            title = stringResource(R.string.setting_rotation_settle),
+            show = true,
+            onDismissRequest = { showRotationSettleDialog = false }
+        ) {
+            Column {
+                ROTATION_SETTLE_OPTIONS.forEach { value ->
+                    RadioButtonPreference(
+                        rotationSettleLabel(context, value),
+                        aodRotationSettleMs == value,
+                        {
+                            session.updateConfig { it.copy(aodRotationSettleMs = value) }
+                            showRotationSettleDialog = false
+                        }
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -966,10 +1384,13 @@ private fun String.isStaticClockPlacement(): Boolean =
 
 private enum class SettingsTab {
     OVERVIEW,
-    CONFIG
+    LOCKSCREEN,
+    AOD,
+    DIAGNOSTICS
 }
 
 private const val DIAGNOSTICS_DESTINATION = "__diagnostics__"
+private const val AOD_CANVAS_DESTINATION = "__aod_canvas__"
 private const val GITHUB_URL = "https://github.com/amarinne/hyperglow"
 private const val CONFIG_BACKUP_FILE_NAME = "hyperglow-config-backup.json"
 private const val GITHUB_RELEASES_URL = "https://github.com/amarinne/hyperglow/releases/latest"
@@ -1083,6 +1504,37 @@ private fun burnInIntervalLabel(context: android.content.Context, value: Long): 
             else -> R.string.duration_1_minute
         }
     )
+
+private fun rotationSettleLabel(context: android.content.Context, value: Long): String =
+    context.getString(
+        when (value) {
+            0L -> R.string.rotation_settle_instant
+            500L -> R.string.rotation_settle_half_second
+            2_000L -> R.string.rotation_settle_2_seconds
+            5_000L -> R.string.duration_5_seconds
+            10_000L -> R.string.duration_10_seconds
+            else -> R.string.rotation_settle_1_second
+        }
+    )
+
+private val ROTATION_SETTLE_OPTIONS = listOf(0L, 500L, 1_000L, 2_000L, 5_000L, 10_000L)
+
+private fun aodRotationModeLabel(context: android.content.Context, value: String): String =
+    context.getString(
+        when (normalizeAodRotationMode(value)) {
+            AOD_ROTATION_MODE_LANDSCAPE -> R.string.rotation_mode_landscape
+            AOD_ROTATION_MODE_LANDSCAPE_REVERSE -> R.string.rotation_mode_landscape_reverse
+            AOD_ROTATION_MODE_AUTO -> R.string.rotation_mode_auto
+            else -> R.string.rotation_mode_portrait
+        }
+    )
+
+private val AOD_ROTATION_MODES = listOf(
+    AOD_ROTATION_MODE_PORTRAIT,
+    AOD_ROTATION_MODE_LANDSCAPE,
+    AOD_ROTATION_MODE_LANDSCAPE_REVERSE,
+    AOD_ROTATION_MODE_AUTO
+)
 
 private fun pauseLingerLabel(context: android.content.Context, value: Long): String =
     context.getString(
@@ -1272,21 +1724,21 @@ private fun LyricLayoutScreen(
                             selectedProfile.anchor
                         ) { value -> updateSelected { it.copy(anchor = value) } }
                     }
-                    AodChoiceRow(AodChoiceKind.WIDTH, selectedProfile.widthFraction.toString()) {
-                        openChoice(
-                            AodChoiceKind.WIDTH,
-                            listOf("0.7", "0.88", "1.0"),
-                            selectedProfile.widthFraction.toString()
-                        ) { value -> updateSelected { it.copy(widthFraction = value.toFloat()) } }
-                    }
-                    if (selectedProfile.anchor == "custom_vertical_bias") {
-                        AodChoiceRow(AodChoiceKind.VERTICAL_POSITION, selectedProfile.verticalBias.toString()) {
-                            openChoice(
-                                AodChoiceKind.VERTICAL_POSITION,
-                                listOf("0.25", "0.5", "0.75"),
-                                selectedProfile.verticalBias.toString()
-                            ) { value -> updateSelected { it.copy(verticalBias = value.toFloat()) } }
+                    PercentSliderPreference(
+                        title = stringResource(R.string.choice_width),
+                        percent = (selectedProfile.widthFraction * 100).roundToInt(),
+                        range = 40..100,
+                        step = 1,
+                        onPercentChange = { percent ->
+                            updateSelected { it.copy(widthFraction = percent / 100f) }
                         }
+                    )
+                    if (selectedProfile.anchor == "custom_vertical_bias") {
+                        CanvasAnchorPreference(
+                            title = stringResource(R.string.choice_vertical_position),
+                            anchor = selectedProfile.verticalBias,
+                            onAnchorChange = { value -> updateSelected { it.copy(verticalBias = value) } }
+                        )
                     }
                     AodChoiceRow(AodChoiceKind.OVERLAP, selectedProfile.collisionPolicy) {
                         openChoice(
@@ -1321,6 +1773,11 @@ private fun LyricLayoutScreen(
                             stringResource(R.string.setting_bright_secondary_text)
                         )
                     }
+                    SwitchPreference(
+                        selectedProfile.duetEnabled,
+                        { enabled -> updateSelected { it.copy(duetEnabled = enabled) } },
+                        stringResource(R.string.setting_duet_display)
+                    )
                     SwitchPreference(
                         selectedProfile.rubyVisible,
                         { visible -> updateSelected { it.copy(rubyVisible = visible) } },
@@ -1374,6 +1831,7 @@ private fun LyricLayoutScreen(
                         TextSizePreference(
                             title = stringResource(R.string.setting_song_info_size),
                             percent = selectedProfile.metadataSizePercent.coerceIn(50, 200),
+                            maxPercent = 200,
                             onDecrease = {
                                 updateSelected {
                                     it.copy(
@@ -1399,14 +1857,15 @@ private fun LyricLayoutScreen(
                             selectedProfile.weight
                         ) { value -> updateSelected { it.copy(weight = value) } }
                     }
-                    TextSizePreference(
-                        title = stringResource(R.string.setting_lyric_size),
-                        percent = effectiveTextSizePercent(selectedProfile),
+                        TextSizePreference(
+                            title = stringResource(R.string.setting_lyric_size),
+                            percent = effectiveTextSizePercent(selectedProfile),
+                            maxPercent = MAX_LYRIC_TEXT_SIZE_PERCENT,
                         onDecrease = {
                             updateSelected {
                                 it.copy(
                                     textSize = "custom",
-                                    textSizeCustom = (effectiveTextSizePercent(it) - 5).coerceIn(50, 200)
+                                        textSizeCustom = (effectiveTextSizePercent(it) - 5).coerceIn(50, MAX_LYRIC_TEXT_SIZE_PERCENT)
                                 )
                             }
                         },
@@ -1414,7 +1873,7 @@ private fun LyricLayoutScreen(
                             updateSelected {
                                 it.copy(
                                     textSize = "custom",
-                                    textSizeCustom = (effectiveTextSizePercent(it) + 5).coerceIn(50, 200)
+                                        textSizeCustom = (effectiveTextSizePercent(it) + 5).coerceIn(50, MAX_LYRIC_TEXT_SIZE_PERCENT)
                                 )
                             }
                         }
@@ -1438,11 +1897,13 @@ private fun LyricLayoutScreen(
                             selectedProfile.animation
                         ) { value -> updateSelected { it.copy(animation = value) } }
                     }
-                    AodChoiceRow(AodChoiceKind.GLOW, selectedProfile.glow) {
-                        openChoice(AodChoiceKind.GLOW, listOf("Off", "On"), selectedProfile.glow) { value ->
-                            updateSelected { it.copy(glow = value) }
-                        }
-                    }
+                    SwitchPreference(
+                        selectedProfile.glow == "On",
+                        { enabled ->
+                            updateSelected { it.copy(glow = if (enabled) "On" else "Off") }
+                        },
+                        stringResource(R.string.choice_glow)
+                    )
                     AodChoiceRow(AodChoiceKind.LINE_PROGRESS, selectedProfile.lineSyncFillMode) {
                         openChoice(
                             AodChoiceKind.LINE_PROGRESS,
@@ -1462,20 +1923,18 @@ private fun LyricLayoutScreen(
                             palettePresetName(selectedProfile.palette)
                         ) { value -> updateSelected { it.copy(palette = palettePreset(value)) } }
                     }
-                    AodChoiceRow(
-                        AodChoiceKind.TRANSITION_SPEED,
-                        selectedProfile.transition.durationMs.toString()
-                    ) {
-                        openChoice(
-                            AodChoiceKind.TRANSITION_SPEED,
-                            listOf("200", "320", "500"),
-                            selectedProfile.transition.durationMs.toString()
-                        ) { value ->
+                    IntSliderPreference(
+                        title = stringResource(R.string.choice_scene_transition_speed),
+                        value = selectedProfile.transition.durationMs,
+                        range = 150..600,
+                        step = 10,
+                        suffix = " ms",
+                        onValueChange = { value ->
                             updateSelected {
-                                it.copy(transition = it.transition.copy(durationMs = value.toInt()))
+                                it.copy(transition = it.transition.copy(durationMs = value))
                             }
                         }
-                    }
+                    )
                 }
             }
             if (editorState.selectedSurface == SceneCompiler.SURFACE_LOCKSCREEN) {
@@ -1508,8 +1967,7 @@ private fun LyricLayoutScreen(
                                     profile.copy(widgets = widgets)
                                 }
                             },
-                            stringResource(R.string.setting_show_playback_progress),
-                            summary = stringResource(R.string.summary_show_playback_progress)
+                            stringResource(R.string.setting_show_playback_progress)
                         )
                     }
                 }
@@ -1527,7 +1985,7 @@ private fun LyricLayoutScreen(
                             onClick = { exportLauncher.launch("hyperglow-profile.json") }
                         )
                         ArrowPreference(
-                            title = stringResource(R.string.action_reset_surfaces),
+                            title = stringResource(R.string.action_restore_surface_default),
                             onClick = { showResetDialog = true }
                         )
                     }
@@ -1559,9 +2017,15 @@ private fun LyricLayoutScreen(
 
     if (showResetDialog) {
         WindowDialog(
-            title = stringResource(R.string.dialog_reset_title),
+            title = stringResource(
+                if (initialSurface == SceneCompiler.SURFACE_AOD) {
+                    R.string.dialog_restore_aod_title
+                } else {
+                    R.string.dialog_restore_lockscreen_title
+                }
+            ),
             summary =
-                stringResource(R.string.dialog_reset_summary),
+                stringResource(R.string.dialog_restore_surface_summary),
             show = true,
             onDismissRequest = { showResetDialog = false }
         ) {
@@ -1580,7 +2044,7 @@ private fun LyricLayoutScreen(
                         showResetDialog = false
                         // Optimistic in-memory reset; the failure event reports a rejected write
                         // and rolls the editor back to the persisted document.
-                        session.resetDocument()
+                        session.resetSurface(initialSurface)
                         Toast.makeText(
                             context,
                             context.getString(R.string.toast_settings_restored),
@@ -1673,12 +2137,99 @@ private fun previewSnapshot(scenario: String): LyricSnapshot = LyricSnapshot(
     }
 )
 
+private fun resolveColorSample(value: String): ComposeColor? = when (value) {
+    "white" -> ComposeColor.White
+    "lavender" -> ComposeColor(0xFFB9A7FF)
+    "mint" -> ComposeColor(0xFF9DE7C2)
+    "black" -> ComposeColor.Black
+    "charcoal" -> ComposeColor(0xFF303035)
+    "deep_purple" -> ComposeColor(0xFF4A315E)
+    else -> value.toComposeColorOrNull()
+}
+
+@Composable
+private fun ColorChoiceRow(
+    value: String,
+    current: String,
+    kind: AodChoiceKind,
+    context: android.content.Context,
+    onClick: () -> Unit
+) {
+    val sample = if (value == "custom") resolveColorSample(current) else resolveColorSample(value)
+    BasicComponent(
+        title = choiceDisplayLabel(context, kind, value),
+        summary = if (current == value) context.getString(R.string.option_selected) else null,
+        endActions = {
+            Box(Modifier.padding(end = 20.dp).size(24.dp).clip(CircleShape).background(sample ?: MiuixTheme.colorScheme.onSurface.copy(alpha = 0.45f)))
+        },
+        modifier = Modifier.clickable(onClick = onClick)
+    )
+}
+
+@Composable
+private fun ColorPicker(initialHex: String, onColorChanged: (String) -> Unit) {
+    val initial = initialHex.toComposeColorOrNull() ?: ComposeColor.White
+    val hsv = remember(initialHex) { FloatArray(3).also { android.graphics.Color.colorToHSV(initial.toArgb(), it) } }
+    var hue by remember(initialHex) { mutableStateOf(hsv[0]) }
+    var saturation by remember(initialHex) { mutableStateOf(hsv[1]) }
+    var value by remember(initialHex) { mutableStateOf(hsv[2]) }
+    fun publish() {
+        onColorChanged(String.format(Locale.ROOT, "#%06X", android.graphics.Color.HSVToColor(floatArrayOf(hue, saturation, value)) and 0xFFFFFF))
+    }
+    Column {
+        Canvas(Modifier.fillMaxWidth().height(180.dp).pointerInput(Unit) {
+            detectDragGestures(
+                onDragStart = { point -> saturation = (point.x / size.width).coerceIn(0f, 1f); value = (1f - point.y / size.height).coerceIn(0f, 1f); publish() },
+                onDrag = { change, _ -> change.consume(); saturation = (change.position.x / size.width).coerceIn(0f, 1f); value = (1f - change.position.y / size.height).coerceIn(0f, 1f); publish() }
+            )
+        }) {
+            drawRect(Brush.horizontalGradient(listOf(ComposeColor.White, ComposeColor(android.graphics.Color.HSVToColor(floatArrayOf(hue, 1f, 1f))))))
+            drawRect(Brush.verticalGradient(listOf(ComposeColor.Transparent, ComposeColor.Black)))
+            val cursor = androidx.compose.ui.geometry.Offset(saturation * size.width, (1f - value) * size.height)
+            drawCircle(ComposeColor(android.graphics.Color.HSVToColor(floatArrayOf(hue, saturation, value))), radius = 14.dp.toPx(), center = cursor)
+            drawCircle(ComposeColor.White, radius = 14.dp.toPx(), center = cursor, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()))
+            drawCircle(ComposeColor.Black, radius = 17.dp.toPx(), center = cursor, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx()))
+        }
+        Canvas(Modifier.fillMaxWidth().height(28.dp).padding(vertical = 6.dp).pointerInput(Unit) {
+            detectDragGestures(
+                onDragStart = { point -> hue = (point.x / size.width).coerceIn(0f, 1f) * 360f; publish() },
+                onDrag = { change, _ -> change.consume(); hue = (change.position.x / size.width).coerceIn(0f, 1f) * 360f; publish() }
+            )
+        }) {
+            drawRect(Brush.horizontalGradient((0..6).map { ComposeColor(android.graphics.Color.HSVToColor(floatArrayOf(it * 60f, 1f, 1f))) }))
+            val x = (hue / 360f).coerceIn(0f, 1f) * size.width
+            drawLine(ComposeColor.Black, androidx.compose.ui.geometry.Offset(x, 0f), androidx.compose.ui.geometry.Offset(x, size.height), strokeWidth = 2.dp.toPx())
+            drawCircle(ComposeColor.White, radius = 7.dp.toPx(), center = androidx.compose.ui.geometry.Offset(x, size.height / 2f))
+            drawCircle(ComposeColor.Black, radius = 7.dp.toPx(), center = androidx.compose.ui.geometry.Offset(x, size.height / 2f), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx()))
+        }
+    }
+}
+
+private fun String.toComposeColorOrNull(): ComposeColor? = runCatching {
+    if (!matches(Regex("#[0-9a-fA-F]{6}"))) return null
+    ComposeColor(android.graphics.Color.parseColor(this))
+}.getOrNull()
+
 @Composable
 private fun AodChoiceRow(kind: AodChoiceKind, value: String, onClick: () -> Unit) {
     val context = LocalContext.current
+    val colorSample = if (kind == AodChoiceKind.LYRIC_COLOR || kind == AodChoiceKind.METADATA_COLOR || kind == AodChoiceKind.CARD_COLOR) {
+        resolveColorSample(value)
+    } else null
     ArrowPreference(
         title = stringResource(kind.titleRes),
         summary = choiceDisplayLabel(context, kind, value),
+        endActions = {
+            if (colorSample != null) {
+                Box(
+                    Modifier
+                        .padding(end = 8.dp)
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(colorSample)
+                )
+            }
+        },
         onClick = onClick
     )
 }
@@ -1687,6 +2238,7 @@ private fun AodChoiceRow(kind: AodChoiceKind, value: String, onClick: () -> Unit
 private fun TextSizePreference(
     title: String,
     percent: Int,
+    maxPercent: Int = MAX_LYRIC_TEXT_SIZE_PERCENT,
     onDecrease: () -> Unit,
     onIncrease: () -> Unit
 ) {
@@ -1718,7 +2270,7 @@ private fun TextSizePreference(
             Spacer(Modifier.width(12.dp))
             IconButton(
                 onClick = onIncrease,
-                enabled = percent < 200,
+                enabled = percent < maxPercent,
                 backgroundColor = MiuixTheme.colorScheme.surfaceContainerHighest,
                 cornerRadius = 24.dp,
                 minHeight = 48.dp,
@@ -1733,11 +2285,79 @@ private fun TextSizePreference(
     )
 }
 
+@Composable
+private fun IntSliderPreference(
+    title: String,
+    value: Int,
+    range: IntRange,
+    step: Int,
+    suffix: String = "",
+    onValueChange: (Int) -> Unit
+) {
+    BasicComponent(
+        title = title,
+        summary = "${value.coerceIn(range)}$suffix",
+        endActions = {
+            Slider(
+                value = value.coerceIn(range).toFloat(),
+                onValueChange = { onValueChange(it.roundToInt().coerceIn(range)) },
+                modifier = Modifier.width(150.dp),
+                valueRange = range.first.toFloat()..range.last.toFloat(),
+                steps = ((range.last - range.first) / step - 1).coerceAtLeast(0)
+            )
+        }
+    )
+}
+
+@Composable
+private fun CanvasAnchorPreference(
+    title: String,
+    anchor: Float,
+    onAnchorChange: (Float) -> Unit
+) {
+    BasicComponent(
+        title = title,
+        summary = "${(anchor * 100).roundToInt()}%",
+        endActions = {
+            Slider(
+                value = anchor,
+                onValueChange = onAnchorChange,
+                modifier = Modifier.width(150.dp),
+                valueRange = 0f..1f,
+                steps = 19
+            )
+        }
+    )
+}
+
+@Composable
+private fun PercentSliderPreference(
+    title: String,
+    percent: Int,
+    range: IntRange,
+    onPercentChange: (Int) -> Unit,
+    step: Int = 5
+) {
+    BasicComponent(
+        title = title,
+        summary = "$percent%",
+        endActions = {
+            Slider(
+                value = percent.toFloat(),
+                onValueChange = { onPercentChange(it.roundToInt()) },
+                modifier = Modifier.width(150.dp),
+                valueRange = range.first.toFloat()..range.last.toFloat(),
+                steps = (range.last - range.first) / step - 1
+            )
+        }
+    )
+}
+
 private fun effectiveTextSizePercent(profile: SurfaceProfile): Int = when (profile.textSize) {
     "small" -> 90
     "large" -> 120
     "xlarge" -> 150
-    "custom" -> profile.textSizeCustom.coerceIn(50, 200)
+    "custom" -> profile.textSizeCustom.coerceIn(50, MAX_LYRIC_TEXT_SIZE_PERCENT)
     else -> 100
 }
 
@@ -1825,6 +2445,21 @@ private fun choiceDisplayLabel(
     AodChoiceKind.GLOW -> context.getString(
         if (value == "On") R.string.option_on else R.string.option_off
     )
+    AodChoiceKind.CANVAS_ORIENTATION,
+    AodChoiceKind.ROTATION_SETTLE -> aodCanvasChoiceLabel(context, kind, value)
+    AodChoiceKind.LYRIC_COLOR,
+    AodChoiceKind.METADATA_COLOR,
+    AodChoiceKind.CARD_COLOR -> if (value.startsWith("#")) value else context.getString(when (value) {
+        "dimmed" -> R.string.option_dimmed
+        "white" -> R.string.option_white
+        "lavender" -> R.string.option_lavender
+        "mint" -> R.string.option_mint
+        "custom" -> R.string.option_custom
+        "charcoal" -> R.string.option_charcoal
+        "deep_purple" -> R.string.option_deep_purple
+        "black" -> R.string.option_black
+        else -> if (value.startsWith("#")) R.string.option_custom else R.string.option_default
+    })
 }
 
 private enum class AodChoiceKind(@param:StringRes val titleRes: Int) {
@@ -1843,7 +2478,18 @@ private enum class AodChoiceKind(@param:StringRes val titleRes: Int) {
     GLOW(R.string.choice_glow),
     LINE_PROGRESS(R.string.choice_line_progress_effect),
     TEXT_BRIGHTNESS(R.string.choice_text_brightness),
+    LYRIC_COLOR(R.string.choice_lyric_color),
+    METADATA_COLOR(R.string.choice_metadata_color),
+    CARD_COLOR(R.string.choice_card_color),
+    CANVAS_ORIENTATION(R.string.setting_aod_rotation_mode),
+    ROTATION_SETTLE(R.string.setting_rotation_settle),
     TRANSITION_SPEED(R.string.choice_scene_transition_speed)
+}
+
+private fun aodCanvasChoiceLabel(context: android.content.Context, kind: AodChoiceKind, value: String): String = when (kind) {
+    AodChoiceKind.CANVAS_ORIENTATION -> aodRotationModeLabel(context, value)
+    AodChoiceKind.ROTATION_SETTLE -> rotationSettleLabel(context, value.toLongOrNull() ?: 1_000L)
+    else -> value
 }
 
 private data class AodChoice(
@@ -1874,6 +2520,19 @@ private val SEMANTIC_PALETTE_KEYS = setOf(
     "accent",
     "surfaceScrim"
 )
+
+private val COLOR_CHOICES = listOf("default", "white", "lavender", "mint", "custom")
+private val CARD_COLOR_CHOICES = listOf("black", "charcoal", "deep_purple", "custom")
+
+private fun paletteChoice(palette: Map<String, String>, key: String): String =
+    palette[key]?.takeIf { it.startsWith("#") || it == "dimmed" || it in COLOR_CHOICES } ?: "default"
+
+private fun SurfaceProfile.withPaletteColor(key: String, value: String): SurfaceProfile {
+    val next = palette.toMutableMap()
+    val keys = if (key == "primaryText") listOf("primaryText", "secondaryText", "sungText", "unsungText", "glow") else listOf(key)
+    keys.forEach { if (value == "default") next.remove(it) else next[it] = value }
+    return copy(palette = next)
+}
 
 internal fun palettePreset(name: String): Map<String, String> =
     if (name == "dimmed") SEMANTIC_PALETTE_KEYS.associateWith { "dimmed" } else emptyMap()

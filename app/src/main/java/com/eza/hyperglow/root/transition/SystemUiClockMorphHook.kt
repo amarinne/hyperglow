@@ -4,6 +4,7 @@ import android.graphics.Rect
 import android.view.View
 import android.view.ViewGroup
 import com.eza.hyperglow.root.HookLogger
+import com.eza.hyperglow.root.HookRegistry
 import com.eza.hyperglow.root.hierarchyField
 import com.eza.hyperglow.root.aod.AodRenderedClockBounds
 import io.github.libxposed.api.XposedInterface.Chain
@@ -32,8 +33,10 @@ internal object SystemUiClockMorphHook {
             classLoader.loadClass(CLOCK_BASE_ANIMATION_CLASS),
             "mAllContainer"
         ) ?: return
-        module.deoptimize(method)
-        module.hook(method).intercept(
+        HookRegistry.hook(
+            module,
+            FEATURE_ID,
+            method,
             AnimationHooker(clockAnimationField, clockViewField, allContainerField)
         )
         HookLogger.i(TAG, "SystemUI clock morph geometry hook installed")
@@ -104,5 +107,6 @@ internal object SystemUiClockMorphHook {
     private const val CLOCK_BASE_ANIMATION_CLASS =
         "com.android.keyguard.clock.animation.ClockBaseAnimation"
     private const val MIN_VISIBLE_ALPHA = 0.02f
+    private const val FEATURE_ID = "clock-morph"
     private const val TAG = "SystemUiClockMorph"
 }

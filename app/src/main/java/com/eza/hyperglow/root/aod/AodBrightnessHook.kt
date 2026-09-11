@@ -2,7 +2,10 @@ package com.eza.hyperglow.root.aod
 
 import android.os.Handler
 import android.os.Looper
+import com.eza.hyperglow.customization.MAX_AOD_BRIGHTNESS
+import com.eza.hyperglow.customization.MIN_AOD_BRIGHTNESS
 import com.eza.hyperglow.root.HookLogger
+import com.eza.hyperglow.root.HookRegistry
 import io.github.libxposed.api.XposedInterface.Chain
 import io.github.libxposed.api.XposedInterface.Hooker
 import io.github.libxposed.api.XposedModule
@@ -37,14 +40,12 @@ object AodBrightnessHook {
         if (!hookedClassLoaders.add(classLoader)) return
 
         AodBrightnessController.registerTarget(readableBrightness)
-        module.deoptimize(adapterMethod)
-        module.hook(adapterMethod).intercept(BrightnessHooker)
-        module.deoptimize(transitionMethod)
-        module.hook(transitionMethod).intercept(TransitionHooker)
+        HookRegistry.hook(module, FEATURE_ID, adapterMethod, BrightnessHooker)
+        HookRegistry.hook(module, FEATURE_ID, transitionMethod, TransitionHooker)
         val constructorHooker = AdapterConstructorHooker(adapterMethod)
         for (constructor in adapterClass.declaredConstructors) {
             constructor.isAccessible = true
-            module.hook(constructor).intercept(constructorHooker)
+            HookRegistry.hook(module, FEATURE_ID, constructor, constructorHooker)
         }
         HookLogger.i(
             TAG,
@@ -103,6 +104,7 @@ object AodBrightnessHook {
     private const val TRANSITION_METHOD = "transitionTo"
     private const val BRIGHTNESS_ON_FIELD = "BRIGHTNESS_ON"
     private const val FALLBACK_BRIGHTNESS_ON = 255
+    private const val FEATURE_ID = "aod-brightness"
     private const val TAG = "AodBrightnessHook"
 }
 
@@ -114,6 +116,8 @@ object AodBrightnessController {
     private var adapterSetBrightness = WeakReference<Method>(null)
     private var lastRawBrightness: Int? = null
     private var readableBrightness = DEFAULT_READABLE_BRIGHTNESS
+    private var brightnessOverrideEnabled = false
+    private var brightnessOverrideLevel = DEFAULT_READABLE_BRIGHTNESS
     private var pendingResubmit: Runnable? = null
 
     @Synchronized
@@ -134,6 +138,27 @@ object AodBrightnessController {
     }
 
     @Synchronized
+    fun setBrightnessOverride(enabled: Boolean, level: Int) {
+        val normalizedLevel = level.coerceIn(MIN_AOD_BRIGHTNESS, MAX_AOD_BRIGHTNESS)
+        if (brightnessOverrideEnabled == enabled && brightnessOverrideLevel == normalizedLevel) {
+            return
+        }
+        brightnessOverrideEnabled = enabled
+        brightnessOverrideLevel = normalizedLevel
+        scheduleResubmitLocked(guardActive)
+    }
+
+    /**
+     * Drops the pending re-submit owned by this generation so it cannot fire after
+     * the old module class loader is retired by hot reload.
+     */
+    @Synchronized
+    fun cancelPendingForReload() {
+        pendingResubmit?.let(mainHandler::removeCallbacks)
+        pendingResubmit = null
+    }
+
+    @Synchronized
     fun noteDozeState(stateName: String?) {
         val changed = dozeStateName != stateName
         dozeStateName = stateName
@@ -151,7 +176,9 @@ object AodBrightnessController {
             requestedBrightness = requested,
             readableBrightness = readableBrightness,
             lyricGuardActive = guardActive,
-            dozeStateName = dozeStateName
+            dozeStateName = dozeStateName,
+            brightnessOverrideEnabled = brightnessOverrideEnabled,
+            brightnessOverrideLevel = brightnessOverrideLevel
         )
         if (resolved != requested) {
             HookLogger.i(
@@ -220,12 +247,21 @@ internal fun resolveAodBrightnessRequest(
     requestedBrightness: Int,
     readableBrightness: Int,
     lyricGuardActive: Boolean,
-    dozeStateName: String?
+    dozeStateName: String?,
+    brightnessOverrideEnabled: Boolean = false,
+    brightnessOverrideLevel: Int = DEFAULT_READABLE_BRIGHTNESS
 ): Int {
-    val shouldClamp = lyricGuardActive &&
+    val eligible = lyricGuardActive &&
         dozeStateName == "DOZE_AOD" &&
         requestedBrightness > 0 &&
-        readableBrightness > 0 &&
-        requestedBrightness < readableBrightness
-    return if (shouldClamp) readableBrightness else requestedBrightness
+        readableBrightness > 0
+    return if (!eligible) {
+        requestedBrightness
+    } else if (brightnessOverrideEnabled) {
+        brightnessOverrideLevel.coerceIn(MIN_AOD_BRIGHTNESS, MAX_AOD_BRIGHTNESS)
+    } else {
+        requestedBrightness.coerceAtLeast(readableBrightness)
+    }
 }
+
+private const val DEFAULT_READABLE_BRIGHTNESS = 255

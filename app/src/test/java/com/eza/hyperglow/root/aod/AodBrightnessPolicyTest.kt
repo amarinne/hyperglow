@@ -60,4 +60,56 @@ class AodBrightnessPolicyTest {
         assertEquals(1, resolveAodBrightnessRequest(1, 255, true, null))
         assertEquals(255, resolveAodBrightnessRequest(1, 255, true, "DOZE_AOD"))
     }
+
+    @Test
+    fun manualOverrideUsesBoundedLevelOnlyInEligibleAodState() {
+        assertEquals(
+            73,
+            resolveAodBrightnessRequest(
+                requestedBrightness = 1,
+                readableBrightness = 255,
+                lyricGuardActive = true,
+                dozeStateName = "DOZE_AOD",
+                brightnessOverrideEnabled = true,
+                brightnessOverrideLevel = 73
+            )
+        )
+        assertEquals(
+            1,
+            resolveAodBrightnessRequest(
+                requestedBrightness = 1,
+                readableBrightness = 255,
+                lyricGuardActive = true,
+                dozeStateName = "DOZE_AOD_PAUSED",
+                brightnessOverrideEnabled = true,
+                brightnessOverrideLevel = 73
+            )
+        )
+        assertEquals(
+            10,
+            resolveAodBrightnessRequest(
+                requestedBrightness = 1,
+                readableBrightness = 255,
+                lyricGuardActive = true,
+                dozeStateName = "DOZE_AOD",
+                brightnessOverrideEnabled = true,
+                brightnessOverrideLevel = -20
+            )
+        )
+    }
+
+    @Test
+    fun disabledOverrideKeepsExistingReadableBrightnessPolicy() {
+        assertEquals(
+            255,
+            resolveAodBrightnessRequest(
+                requestedBrightness = 1,
+                readableBrightness = 255,
+                lyricGuardActive = true,
+                dozeStateName = "DOZE_AOD",
+                brightnessOverrideEnabled = false,
+                brightnessOverrideLevel = 73
+            )
+        )
+    }
 }

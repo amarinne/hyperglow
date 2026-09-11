@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.Gravity
+import android.view.Surface
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
@@ -61,6 +62,11 @@ internal data class AodSurfaceRect(
     val width: Int get() = right - left
     val height: Int get() = bottom - top
 }
+
+internal data class AodCanvasSize(
+    val width: Int,
+    val height: Int
+)
 
 internal data class AodRenderedClockBounds(
     val top: Int,
@@ -185,6 +191,16 @@ internal fun stockBottomInRoot(rootWindowY: Int, childWindowY: Int, childHeight:
 
 internal fun hasUsableAodRootSize(width: Int, height: Int): Boolean = width > 0 && height > 0
 
+/**
+ * Native-style logical landscape frame: long axis x short axis. Layout runs
+ * in this frame as if the window itself rotated; one rigid draw transform
+ * maps it onto the fullscreen portrait view.
+ */
+internal fun aodLandscapeCanvasSize(rootWidth: Int, rootHeight: Int): AodCanvasSize = AodCanvasSize(
+    width = maxOf(rootWidth, rootHeight).coerceAtLeast(0),
+    height = minOf(rootWidth, rootHeight).coerceAtLeast(0)
+)
+
 internal fun aodSceneSafeCanvas(
     rootWidth: Int,
     rootHeight: Int,
@@ -217,6 +233,15 @@ internal fun shouldRenderAodSnapshot(
 
 internal fun isNewAodWakeSignal(previous: Long, incoming: Long): Boolean =
     incoming != 0L && incoming != previous
+
+/**
+ * A stock Spotify media-card removal terminates the AOD lyric scene, including a live scene.
+ * Retention is only valid while Xiaomi still owns the corresponding media card.
+ */
+internal fun shouldClearAodForMediaPlayerRemoval(
+    wasPresent: Boolean,
+    isPresent: Boolean
+): Boolean = wasPresent && !isPresent
 
 internal fun retainedAodSnapshotAfterUpdate(
     incoming: LyricSnapshot,
@@ -322,6 +347,9 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     private var handoffActive = false
     private var transitionFailedHidden = false
     private var lastLayoutBlockTrace: String? = null
+    /** Stock AOD reservations the fullscreen canvas must respect (portrait). */
+    private var clockReserveTopPx = 0
+    private var clockReserveBottomPx = 0
     private var lastSnapshotTrace: String? = null
     private var lastBrightClockMorphPhase: Boolean? = null
     private var lastClockGeometryAuthority: String? = null
@@ -336,6 +364,21 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     @Volatile private var stockWidgetControlActive = false
     @Volatile private var burnInPattern = "static_bottom"
     private var burnInIntervalMs = 60_000L
+    private var suppressStockAodContent = false
+    private var rotateWithDevice = false
+    private var rotationMode = "portrait"
+    private var rotationSettleMs = 1_000L
+    private var portraitAnchor = 0.5f
+    private var landscapeAnchor = 0.5f
+    private var landscapeTextScale = 1f
+    private var canvasPaddingPortraitXPercent = 2f
+    private var canvasPaddingPortraitYPercent = 2f
+    private var canvasPaddingLandscapeXPercent = 2f
+    private var canvasPaddingLandscapeYPercent = 2f
+    private var orientationFadeActive = false
+    @Volatile private var stockContentHiddenByModule = false
+    private var stockContentPriorVisibility = View.VISIBLE
+    private var lastOrientationStep = 0
     private var sceneZone = AodSceneZone.STOCK
     private var controlledClockTop: Int? = null
     private var controlledClockBottom: Int? = null
@@ -356,7 +399,8 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
 
         override fun onDisplayChanged(displayId: Int) {
             if (displayId != observedDisplayId) return
-            val state = rootRef.get()?.display?.state ?: return
+            val display = rootRef.get()?.display ?: return
+            val state = display.state
             val changed = state != lastObservedDisplayState
             if (changed) {
                 lastObservedDisplayState = state
@@ -364,6 +408,9 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
             }
             LinkageTransitionCoordinator.onAodDisplayState(state)
             AodPowerCoordinator.onAodDisplayState(state)
+            // Free rotation signal: when the framework itself rotates the display,
+            // no sensor is needed to redraw the canvas boundary.
+            handleDisplayRotation(display.rotation)
             if (changed) requestGeometryUpdate()
         }
     }
@@ -717,13 +764,14 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
 
     fun onStockMediaPlayerPresenceChanged(present: Boolean) {
         val update = update@{
-            if (stockMediaPlayerPresent == present) return@update
+            val wasPresent = stockMediaPlayerPresent
+            if (wasPresent == present) return@update
             stockMediaPlayerPresent = present
             if (present) {
                 latestSnapshot?.takeUnless { it.visible }?.let(::onLyricSnapshot)
                 return@update
             }
-            if (retainedMediaSnapshot == null) return@update
+            if (!shouldClearAodForMediaPlayerRemoval(wasPresent, present)) return@update
             cancelPausedKeepAliveExpiry()
             cancelPauseLingerExpiry()
             retainedMediaSnapshot = null
@@ -794,12 +842,40 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
             burnInIntervalMs != resolvedSnapshot.burnInIntervalMs
         burnInPattern = resolvedSnapshot.burnInPattern
         burnInIntervalMs = resolvedSnapshot.burnInIntervalMs
+        suppressStockAodContent = resolvedSnapshot.suppressStockAodContent
+        rotateWithDevice = resolvedSnapshot.aodRotateWithDevice
+        rotationMode = resolvedSnapshot.aodRotationMode
+        rotationSettleMs = resolvedSnapshot.aodRotationSettleMs
+        // Presentation knobs (anchor, orientation scale, padding) only update
+        // from a renderable snapshot. Hidden/retained teardown publications
+        // carry default presentation values; applying them mid-session flips
+        // the canvas size (e.g. landscape scale 1.25 -> 1.0) and the next
+        // visible render starts wrong-sized — the whole-canvas blink on
+        // every suppress flap.
+        if (canRenderAod(resolvedSnapshot)) {
+            portraitAnchor = resolvedSnapshot.aodCanvasAnchor
+            landscapeAnchor = resolvedSnapshot.aodCanvasAnchorLandscape
+            landscapeTextScale = resolvedSnapshot.aodLandscapeTextScale
+            canvasPaddingPortraitXPercent = resolvedSnapshot.aodCanvasPaddingPortraitXPercent
+            canvasPaddingPortraitYPercent = resolvedSnapshot.aodCanvasPaddingPortraitYPercent
+            canvasPaddingLandscapeXPercent = resolvedSnapshot.aodCanvasPaddingLandscapeXPercent
+            canvasPaddingLandscapeYPercent = resolvedSnapshot.aodCanvasPaddingLandscapeYPercent
+        }
+        applyCanvasPresentation()
+        AodPositionHook.setSuppressActive(suppressStockAodContent)
+        // Stock visible: hold the native AOD widget bundle still while
+        // lyrics render, so the reserved stock band stays put.
+        AodPositionHook.setHoldStockPosition(
+            !suppressStockAodContent && canRenderAod(resolvedSnapshot)
+        )
         setStockWidgetControlActive(
-            resolvedSnapshot.positionFollowingEnabled &&
+            !suppressStockAodContent &&
+                resolvedSnapshot.positionFollowingEnabled &&
                 canRenderAod(resolvedSnapshot) &&
                 XiaomiCapabilityResolver.hasCapability(XiaomiCapability.AOD_POSITION_UPDATES),
             restartSchedule = burnInScheduleChanged
         )
+        updateStockContentSuppression(canRenderAod(resolvedSnapshot))
         if (!resolvedSnapshot.positionFollowingEnabled && wasFollowingPosition) {
             environment = environment.copy(
                 burnInTranslationX = 0f,
@@ -966,6 +1042,7 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         if (latestSnapshot?.let(::canRenderAod) != true) {
             setStockWidgetControlActive(false)
         }
+        updateStockContentSuppression(renderable = false)
         finishInitialReveal()
         surface?.animate()?.cancel()
         surface?.alpha = 1f
@@ -982,6 +1059,23 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
 
     private fun detachCurrent() {
         attachmentGeneration++
+        restoreStockContent()
+        AodOrientationMonitor.stop()
+        AodPositionHook.setSuppressActive(false)
+        AodPositionHook.setHoldStockPosition(false)
+        suppressStockAodContent = false
+        rotateWithDevice = false
+        rotationMode = "portrait"
+        rotationSettleMs = 1_000L
+        portraitAnchor = 0.5f
+        landscapeAnchor = 0.5f
+        landscapeTextScale = 1f
+        canvasPaddingPortraitXPercent = 2f
+        canvasPaddingPortraitYPercent = 2f
+        canvasPaddingLandscapeXPercent = 2f
+        canvasPaddingLandscapeYPercent = 2f
+        orientationFadeActive = false
+        lastOrientationStep = 0
         mainHandler.removeCallbacks(geometryUpdate)
         mainHandler.removeCallbacks(stockMotionSettleTimeout)
         mainHandler.removeCallbacks(managedBurnInStart)
@@ -1078,6 +1172,226 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         mainHandler.post(managedBurnInStart)
     }
 
+    /**
+     * Full-screen canvas mode: hides Xiaomi's clock-or-image container while our
+     * scene renders and restores its exact prior visibility on every exit path.
+     * Rotation is gated behind this mode because there is no stable clock
+     * geometry to rotate around otherwise.
+     */
+    private fun updateStockContentSuppression(renderable: Boolean) {
+        val container = burnInContainerRef.get()
+        if (!suppressStockAodContent || !renderable || container == null) {
+            restoreStockContent()
+            updateOrientationMonitor()
+            return
+        }
+        if (!stockContentHiddenByModule) {
+            stockContentPriorVisibility = container.visibility
+            container.visibility = View.GONE
+            stockContentHiddenByModule = true
+            HookLogger.i(TAG, "Stock AOD content suppressed for full-screen canvas")
+        }
+        updateOrientationMonitor()
+    }
+
+    private fun restoreStockContent() {
+        if (!stockContentHiddenByModule) return
+        stockContentHiddenByModule = false
+        burnInContainerRef.get()?.let { container ->
+            if (container.visibility == View.GONE) {
+                container.visibility = stockContentPriorVisibility
+            }
+        }
+        stockContentPriorVisibility = View.VISIBLE
+        HookLogger.i(TAG, "Stock AOD content restored")
+    }
+
+    private fun effectiveRotateActive(): Boolean =
+        rotationMode == "auto" && suppressStockAodContent && stockContentHiddenByModule &&
+            XiaomiCapabilityResolver.hasCapability(XiaomiCapability.AOD_SURFACE)
+
+    private fun effectiveFixedOrientationStep(): Int = when (rotationMode) {
+        "landscape" -> 90
+        "landscape_reverse" -> 270
+        else -> 0
+    }
+
+    private fun updateOrientationMonitor() {
+        if (effectiveRotateActive()) {
+            val context = rootRef.get()?.context ?: return
+            // A changed settle delay restarts the sensor window so shaking
+            // cannot spam transitions on the old debounce.
+            if (AodOrientationMonitor.activeSettleMs() != rotationSettleMs) {
+                AodOrientationMonitor.stop()
+            }
+            if (!AodOrientationMonitor.isActive()) {
+                AodOrientationMonitor.start(context, rotationSettleMs, ::onOrientationStep)
+                // Preserve the canvas step already being shown when switching
+                // from a fixed mode into Auto. The monitor's start() defaults
+                // its debounce baseline to portrait; without rebasing, a
+                // portrait device (step 0) is treated as already committed
+                // and never emits the transition needed to leave the prior
+                // fixed landscape frame.
+                AodOrientationMonitor.rebase(lastOrientationStep)
+            }
+        } else {
+            AodOrientationMonitor.stop()
+            val step = if (suppressStockAodContent && stockContentHiddenByModule) {
+                effectiveFixedOrientationStep()
+            } else {
+                0
+            }
+            if (lastOrientationStep != step) applyCanvasOrientation(step)
+        }
+    }
+
+    private fun onOrientationStep(step: Int) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            applyCanvasOrientation(step)
+        } else {
+            mainHandler.post { applyCanvasOrientation(step) }
+        }
+    }
+
+    /** Framework display rotation is already settled, so it commits without sensor debounce. */
+    private fun handleDisplayRotation(rotation: Int) {
+        if (rotationMode != "auto" || !stockContentHiddenByModule) return
+        val step = when (rotation) {
+            Surface.ROTATION_90 -> 90
+            Surface.ROTATION_180 -> 180
+            Surface.ROTATION_270 -> 270
+            else -> 0
+        }
+        if (!frameworkRotationStepApplies(step, AodOrientationMonitor.committedStep())) return
+        // Rebase first: the canvas fade applies asynchronously, but the sensor
+        // must re-decide from the applied step either way instead of holding
+        // a stale commit silently.
+        AodOrientationMonitor.rebase(step)
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            applyCanvasOrientation(step)
+        } else {
+            mainHandler.post { applyCanvasOrientation(step) }
+        }
+    }
+
+    /**
+     * Rotation keeps the fullscreen portrait boundary and re-runs layout in
+     * the logical frame instead: fade out, set the step so the view re-wraps
+     * to the long axis and maps it with one rigid draw transform, fade in.
+     * Longer lines survive with no clipping; the step is tracked so repeat
+     * samples cannot retrigger the transition.
+     */
+    private fun applyCanvasOrientation(step: Int) {
+        if (lastOrientationStep == step) return
+        val directSurface = surface ?: return
+        val root = rootRef.get() ?: return
+        val container = burnInContainerRef.get() ?: return
+        val canvas = lyricCanvas ?: return
+        // Do not commit the requested step until the surface is actually
+        // attached and can apply it. Snapshots can arrive before the AOD root
+        // attaches; recording the step in that window made the later attach
+        // believe the canvas was already landscape and skip the only apply,
+        // leaving the view permanently in portrait.
+        lastOrientationStep = step
+        HookLogger.i(TAG, "AOD canvas orientation step=$step")
+        directSurface.animate().cancel()
+        directSurface.animate().alpha(0f).setDuration(STOCK_MOTION_FADE_OUT_MS)
+            .withEndAction {
+                if (surface !== directSurface || rootRef.get() !== root ||
+                    lyricCanvas !== canvas
+                ) return@withEndAction
+                applyCanvasBounds(canvas, root, step)
+                orientationFadeActive = true
+                layoutSurface(root, container, directSurface)
+                orientationFadeActive = false
+                applyCanvasPresentation()
+                centerLandscapeCanvas()
+                directSurface.alpha = 0f
+                directSurface.animate().cancel()
+                directSurface.animate().alpha(1f).setDuration(STOCK_MOTION_FADE_IN_MS).start()
+            }.start()
+    }
+
+    /**
+     * The canvas always fills its portrait parent. Side steps only change the
+     * logical layout frame inside the view (long x short); the draw transform
+     * maps that frame exactly onto the panel, so no oversized child, manual
+     * translation, or viewport strip exists to drift out of bounds.
+     */
+    private fun applyCanvasBounds(canvas: AodLyricCanvasView, root: ViewGroup, step: Int) {
+        if (canvas.layoutParams?.width != ViewGroup.LayoutParams.MATCH_PARENT ||
+            canvas.layoutParams?.height != ViewGroup.LayoutParams.MATCH_PARENT
+        ) {
+            canvas.layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        }
+        canvas.setOrientationStep(step)
+    }
+
+    /**
+     * Per-mode canvas presentation from the latest snapshot: portrait and
+     * landscape anchors select the layout bias for the active frame, the text
+     * scale applies inside the canvas for side steps, and per-orientation
+     * per-axis percent padding resolves to px against the logical frame (X%
+     * of frame width, Y% of frame height) so each orientation insets
+     * independently — e.g. extra landscape padding to clear the camera cutout.
+     */
+    private fun applyCanvasPresentation() {
+        val canvas = lyricCanvas ?: return
+        val side = lastOrientationStep == 90 || lastOrientationStep == 270
+        canvas.setVerticalBias(if (side) landscapeAnchor else portraitAnchor)
+        canvas.setLandscapeTextScale(landscapeTextScale)
+        val frameWidth = if (side) {
+            maxOf(canvas.width, canvas.height).takeIf { it > 0 }
+                ?: maxOf(rootRef.get()?.width ?: 0, rootRef.get()?.height ?: 0)
+        } else {
+            canvas.width.takeIf { it > 0 } ?: (rootRef.get()?.width ?: 0)
+        }
+        val frameHeight = if (side) {
+            minOf(canvas.width, canvas.height).takeIf { it > 0 }
+                ?: minOf(rootRef.get()?.width ?: 0, rootRef.get()?.height ?: 0)
+        } else {
+            canvas.height.takeIf { it > 0 } ?: (rootRef.get()?.height ?: 0)
+        }
+        if (frameWidth <= 0 || frameHeight <= 0) return
+        val padXPercent = if (side) canvasPaddingLandscapeXPercent
+        else canvasPaddingPortraitXPercent
+        val padYPercent = if (side) canvasPaddingLandscapeYPercent
+        else canvasPaddingPortraitYPercent
+        val padX = (frameWidth * padXPercent / 100f).roundToInt()
+        val padY = (frameHeight * padYPercent / 100f).roundToInt()
+        // Portrait-only stock reservations: the AOD clock below its bounds
+        // and the safe bottom above it. They are root-space measures and the
+        // portrait logical frame maps 1:1 onto the view; side steps rotate
+        // the axes, and those setups run with the stock suppressed anyway.
+        val padTop: Int
+        val padBottom: Int
+        if (side) {
+            padTop = padY
+            padBottom = padY
+        } else {
+            padTop = maxOf(padY, clockReserveTopPx)
+            padBottom = maxOf(padY, clockReserveBottomPx)
+        }
+        canvas.setLogicalPadding(padX, padTop, padX, padBottom)
+    }
+
+    /**
+     * The canvas fills its parent in every step, so no manual centering
+     * exists. This only clears any legacy translation left by an older
+     * build's oversized landscape child.
+     */
+    private fun centerLandscapeCanvas() {
+        val canvas = lyricCanvas ?: return
+        if (canvas.translationX != 0f) canvas.translationX = 0f
+        if (canvas.translationY != 0f) canvas.translationY = 0f
+    }
+    /** Enforcement read for the `View.setVisibility` seam: our hidden container stays hidden. */
+    fun isStockSuppressEnforced(view: Any?): Boolean =
+        stockContentHiddenByModule && burnInContainerRef.get() === view
+
     private fun updateLifetimeGuard() {
         val snapshot = latestSnapshot
         val active = XiaomiCapabilityResolver.hasCapability(
@@ -1133,9 +1447,17 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
             isFocusable = false
             visibility = View.GONE
             setPadding((8f * density).roundToInt(), 0, (8f * density).roundToInt(), 0)
+            // Side steps keep the same fullscreen portrait bounds; the logical
+            // landscape frame is mapped inside the view by one draw transform,
+            // so nothing spills past the parent in any step.
+            clipChildren = false
+            clipToPadding = false
             val lyricContent = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
+                clipChildren = false
+                clipToPadding = false
+                addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> centerLandscapeCanvas() }
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT
@@ -1315,33 +1637,7 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
             minimumLyricHeight = MIN_LYRIC_HEIGHT_DP * density
         )
         val placed = placement.contentRect
-        if (placed != null) {
-            val visibleTypes = placement.visibleWidgets.mapTo(HashSet()) { it.type }
-            val nextRuntimeProfile = profile.copy(
-                widgets = profile.widgets.filter { it.type in visibleTypes },
-                metadataVisible = profile.metadataVisible && "metadata" in visibleTypes
-            )
-            if (runtimeProfile != nextRuntimeProfile) {
-                runtimeProfile = nextRuntimeProfile
-                lastRenderContent = null
-                latestSnapshot?.takeIf {
-                    !it.metadata.startsWith("AOD DEMO")
-                }?.let {
-                    lyricCanvas?.setContent(it.toAodCanvasContent(nextRuntimeProfile))
-                    lastRenderContent = it.renderContent()
-                }
-            }
-        }
-        val horizontalShift = environment.burnInTranslationX.roundToInt()
-        val placedWidth = placed?.width?.roundToInt() ?: 0
-        val maxLeft = (root.width - placedWidth).coerceAtLeast(0)
-        val shiftedLeft = ((placed?.left?.roundToInt() ?: 0) + horizontalShift).coerceIn(0, maxLeft)
-        val rect = AodSurfaceRect(
-            shiftedLeft,
-            placed?.top?.roundToInt() ?: 0,
-            shiftedLeft + placedWidth,
-            placed?.bottom?.roundToInt() ?: 0
-        )
+        val rect = AodSurfaceRect(0, 0, root.width, root.height)
         if (rect.width <= 0 || rect.height <= 0) {
             failClosedLayout(
                 directSurface,
@@ -1362,6 +1658,44 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
             View.MeasureSpec.makeMeasureSpec(rect.height, View.MeasureSpec.EXACTLY)
         )
         directSurface.layout(rect.left, rect.top, rect.right, rect.bottom)
+        // The lyric canvas always owns the whole panel: the requested canvas
+        // height is an upper bound the stock-clock reservation would silently
+        // cut down (a "75%" request landed at ~43%), so instead the surface
+        // takes the maximum and the lyrics position themselves inside it via
+        // the canvas anchor and padding. The module manages the stock AOD
+        // position from here: lyrics take the TOP section, and everything
+        // from the stock clock's top edge downward is reserved for the stock
+        // content (clock + image) as logical canvas padding in portrait.
+        // Side steps rotate the axes and run stock-suppressed, so no
+        // reservation applies there.
+        val reserveTop = 0
+        val reserveBottom = if (stockContentHiddenByModule) {
+            0
+        } else {
+            (root.height - effectiveClockTop).coerceAtLeast(0)
+        }
+        if (clockReserveTopPx != reserveTop || clockReserveBottomPx != reserveBottom) {
+            clockReserveTopPx = reserveTop
+            clockReserveBottomPx = reserveBottom
+            applyCanvasPresentation()
+        }
+        if (placed != null) {
+            val visibleTypes = placement.visibleWidgets.mapTo(HashSet()) { it.type }
+            val nextRuntimeProfile = profile.copy(
+                widgets = profile.widgets.filter { it.type in visibleTypes },
+                metadataVisible = profile.metadataVisible && "metadata" in visibleTypes
+            )
+            if (runtimeProfile != nextRuntimeProfile) {
+                runtimeProfile = nextRuntimeProfile
+                lastRenderContent = null
+                latestSnapshot?.takeIf {
+                    !it.metadata.startsWith("AOD DEMO")
+                }?.let {
+                    lyricCanvas?.setContent(it.toAodCanvasContent(nextRuntimeProfile))
+                    lastRenderContent = it.renderContent()
+                }
+            }
+        }
         if (stockMotionRevealPending) {
             stockMotionRevealPending = false
             directSurface.alpha = 0f
@@ -1371,7 +1705,9 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
                 completesTransition = true
             )
         }
-        if (!handoffActive && !initialRevealActive && !stockMotionTransitionActive) {
+        if (!handoffActive && !initialRevealActive && !stockMotionTransitionActive &&
+            !orientationFadeActive
+        ) {
             directSurface.alpha = 1f
         }
         val snapshot = latestSnapshot

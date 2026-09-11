@@ -31,6 +31,106 @@ class SpicyBridgeDocumentTest {
     }
 
     @Test
+    fun sungBackgroundWinsWhenInterludeBoundaryOverlapsWithoutLead() {
+        // Some lyric providers emit an instrumental marker whose end is equal to (or slightly
+        // after) the first sung row. Interlude must remain the fallback, not win by list order.
+        val gap = row("INTERLUDE", 0, 5_100, "...")
+        val sung = row("BACKGROUND", 5_000, 8_000, "first line")
+        val document = document(listOf(gap, sung))
+
+        assertEquals("first line", document.primaryRowAt(5_050)?.text)
+        assertEquals("...", document.primaryRowAt(1_000)?.text)
+    }
+
+    @Test
+    fun concurrentRowsKeepUnfinishedOverlapAlongsidePrimary() {
+        val lead = row("LEAD", 1_000, 3_000, "lead")
+        val background = row("BACKGROUND", 1_500, 3_200, "bg")
+        val document = document(listOf(lead, background))
+
+        assertEquals(listOf("bg"), document.concurrentRowsAt(2_000, lead).map { it.text })
+        assertEquals(listOf("lead"), document.concurrentRowsAt(1_200, background).map { it.text })
+        assertEquals(listOf("lead"), document.concurrentRowsAt(3_300, background).map { it.text })
+    }
+
+    @Test
+    fun concurrentRowsSkipDyingTailOverlap() {
+        val lead = row("LEAD", 1_000, 5_000, "lead")
+        val tail = row("BACKGROUND", 1_500, 2_000, "tail")
+        val document = document(listOf(lead, tail))
+
+        assertTrue(document.concurrentRowsAt(1_500, lead).isEmpty())
+        assertTrue(document.concurrentRowsAt(1_600, lead).isEmpty())
+        assertTrue(document.concurrentRowsAt(2_000, lead).isEmpty())
+        assertTrue(document.concurrentRowsAt(2_100, lead).isEmpty())
+    }
+
+    @Test
+    fun expiredOverlapWaitsForSurvivorUntilNewcomerArrives() {
+        val first = row("LEAD", 1_000, 3_000, "first")
+        val second = row("BACKGROUND", 1_500, 5_000, "second")
+        val third = row("LEAD", 4_000, 7_000, "third")
+        val document = document(listOf(first, second, third))
+
+        assertEquals(listOf("second"), document.concurrentRowsAt(2_000, first).map { it.text })
+        assertEquals(listOf("first"), document.concurrentRowsAt(3_500, second).map { it.text })
+        assertEquals(listOf("third"), document.concurrentRowsAt(4_500, second).map { it.text })
+    }
+
+    @Test
+    fun futureOverlapPrejoinsSoloPrimaryAsPlaceholder() {
+        val lead = row("LEAD", 1_000, 5_000, "lead")
+        val next = row("BACKGROUND", 4_000, 8_000, "next")
+        val document = document(listOf(lead, next))
+
+        assertEquals(listOf("next"), document.concurrentRowsAt(2_000, lead).map { it.text })
+    }
+
+    @Test
+    fun placeholderPrefersEarliestArrival() {
+        val lead = row("LEAD", 1_000, 10_000, "lead")
+        val soon = row("BACKGROUND", 4_000, 8_000, "soon")
+        val later = row("BACKGROUND", 6_000, 9_000, "later")
+        val document = document(listOf(lead, soon, later))
+
+        assertEquals(listOf("soon"), document.concurrentRowsAt(2_000, lead).map { it.text })
+    }
+
+    @Test
+    fun futureTailOverlapNeverPrejoins() {
+        val lead = row("LEAD", 1_000, 10_000, "lead")
+        val tail = row("BACKGROUND", 9_500, 12_000, "tail")
+        val distant = row("BACKGROUND", 11_000, 14_000, "distant")
+        val document = document(listOf(lead, tail, distant))
+
+        assertTrue(document.concurrentRowsAt(2_000, lead).isEmpty())
+        assertTrue(document.concurrentRowsAt(9_000, lead).isEmpty())
+    }
+
+    @Test
+    fun lingeringPartnerBeatsFuturePlaceholder() {
+        val first = row("LEAD", 1_000, 3_000, "first")
+        val second = row("BACKGROUND", 1_500, 8_000, "second")
+        val third = row("LEAD", 7_000, 10_000, "third")
+        val document = document(listOf(first, second, third))
+
+        assertEquals(listOf("first"), document.concurrentRowsAt(4_000, second).map { it.text })
+    }
+
+    @Test
+    fun concurrentRowsExcludeGapsAndCapAtOneCompanion() {
+        val first = row("LEAD", 1_000, 3_000, "lead")
+        val second = row("BACKGROUND", 1_200, 2_800, "bg")
+        val third = row("BACKGROUND", 1_400, 3_100, "bg2")
+        val gap = row("INTERLUDE", 1_100, 2_900, "...")
+        val document = document(listOf(first, second, third, gap))
+
+        assertEquals(listOf("bg2"), document.concurrentRowsAt(2_000, first).map { it.text })
+        assertTrue(document.concurrentRowsAt(2_000, gap).isEmpty())
+        assertTrue(document.concurrentRowsAt(2_000, null).isEmpty())
+    }
+
+    @Test
     fun projectedPositionUsesSparseAnchorAndClampsDuration() {
         val state = SpicyBridgeState(
             producerId = "producer",

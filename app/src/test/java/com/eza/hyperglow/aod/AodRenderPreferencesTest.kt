@@ -43,6 +43,49 @@ class AodRenderPreferencesTest {
     }
 
     @Test
+    fun canvasAnchorNormalizesToUnitRange() {
+        assertEquals(0.5f, normalizeAodCanvasAnchor(0.5f), 0f)
+        assertEquals(0f, normalizeAodCanvasAnchor(0f), 0f)
+        assertEquals(1f, normalizeAodCanvasAnchor(1f), 0f)
+        assertEquals(0.5f, normalizeAodCanvasAnchor(-0.1f), 0f)
+        assertEquals(0.5f, normalizeAodCanvasAnchor(1.1f), 0f)
+        assertEquals(0.5f, normalizeAodCanvasAnchor(Float.NaN), 0f)
+    }
+
+    @Test
+    fun landscapeFieldsNormalizeToBounds() {
+        assertEquals(0.5f, normalizeAodCanvasAnchor(0.5f), 0f)
+        assertEquals(AOD_ROTATION_MODE_PORTRAIT, normalizeAodRotationMode(null))
+        assertEquals(AOD_ROTATION_MODE_PORTRAIT, normalizeAodRotationMode("unknown"))
+        assertEquals(AOD_ROTATION_MODE_LANDSCAPE, normalizeAodRotationMode("landscape"))
+        assertEquals(AOD_ROTATION_MODE_AUTO, normalizeAodRotationMode("auto"))
+        assertEquals(1f, normalizeAodLandscapeTextScale(1f), 0f)
+        assertEquals(2f, normalizeAodLandscapeTextScale(99f), 0f)
+        assertEquals(0.5f, normalizeAodLandscapeTextScale(0f), 0f)
+        assertEquals(1f, normalizeAodLandscapeTextScale(Float.NaN), 0f)
+        assertEquals(8, normalizeAodCanvasPaddingDp(8))
+        assertEquals(0, normalizeAodCanvasPaddingDp(-4))
+        assertEquals(64, normalizeAodCanvasPaddingDp(99))
+        assertEquals(2f, normalizeAodCanvasPaddingPercent(2f), 0f)
+        assertEquals(0f, normalizeAodCanvasPaddingPercent(-4f), 0f)
+        assertEquals(20f, normalizeAodCanvasPaddingPercent(99f), 0f)
+        assertEquals(2f, normalizeAodCanvasPaddingPercent(Float.NaN), 0f)
+        assertEquals(2f, legacyPaddingDpToPercent(8), 0f)
+        assertEquals(0f, legacyPaddingDpToPercent(0), 0f)
+    }
+
+    @Test
+    fun rotationSettleAllowsOnlyClosedDurations() {
+        assertEquals(0L, normalizeAodRotationSettleMs(0L))
+        assertEquals(500L, normalizeAodRotationSettleMs(500L))
+        assertEquals(1_000L, normalizeAodRotationSettleMs(1_000L))
+        assertEquals(2_000L, normalizeAodRotationSettleMs(2_000L))
+        assertEquals(5_000L, normalizeAodRotationSettleMs(5_000L))
+        assertEquals(10_000L, normalizeAodRotationSettleMs(10_000L))
+        assertEquals(1_000L, normalizeAodRotationSettleMs(750L))
+    }
+
+    @Test
     fun pauseLingerAllowsOnlyClosedSharedDurations() {
         assertEquals(-1L, normalizePauseLingerMs(-1L))
         assertEquals(0L, normalizePauseLingerMs(0L))

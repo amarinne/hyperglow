@@ -5,6 +5,12 @@ import com.eza.hyperglow.customization.CompiledCustomization
 import com.eza.hyperglow.customization.CompiledSurfaceProfile
 import com.eza.hyperglow.customization.SceneCompiler
 import com.eza.hyperglow.customization.WidgetSpec
+import com.eza.hyperglow.customization.MAX_LYRIC_TEXT_SIZE_PERCENT
+import com.eza.hyperglow.customization.normalizeCardAlpha
+import com.eza.hyperglow.customization.normalizeCardColor
+import com.eza.hyperglow.customization.normalizePaletteValue
+import com.eza.hyperglow.customization.MAX_AOD_BRIGHTNESS
+import com.eza.hyperglow.customization.MIN_AOD_BRIGHTNESS
 import com.eza.hyperglow.customization.normalizeLyricLineLimit
 import com.eza.hyperglow.aod.normalizePauseLingerMs
 import com.eza.hyperglow.root.projection.LyricSurfaceKind
@@ -67,6 +73,11 @@ internal object SystemUiCustomizationValidator {
                 hash = "",
                 sourceId = normalizeIdentifier(configuration.sourceId),
                 pauseLingerMs = normalizePauseLingerMs(configuration.pauseLingerMs),
+                aodBrightnessOverride = configuration.aodBrightnessOverride,
+                aodBrightnessLevel = configuration.aodBrightnessLevel.coerceIn(
+                    MIN_AOD_BRIGHTNESS,
+                    MAX_AOD_BRIGHTNESS
+                ),
                 profiles = profiles
             )
         )
@@ -100,8 +111,9 @@ internal object SystemUiCustomizationValidator {
                 policy.maximumHeightFraction
             ),
             verticalBias = profile.verticalBias.coerceIn(0f, 1f),
-            collisionPolicy = profile.collisionPolicy.takeIf { it in COLLISION_POLICIES }
-                ?: "avoid",
+            collisionPolicy = if (!aod) {
+                if (profile.collisionPolicy == "hide_scene") "hide_scene" else "avoid"
+            } else profile.collisionPolicy.takeIf { it in COLLISION_POLICIES } ?: "avoid",
             widgets = widgets,
             transition = profile.transition.copy(
                 id = profile.transition.id.takeIf { it in TRANSITIONS } ?: "continuity",
@@ -120,7 +132,7 @@ internal object SystemUiCustomizationValidator {
             metadataSizePercent = profile.metadataSizePercent.coerceIn(50, 200),
             weight = profile.weight.takeIf { it in WEIGHTS } ?: "Medium",
             textSize = profile.textSize.takeIf { it in TEXT_SIZES } ?: "normal",
-            textSizeCustom = profile.textSizeCustom.coerceIn(50, 200),
+            textSizeCustom = profile.textSizeCustom.coerceIn(50, MAX_LYRIC_TEXT_SIZE_PERCENT),
             fontFamily = profile.fontFamily.takeIf { it in FONT_FAMILIES } ?: "spotify",
             animation = when {
                 aod && profile.animation != "Minimal" -> "Gradient"
@@ -132,9 +144,14 @@ internal object SystemUiCustomizationValidator {
             overflow = if (profile.overflow == "Clip") "Clip" else "Wrap",
             backgroundStyle = if (!aod && profile.backgroundStyle == "card") "card" else "none",
             palette = profile.palette.asSequence()
-                .filter { it.key in SEMANTIC_COLORS && it.value in PALETTE_VALUES }
+                .filter { it.key in SEMANTIC_COLORS }
+                .mapNotNull { entry ->
+                    normalizePaletteValue(entry.value)?.let { value -> entry.key to value }
+                }
                 .take(SEMANTIC_COLORS.size)
-                .associate { it.key to it.value }
+                .toMap(),
+            cardColor = normalizeCardColor(profile.cardColor),
+            cardAlpha = normalizeCardAlpha(profile.cardAlpha)
         )
     }
 
@@ -154,7 +171,6 @@ internal object SystemUiCustomizationValidator {
         "accent",
         "surfaceScrim"
     )
-    private val PALETTE_VALUES = setOf("default", "clock", "wallpaper", "white", "dimmed")
     private val ANCHORS = setOf(
         "below_stock_clock",
         "screen_center",

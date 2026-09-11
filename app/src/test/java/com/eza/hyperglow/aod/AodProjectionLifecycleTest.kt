@@ -83,6 +83,25 @@ class AodProjectionLifecycleTest {
         assertFalse(AodProjectionEngine.hasActualLyricTiming(document("Static", 100L, 200L)))
         assertFalse(AodProjectionEngine.hasActualLyricTiming(document("Line", 100L, 100L)))
         assertFalse(AodProjectionEngine.hasActualLyricTiming(document("Syllable", 0L, 0L)))
+        assertFalse(
+            AodProjectionEngine.hasActualLyricTiming(
+                document("Line", 100L, 200L).copy(
+                    rows = listOf(
+                        SpicyBridgeRow(
+                            role = "INTERLUDE",
+                            startMs = 100L,
+                            endMs = 200L,
+                            fillEndMs = 200L,
+                            alignedRight = false,
+                            text = "...",
+                            romanized = "",
+                            translated = "",
+                            words = emptyList()
+                        )
+                    )
+                )
+            )
+        )
     }
 
     @Test

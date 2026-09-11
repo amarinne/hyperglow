@@ -86,7 +86,7 @@ object SceneCompiler {
 
     fun safeAodProfile(): SurfaceProfile = SurfaceProfile(
         enabled = true,
-        maxHeightFraction = 0.42f,
+        maxHeightFraction = DEFAULT_AOD_MAX_HEIGHT_FRACTION,
         widgets = listOf(WidgetSpec("lyrics"))
     )
 
@@ -121,9 +121,12 @@ object SceneCompiler {
             supportedWidgets.add(0, WidgetSpec("lyrics"))
         }
         val palette = profile.palette.asSequence()
-            .filter { it.key in SEMANTIC_COLORS && it.value in PALETTE_VALUES }
+            .filter { it.key in SEMANTIC_COLORS }
+            .mapNotNull { entry ->
+                normalizePaletteValue(entry.value)?.let { value -> entry.key to value }
+            }
             .take(SEMANTIC_COLORS.size)
-            .associate { it.key to it.value }
+            .toMap()
         return CompiledSurfaceProfile(
             surface = surface,
             enabled = profile.enabled,
@@ -131,10 +134,12 @@ object SceneCompiler {
             widthFraction = profile.widthFraction.coerceIn(0.4f, 1f),
             maxHeightFraction = profile.maxHeightFraction.coerceIn(
                 0.15f,
-                if (aod) 0.5f else 0.8f
+                if (aod) 0.9f else 0.8f
             ),
             verticalBias = profile.verticalBias.coerceIn(0f, 1f),
-            collisionPolicy = profile.collisionPolicy.takeIf { it in COLLISION_POLICIES } ?: "avoid",
+            collisionPolicy = if (!aod) {
+                if (profile.collisionPolicy == "hide_scene") "hide_scene" else "avoid"
+            } else profile.collisionPolicy.takeIf { it in COLLISION_POLICIES } ?: "avoid",
             widgets = supportedWidgets,
             transition = profile.transition.copy(
                 id = profile.transition.id.takeIf { it in TRANSITIONS } ?: "continuity",
@@ -152,7 +157,7 @@ object SceneCompiler {
             rubyVisible = profile.rubyVisible,
             weight = profile.weight.takeIf { it in WEIGHTS } ?: "Medium",
             textSize = profile.textSize.takeIf { it in TEXT_SIZES } ?: "normal",
-            textSizeCustom = profile.textSizeCustom.coerceIn(50, 200),
+            textSizeCustom = profile.textSizeCustom.coerceIn(50, MAX_LYRIC_TEXT_SIZE_PERCENT),
             fontFamily = profile.fontFamily.takeIf { it in FONT_FAMILIES } ?: "spotify",
             animation = when {
                 aod && profile.animation != "Minimal" -> "Gradient"
@@ -163,12 +168,15 @@ object SceneCompiler {
             lineSyncFillMode = normalizeLineSyncFillMode(profile.lineSyncFillMode),
             overflow = if (profile.overflow == "Clip") "Clip" else "Wrap",
             adaptiveSectioning = profile.adaptiveSectioning,
+            duetEnabled = profile.duetEnabled,
             palette = palette,
             backgroundStyle = when {
                 aod -> "none"
                 profile.backgroundStyle == "none" -> "none"
                 else -> "card"
-            }
+            },
+            cardColor = normalizeCardColor(profile.cardColor),
+            cardAlpha = normalizeCardAlpha(profile.cardAlpha)
         )
     }
 
@@ -249,7 +257,6 @@ object SceneCompiler {
         "accent",
         "surfaceScrim"
     )
-    private val PALETTE_VALUES = setOf("default", "clock", "wallpaper", "white", "dimmed")
     private val FORBIDDEN_SCHEMA_KEYS = setOf(
         "class",
         "resource",

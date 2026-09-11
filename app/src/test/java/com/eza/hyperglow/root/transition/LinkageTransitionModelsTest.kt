@@ -89,6 +89,38 @@ class LinkageTransitionModelsTest {
     }
 
     @Test
+    fun attachedLinkageAodWaitsForPhysicalDimmedDisplay() {
+        assertTrue(
+            shouldAwaitAodDimOwnership(
+                targetKind = LyricSurfaceKind.AOD,
+                linkageMode = true,
+                displayState = 2
+            )
+        )
+        assertFalse(
+            shouldAwaitAodDimOwnership(
+                targetKind = LyricSurfaceKind.AOD,
+                linkageMode = true,
+                displayState = 3
+            )
+        )
+        assertFalse(
+            shouldAwaitAodDimOwnership(
+                targetKind = LyricSurfaceKind.LOCKSCREEN,
+                linkageMode = true,
+                displayState = 2
+            )
+        )
+        assertFalse(
+            shouldAwaitAodDimOwnership(
+                targetKind = LyricSurfaceKind.AOD,
+                linkageMode = false,
+                displayState = 2
+            )
+        )
+    }
+
+    @Test
     fun authorityTracksStableSurfaceAndActiveTransitionRoles() {
         val machine = LinkageStateMachine()
         machine.attach(LyricSurfaceKind.LOCKSCREEN)

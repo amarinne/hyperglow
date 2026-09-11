@@ -1,6 +1,7 @@
 package com.eza.hyperglow.root.aod
 
 import com.eza.hyperglow.root.HookLogger
+import com.eza.hyperglow.root.HookRegistry
 import com.eza.hyperglow.root.transition.LinkageTransitionCoordinator
 import io.github.libxposed.api.XposedInterface.Chain
 import io.github.libxposed.api.XposedInterface.Hooker
@@ -24,8 +25,7 @@ internal object AodDisplayStateHook {
             "setDozeScreenState",
             Int::class.javaPrimitiveType
         ).apply { isAccessible = true }
-        module.deoptimize(method)
-        module.hook(method).intercept(DisplayStateHooker)
+        HookRegistry.hook(module, FEATURE_ID, method, DisplayStateHooker)
         installed = true
         HookLogger.i(TAG, "AOD doze-state ownership hook installed")
     }
@@ -44,5 +44,6 @@ internal object AodDisplayStateHook {
     }
 
     private const val DOZE_SERVICE_CLASS = "com.miui.aod.doze.DozeService"
+    private const val FEATURE_ID = "aod-display"
     private const val TAG = "AodDisplayStateHook"
 }

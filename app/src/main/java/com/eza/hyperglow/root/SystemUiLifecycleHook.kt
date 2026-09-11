@@ -16,8 +16,7 @@ internal object SystemUiLifecycleHook {
         try {
             val applicationClass = classLoader.loadClass(SYSTEM_UI_APPLICATION)
             val onCreate = applicationClass.getDeclaredMethod("onCreate")
-            module.deoptimize(onCreate)
-            module.hook(onCreate).intercept(ApplicationCreateHooker)
+            HookRegistry.hook(module, FEATURE_ID, onCreate, ApplicationCreateHooker)
             HookLogger.bootstrap(TAG, "systemui_application_hook_installed")
         } catch (error: Exception) {
             HookLogger.bootstrap(TAG, "systemui_application_hook_failed")
@@ -29,8 +28,7 @@ internal object SystemUiLifecycleHook {
                 "setUserIdInternal",
                 Int::class.javaPrimitiveType
             )
-            module.deoptimize(setUserId)
-            module.hook(setUserId).intercept(UserChangedHooker)
+            HookRegistry.hook(module, FEATURE_ID, setUserId, UserChangedHooker)
             HookLogger.bootstrap(TAG, "systemui_user_tracker_hook_installed")
         } catch (error: Exception) {
             HookLogger.bootstrap(TAG, "systemui_user_tracker_hook_failed")
@@ -39,16 +37,21 @@ internal object SystemUiLifecycleHook {
         HookLogger.i(TAG, "SystemUI bootstrap/user hooks installed")
     }
 
+    /** Re-runs the application-create bootstrap for a re-derived host, e.g. after hot reload. */
+    fun bootstrap(application: Application) {
+        XiaomiCapabilityResolver.observeContext(application)
+        SystemUiLyricProjectionRuntime.projection.bootstrap(application)
+        HookLogger.bootstrap(TAG, "systemui_projection_bootstrapped")
+        SystemUiLyricProjectionRuntime.projection.attach(AodPowerCoordinator, application)
+        HookLogger.bootstrap(TAG, "systemui_power_subscriber_attached")
+    }
+
     private object ApplicationCreateHooker : Hooker {
         override fun intercept(chain: Chain): Any? {
             HookLogger.bootstrap(TAG, "systemui_application_oncreate_entered")
             val result = chain.proceed()
             val application = chain.thisObject as? Application ?: return result
-            XiaomiCapabilityResolver.observeContext(application)
-            SystemUiLyricProjectionRuntime.projection.bootstrap(application)
-            HookLogger.bootstrap(TAG, "systemui_projection_bootstrapped")
-            SystemUiLyricProjectionRuntime.projection.attach(AodPowerCoordinator, application)
-            HookLogger.bootstrap(TAG, "systemui_power_subscriber_attached")
+            bootstrap(application)
             return result
         }
     }
@@ -65,5 +68,6 @@ internal object SystemUiLifecycleHook {
 
     private const val SYSTEM_UI_APPLICATION = "com.android.systemui.SystemUIApplication"
     private const val USER_TRACKER_IMPL = "com.android.systemui.settings.UserTrackerImpl"
+    private const val FEATURE_ID = "systemui-lifecycle"
     private const val TAG = "SystemUiLifecycle"
 }

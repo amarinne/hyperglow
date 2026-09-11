@@ -309,6 +309,81 @@ class SettingsSessionTest {
     }
 
     @Test
+    fun resetSurfaceRestoresOnlyRequestedProfile() = runTest {
+        val store = RecordingStore()
+        val session = createSession(store)
+        session.updateSelectedProfile(SceneCompiler.SURFACE_AOD) {
+            it.copy(textSize = "custom", textSizeCustom = 260)
+        }
+        session.resetSurface(SceneCompiler.SURFACE_AOD)
+        session.flushNow()
+
+        assertEquals(
+            SceneCompiler.safeAodProfile(),
+            session.document.value.profiles.getValue(SceneCompiler.SURFACE_AOD)
+        )
+        assertEquals(
+            SceneCompiler.safeLockscreenProfile(),
+            session.document.value.profiles.getValue(SceneCompiler.SURFACE_LOCKSCREEN)
+        )
+        session.dispose()
+    }
+
+    @Test
+    fun behaviorWritePreservesLatestAppearanceInLegacyPreferences() = runTest {
+        val store = RecordingStore()
+        val session = createSession(store)
+        session.updateSelectedProfile(SceneCompiler.SURFACE_AOD) {
+            it.copy(enabled = false, textSize = "custom", textSizeCustom = 280, fontFamily = "noto")
+        }
+        assertTrue(session.flushNow())
+        session.updateConfig { it.copy(keepAwake = false) }
+        assertTrue(session.flushNow())
+        val persisted = store.persistedConfigs.last()
+        assertFalse(persisted.aodEnabled)
+        assertFalse(persisted.keepAwake)
+        assertEquals(280, persisted.textSizeCustom)
+        assertEquals("noto", persisted.fontFamily)
+        session.dispose()
+    }
+
+    @Test
+    fun surfaceResetPreservesEnablementSharedSettingsAndOtherSurface() = runTest {
+        val store = RecordingStore()
+        val session = createSession(store)
+        session.updateSurfaceEnabled(SceneCompiler.SURFACE_LOCKSCREEN, true)
+        session.updateSelectedProfile(SceneCompiler.SURFACE_LOCKSCREEN) {
+            it.copy(textSizeCustom = 270, transition = it.transition.copy(durationMs = 450))
+        }
+        session.updateConfig {
+            it.copy(keepAwake = false, lockscreenKeepAwake = true,
+                suppressLockscreenEditorLongPress = true, raiseToAod = true,
+                pauseLingerMs = 30_000, songChangeInfoEnabled = false)
+        }
+        session.resetSurface(SceneCompiler.SURFACE_LOCKSCREEN)
+        assertTrue(session.flushNow())
+        val lockscreen = session.document.value.profiles.getValue(SceneCompiler.SURFACE_LOCKSCREEN)
+        assertTrue(lockscreen.enabled)
+        assertEquals(100, lockscreen.textSizeCustom)
+        assertEquals(450, lockscreen.transition.durationMs)
+        assertFalse(session.config.value.lockscreenKeepAwake)
+        assertFalse(session.config.value.suppressLockscreenEditorLongPress)
+        assertFalse(session.config.value.keepAwake)
+        assertTrue(session.config.value.raiseToAod)
+        assertEquals(30_000L, session.config.value.pauseLingerMs)
+        assertFalse(session.config.value.songChangeInfoEnabled)
+        session.updateSurfaceEnabled(SceneCompiler.SURFACE_AOD, false)
+        session.resetSurface(SceneCompiler.SURFACE_AOD)
+        assertTrue(session.flushNow())
+        assertFalse(session.document.value.profiles.getValue(SceneCompiler.SURFACE_AOD).enabled)
+        assertTrue(session.config.value.keepAwake)
+        assertFalse(session.config.value.raiseToAod)
+        assertEquals(lockscreen, session.document.value.profiles.getValue(SceneCompiler.SURFACE_LOCKSCREEN))
+        assertEquals(30_000L, session.config.value.pauseLingerMs)
+        session.dispose()
+    }
+
+    @Test
     fun diagnosticPersistenceFailureRollsBackFlagAndEmitsDiagnosticEvent() = runTest {
         val store = RecordingStore().apply { failDiagnosticPersist = true }
         val session = createSession(store)
@@ -353,6 +428,28 @@ class SettingsSessionTest {
             session.diagnosticLogging.value
         )
         assertEquals(listOf(true), store.diagnosticWrites)
+        session.dispose()
+    }
+
+    @Test
+    fun documentFailureCannotCommitConfigMirroredFromTheUnsavedDocument() = runTest {
+        val store = RecordingStore().apply { failDocumentPersist = true }
+        val session = createSession(store)
+
+        session.updateSelectedProfile(SceneCompiler.SURFACE_AOD) {
+            it.copy(textSize = "custom", textSizeCustom = 220)
+        }
+        session.updateConfig { it.copy(keepAwake = false) }
+        advanceTimeBy(SETTINGS_FLUSH_DEBOUNCE_MS + 10_000)
+
+        assertTrue(store.persistedDocuments.isEmpty())
+        assertTrue(
+            "The config contains a legacy mirror of the document, so it must wait for that " +
+                "document to persist successfully.",
+            store.persistedConfigs.isEmpty()
+        )
+        assertEquals(100, session.document.value.aodTextSize())
+        assertTrue(session.config.value.keepAwake)
         session.dispose()
     }
 

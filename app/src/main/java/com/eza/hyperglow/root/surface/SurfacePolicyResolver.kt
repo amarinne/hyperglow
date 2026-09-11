@@ -33,7 +33,7 @@ internal object SurfacePolicyResolver {
             maxWidgets = 4,
             artworkAllowed = false,
             progressAllowed = false,
-            maximumHeightFraction = 0.5f,
+            maximumHeightFraction = 0.9f,
             minimumAnimationDurationMs = 150,
             maximumAnimationDurationMs = 600,
             fullAodSupported = fullAodSupported,

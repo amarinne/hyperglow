@@ -3,6 +3,7 @@ package com.eza.hyperglow.root.aod
 import android.os.Handler
 import android.os.Looper
 import com.eza.hyperglow.root.HookLogger
+import com.eza.hyperglow.root.HookRegistry
 import com.eza.hyperglow.root.readHierarchyField
 import io.github.libxposed.api.XposedInterface.Chain
 import io.github.libxposed.api.XposedInterface.Hooker
@@ -24,13 +25,12 @@ object AodLifetimeHook {
         if (!hookedClassLoaders.add(classLoader)) return
         for (constructor in controllerClass.declaredConstructors) {
             constructor.isAccessible = true
-            module.hook(constructor).intercept(ControllerConstructorHooker)
+            HookRegistry.hook(module, FEATURE_ID, constructor, ControllerConstructorHooker)
         }
         for (methodName in POLICY_HIDE_METHODS) {
             val method = controllerClass.getDeclaredMethod(methodName)
             method.isAccessible = true
-            module.deoptimize(method)
-            module.hook(method).intercept(PolicyHideHooker(method))
+            HookRegistry.hook(module, FEATURE_ID, method, PolicyHideHooker(method))
         }
         installVisibilityTelemetry(module, classLoader)
         HookLogger.i(
@@ -47,8 +47,7 @@ object AodLifetimeHook {
         methods.forEach { method ->
             runCatching {
                 method.isAccessible = true
-                module.deoptimize(method)
-                module.hook(method).intercept(VisibilityTelemetryHooker(method))
+                HookRegistry.hook(module, FEATURE_ID, method, VisibilityTelemetryHooker(method))
             }.onFailure { error ->
                 HookLogger.w(TAG, "AOD visibility telemetry hook unavailable method=${method.name}", error)
             }
@@ -87,6 +86,7 @@ object AodLifetimeHook {
     }
 
     private val POLICY_HIDE_METHODS = listOf("smartHide", "hideDoze")
+    private const val FEATURE_ID = "aod-lifetime"
     private const val TAG = "AodLifetimeHook"
 }
 
@@ -103,6 +103,15 @@ object AodLifetimeController {
 
     @Synchronized
     fun isLyricActive(): Boolean = lyricActive
+
+    /**
+     * Drops pending delayed work owned by this generation so it cannot fire after the
+     * old module class loader is retired by hot reload.
+     */
+    @Synchronized
+    fun cancelPendingForReload() {
+        clearPendingHideLocked()
+    }
 
     /** Records what the coordinator last acted on, so a guard transition can name its own cause. */
     @Synchronized

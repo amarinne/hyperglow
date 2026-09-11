@@ -64,6 +64,11 @@ ends.
   The full-screen stack host is never treated as content geometry.
 - The AOD renderer remains in the inner `AODView` root overlay. It never participates in Xiaomi
   clock-container measurement.
+- The optional full-screen canvas mode hides Xiaomi's clock-or-image container only while lyrics
+  render and restores it on every exit path; managed translation stays off while hidden. The
+  optional orientation mode can hold portrait, hold landscape, or follow the accelerometer in
+  snapped 90° steps behind that mode, with the sensor registered only while an auto hidden-stock
+  scene renders.
 - Shared line-level frame drawing traverses prebuilt layout rows with indexed loops and scalar fill
   math; it does not build filtered row/width/progress collections per frame. Ruby base-run slicing is
   still residual layout debt tracked by the audit.
@@ -145,6 +150,12 @@ visible lyric row, mirrored for RTL lyrics. Word/syllable timing remains unchang
   from lyric visibility, media rows, another media player, or renderer state.
 - A SystemUI user switch clears cached state, rejects old-user payloads, and rebinds the app service
   with the selected Android `UserHandle`; it does not keep targeting the owner-user app instance.
+- Every SystemUI hook handle is owned by one generation in `HookRegistry` under a stable
+  `feature + target` id and runs in protective exception mode. Hot reload rejects while a lyric
+  session owns AOD lifetime, otherwise retires the old generation's handles and pending callbacks
+  and reinstalls from the live host application; only the version code crosses the reload boundary.
+  Automatic hot reload stays off and a SystemUI restart remains the supported path until manual
+  reload passes repeatedly.
 - Live lyric snapshots render only while the UID-validated Spotify projection explicitly reports
   playback active. A real Spotify pause may freeze the last valid snapshot at `speed=0` for one shared
   lockscreen/AOD timeout: 0, 5, 10, or 30 seconds, or indefinitely; the default is 5 seconds. A confirmed

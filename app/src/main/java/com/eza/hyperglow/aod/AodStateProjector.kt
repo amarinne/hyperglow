@@ -21,7 +21,8 @@ internal data class AodProjectionContext(
     val prefs: AodRenderConfig,
     val aodEnabled: Boolean,
     val lockscreenEnabled: Boolean,
-    val metadataVisible: Boolean
+    val metadataVisible: Boolean,
+    val duetEnabled: Boolean = true
 )
 
 /**
@@ -85,7 +86,20 @@ internal fun projectToDisplay(
         )
     )
     val presentedRow = row.takeUnless { showLargeMetadata }
+    // One overlapping sung line stays on screen next to the primary so duet
+    // and layered singing render together instead of cutting each other off.
+    // The duet toggle withdraws the concurrent row at the source: snapshots
+    // then never carry a second line, so both canvas surfaces present the
+    // previous solo-only behavior with no per-build duet state.
+    val concurrentRow = if (context.duetEnabled && presentedRow != null && timedDocument != null) {
+        timedDocument.concurrentRowsAt(position, presentedRow).firstOrNull()
+    } else {
+        null
+    }
     val rejectJapaneseReading = presentedRow?.let {
+        hasLanguageInconsistentKanaRuby(document, it.ruby.map { ruby -> ruby.reading })
+    } == true
+    val rejectConcurrentJapaneseReading = concurrentRow?.let {
         hasLanguageInconsistentKanaRuby(document, it.ruby.map { ruby -> ruby.reading })
     } == true
     val original = when {
@@ -130,6 +144,17 @@ internal fun projectToDisplay(
         positionFollowingEnabled = prefs.experimentalPositionFollowing,
         burnInPattern = prefs.burnInPattern,
         burnInIntervalMs = prefs.burnInIntervalMs,
+        suppressStockAodContent = prefs.suppressStockAodContent,
+        aodRotateWithDevice = prefs.aodRotateWithDevice,
+        aodRotationMode = prefs.aodRotationMode,
+        aodCanvasAnchor = prefs.aodCanvasAnchor,
+        aodRotationSettleMs = prefs.aodRotationSettleMs,
+        aodCanvasAnchorLandscape = prefs.aodCanvasAnchorLandscape,
+        aodLandscapeTextScale = prefs.aodLandscapeTextScale,
+        aodCanvasPaddingPortraitXPercent = prefs.aodCanvasPaddingPortraitXPercent,
+        aodCanvasPaddingPortraitYPercent = prefs.aodCanvasPaddingPortraitYPercent,
+        aodCanvasPaddingLandscapeXPercent = prefs.aodCanvasPaddingLandscapeXPercent,
+        aodCanvasPaddingLandscapeYPercent = prefs.aodCanvasPaddingLandscapeYPercent,
         wakeSignal = AodProjectionEngine.sessionWakeSignal(state, hasTimedLyrics),
         original = original,
         romanized = romanized,
@@ -159,6 +184,41 @@ internal fun projectToDisplay(
             .takeUnless { rejectJapaneseReading }
             .orEmpty()
             .map { AodDisplayRuby(it.start, it.end, it.reading) },
+        secondLine = concurrentRow?.let { concurrent ->
+            val concurrentWords = if (rejectConcurrentJapaneseReading) {
+                concurrent.words.map { it.copy(romanized = "") }
+            } else {
+                concurrent.words
+            }
+            AodDisplaySecondLine(
+                text = concurrent.text,
+                romanized = if (rejectConcurrentJapaneseReading) "" else concurrent.romanized,
+                translated = concurrent.translated,
+                alignedRight = concurrent.alignedRight,
+                lineStartMs = concurrent.startMs,
+                lineEndMs = minOf(concurrent.fillEndMs, concurrent.endMs),
+                words = concurrentWords.map {
+                    AodDisplayWord(
+                        it.text,
+                        it.romanized,
+                        it.startMs,
+                        it.endMs,
+                        it.boundaryAfter,
+                        it.sourceStart,
+                        it.sourceEnd
+                    )
+                },
+                ruby = concurrent.ruby
+                    .takeUnless { rejectConcurrentJapaneseReading }
+                    .orEmpty()
+                    .map { AodDisplayRuby(it.start, it.end, it.reading) },
+                layoutGroups = concurrent.layoutGroups.map {
+                    AodDisplayLayoutGroup(
+                        it.start, it.end, it.kind, it.keepTogether, it.confidence
+                    )
+                }
+            )
+        },
         layoutGroups = presentedRow?.layoutGroups.orEmpty().map {
             AodDisplayLayoutGroup(it.start, it.end, it.kind, it.keepTogether, it.confidence)
         },

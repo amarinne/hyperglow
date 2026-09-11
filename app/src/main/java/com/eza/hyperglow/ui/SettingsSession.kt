@@ -142,11 +142,69 @@ internal class SettingsSession(
         }
     }
 
+    fun updateHandoffDuration(durationMs: Int) {
+        synchronized(lock) {
+            if (disposed) return@synchronized
+            _document.value = _document.value.copy(profiles = _document.value.profiles.mapValues { (_, p) ->
+                p.copy(transition = p.transition.copy(durationMs = durationMs.coerceIn(150, 600)))
+            })
+            markDirtyLocked(documentDirty = true, publishes = true)
+        }
+    }
+
     fun resetDocument() {
         synchronized(lock) {
             if (disposed) return@synchronized
             _document.value = SceneCompiler.safeDefaultDocument()
             markDirtyLocked(documentDirty = true, publishes = true)
+        }
+    }
+
+    /** Restores surface behavior and appearance without changing enablement or shared settings. */
+    fun resetSurface(surface: String) {
+        val defaults = AodRenderConfig.DEFAULTS
+        synchronized(lock) {
+            if (disposed) return@synchronized
+            val current = _document.value.profiles[surface] ?: return@synchronized
+            val profile = when (surface) {
+                SceneCompiler.SURFACE_AOD -> SceneCompiler.safeAodProfile()
+                SceneCompiler.SURFACE_LOCKSCREEN -> SceneCompiler.safeLockscreenProfile()
+                else -> return@synchronized
+            }.copy(enabled = current.enabled, transition = current.transition)
+            _document.value = _document.value.copy(
+                linkSurfaces = false,
+                profiles = _document.value.profiles + (surface to profile)
+            )
+            _config.value = if (surface == SceneCompiler.SURFACE_AOD) {
+                _config.value.copy(
+                    keepAwake = defaults.keepAwake,
+                    keepAwakeUnsynced = defaults.keepAwakeUnsynced,
+                    keepAwakeDurationMs = defaults.keepAwakeDurationMs,
+                    experimentalPositionFollowing = defaults.experimentalPositionFollowing,
+                    burnInPattern = defaults.burnInPattern,
+                    burnInIntervalMs = defaults.burnInIntervalMs,
+                    suppressStockAodContent = defaults.suppressStockAodContent,
+                    aodRotateWithDevice = defaults.aodRotateWithDevice,
+                    aodRotationMode = defaults.aodRotationMode,
+                    aodRotationSettleMs = defaults.aodRotationSettleMs,
+                    aodCanvasAnchor = defaults.aodCanvasAnchor,
+                    aodCanvasAnchorLandscape = defaults.aodCanvasAnchorLandscape,
+                    aodLandscapeTextScale = defaults.aodLandscapeTextScale,
+                    aodCanvasPaddingPortraitXPercent = defaults.aodCanvasPaddingPortraitXPercent,
+                    aodCanvasPaddingPortraitYPercent = defaults.aodCanvasPaddingPortraitYPercent,
+                    aodCanvasPaddingLandscapeXPercent = defaults.aodCanvasPaddingLandscapeXPercent,
+                    aodCanvasPaddingLandscapeYPercent = defaults.aodCanvasPaddingLandscapeYPercent,
+                    raiseToAod = defaults.raiseToAod,
+                    aodBrightnessOverride = defaults.aodBrightnessOverride,
+                    aodBrightnessLevel = defaults.aodBrightnessLevel
+                )
+            } else {
+                _config.value.copy(
+                    lockscreenKeepAwake = defaults.lockscreenKeepAwake,
+                    suppressLockscreenEditorLongPress = defaults.suppressLockscreenEditorLongPress
+                )
+            }
+            markDirtyLocked(documentDirty = true, configDirty = true, publishes = true)
         }
     }
 
@@ -268,7 +326,7 @@ internal class SettingsSession(
         val captured = synchronized(lock) {
             CapturedFlush(
                 generation = generation,
-                config = _config.value,
+                config = _config.value.withSurfacePreferences(_document.value),
                 document = _document.value,
                 diagnosticLogging = _diagnosticLogging.value,
                 documentDirty = documentDirty,
@@ -286,9 +344,14 @@ internal class SettingsSession(
             documentOk = store.persistDocument(captured.document)
             if (documentOk) persistedDocument = captured.document
         }
-        if (captured.configDirty) {
+        // A config snapshot includes the document-owned legacy mirror fields.  Do not commit it
+        // after a document failure, or those fields can describe an unsaved document while the
+        // canonical JSON still describes the previous one.
+        if (captured.configDirty && documentOk) {
             configOk = store.persistConfig(captured.config)
             if (configOk) persistedConfig = captured.config
+        } else if (captured.configDirty) {
+            configOk = false
         }
         if (captured.diagnosticDirty) {
             diagnosticOk = store.persistDiagnostic(captured.diagnosticLogging)
@@ -317,7 +380,7 @@ internal class SettingsSession(
             if (generation != captured.generation) {
                 null
             } else {
-                PublishedSnapshot(_config.value, _document.value)
+                PublishedSnapshot(_config.value.withSurfacePreferences(_document.value), _document.value)
             }
         } ?: return true
         store.publish(current.config, current.document, captured.diagnosticLogging)
@@ -368,3 +431,25 @@ internal const val SETTINGS_FLUSH_DEBOUNCE_MS = 150L
 
 private const val PERSIST_FAILURE_BUFFER = 8
 
+/** The document owns appearance; behavior writes must not overwrite its legacy preference mirror. */
+internal fun AodRenderConfig.withSurfacePreferences(document: CustomizationDocument): AodRenderConfig {
+    val aod = document.profiles[SceneCompiler.SURFACE_AOD] ?: SceneCompiler.safeAodProfile()
+    val lockscreen = document.profiles[SceneCompiler.SURFACE_LOCKSCREEN] ?: SceneCompiler.safeLockscreenProfile()
+    return copy(
+        aodEnabled = aod.enabled,
+        lockscreenEnabled = lockscreen.enabled,
+        alignment = aod.alignment,
+        secondaryMode = aod.secondaryMode,
+        overflowMode = aod.overflow,
+        metadataVisible = if (aod.metadataVisible) "show" else "hide",
+        metadataAnchor = aod.metadataAnchor,
+        weight = aod.weight,
+        textSize = aod.textSize,
+        textSizeCustom = aod.textSizeCustom,
+        fontFamily = aod.fontFamily,
+        animation = aod.animation,
+        glow = aod.glow,
+        adaptiveSectioning = aod.adaptiveSectioning,
+        duetEnabled = aod.duetEnabled
+    )
+}

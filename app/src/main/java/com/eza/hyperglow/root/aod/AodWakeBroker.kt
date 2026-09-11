@@ -5,6 +5,7 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import com.eza.hyperglow.root.HookLogger
+import com.eza.hyperglow.root.HookRegistry
 import com.eza.hyperglow.root.hierarchyField
 import com.eza.hyperglow.root.capability.XiaomiCapability
 import com.eza.hyperglow.root.capability.XiaomiCapabilityResolver
@@ -42,7 +43,10 @@ internal object AodWakeBroker {
         if (!hookedClassLoaders.add(classLoader)) return
         for (constructor in triggersClass.declaredConstructors) {
             constructor.isAccessible = true
-            module.hook(constructor).intercept(
+            HookRegistry.hook(
+                module,
+                FEATURE_ID,
+                constructor,
                 DozeTriggersConstructorHooker(hostField, contextField, fireAodState)
             )
         }
@@ -139,5 +143,6 @@ internal object AodWakeBroker {
     private const val DOZE_HOST_CLASS = "com.miui.aod.DozeHost"
     private const val WAKE_REASON = "reason_keycode_goto"
     private const val MIN_REQUEST_INTERVAL_MS = 750L
+    private const val FEATURE_ID = "aod-wake"
     private const val TAG = "AodWakeBroker"
 }

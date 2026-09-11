@@ -52,6 +52,22 @@ internal data class AodStateWireLayoutGroup(
     val confidence: Double
 )
 
+/**
+ * One overlapping sung line kept next to the primary. Null renders solo;
+ * bodies before v9 never carry one.
+ */
+internal data class AodStateWireSecondLine(
+    val text: String,
+    val romanized: String,
+    val translated: String,
+    val alignedRight: Boolean,
+    val lineStartMs: Long,
+    val lineEndMs: Long,
+    val words: List<AodStateWireWord>,
+    val ruby: List<AodStateWireRuby>,
+    val layoutGroups: List<AodStateWireLayoutGroup>
+)
+
 internal data class AodStateWireSnapshot(
     val trackGeneration: Long,
     val aodEnabled: Boolean,
@@ -60,6 +76,21 @@ internal data class AodStateWireSnapshot(
     val positionFollowingEnabled: Boolean,
     val burnInPattern: String,
     val burnInIntervalMs: Long,
+    val suppressStockAodContent: Boolean = false,
+    val aodRotateWithDevice: Boolean = false,
+    val aodRotationMode: String = AOD_ROTATION_MODE_PORTRAIT,
+    val aodCanvasAnchor: Float = 0.5f,
+    val aodRotationSettleMs: Long = 1_000L,
+    val aodCanvasAnchorLandscape: Float = 0.5f,
+    val aodLandscapeTextScale: Float = 1f,
+    val aodCanvasPaddingDp: Int = 8,
+    val aodCanvasPaddingXPercent: Float = 2f,
+    val aodCanvasPaddingYPercent: Float = 2f,
+    val aodCanvasPaddingPortraitXPercent: Float = 2f,
+    val aodCanvasPaddingPortraitYPercent: Float = 2f,
+    val aodCanvasPaddingLandscapeXPercent: Float = 2f,
+    val aodCanvasPaddingLandscapeYPercent: Float = 2f,
+    val secondLine: AodStateWireSecondLine? = null,
     val original: String,
     val romanized: String,
     val translated: String,
@@ -256,6 +287,8 @@ internal object AodStateWireCodec {
                 output.writeStrictBoolean(snapshot.positionFollowingEnabled)
                 output.writeBoundedString(snapshot.burnInPattern)
                 output.writeLong(snapshot.burnInIntervalMs)
+                output.writeStrictBoolean(snapshot.suppressStockAodContent)
+                output.writeStrictBoolean(snapshot.aodRotateWithDevice)
                 output.writeBoundedString(snapshot.original)
                 output.writeBoundedString(snapshot.romanized)
                 output.writeBoundedString(snapshot.translated)
@@ -302,8 +335,53 @@ internal object AodStateWireCodec {
                     output.writeInt(group.end)
                     output.writeBoundedString(group.kind)
                     output.writeStrictBoolean(group.keepTogether)
+                output.writeDouble(group.confidence)
+            }
+            output.writeFloat(snapshot.aodCanvasAnchor)
+            output.writeLong(snapshot.aodRotationSettleMs)
+            output.writeFloat(snapshot.aodCanvasAnchorLandscape)
+            output.writeFloat(snapshot.aodLandscapeTextScale)
+            output.writeInt(snapshot.aodCanvasPaddingDp)
+            output.writeBoundedString(snapshot.aodRotationMode)
+            output.writeFloat(snapshot.aodCanvasPaddingXPercent)
+            output.writeFloat(snapshot.aodCanvasPaddingYPercent)
+            output.writeFloat(snapshot.aodCanvasPaddingPortraitXPercent)
+            output.writeFloat(snapshot.aodCanvasPaddingPortraitYPercent)
+            output.writeFloat(snapshot.aodCanvasPaddingLandscapeXPercent)
+            output.writeFloat(snapshot.aodCanvasPaddingLandscapeYPercent)
+            output.writeStrictBoolean(snapshot.secondLine != null)
+            snapshot.secondLine?.let { second ->
+                output.writeInt(second.words.size)
+                output.writeInt(second.ruby.size)
+                output.writeInt(second.layoutGroups.size)
+                output.writeBoundedString(second.text)
+                output.writeBoundedString(second.romanized)
+                output.writeBoundedString(second.translated)
+                output.writeStrictBoolean(second.alignedRight)
+                output.writeLong(second.lineStartMs)
+                output.writeLong(second.lineEndMs)
+                second.words.forEach { word ->
+                    output.writeBoundedString(word.text)
+                    output.writeBoundedString(word.romanized)
+                    output.writeLong(word.startMs)
+                    output.writeLong(word.endMs)
+                    output.writeStrictBoolean(word.boundaryAfter)
+                    output.writeInt(word.sourceStart)
+                    output.writeInt(word.sourceEnd)
+                }
+                second.ruby.forEach { ruby ->
+                    output.writeInt(ruby.start)
+                    output.writeInt(ruby.end)
+                    output.writeBoundedString(ruby.reading)
+                }
+                second.layoutGroups.forEach { group ->
+                    output.writeInt(group.start)
+                    output.writeInt(group.end)
+                    output.writeBoundedString(group.kind)
+                    output.writeStrictBoolean(group.keepTogether)
                     output.writeDouble(group.confidence)
                 }
+            }
             }
             bytes.toByteArray().takeIf {
                 it.isNotEmpty() && it.size <= AodStateWireLimits.MAX_ENCODED_BODY_BYTES
@@ -317,7 +395,25 @@ internal object AodStateWireCodec {
         if (body.isEmpty() || body.size > AodStateWireLimits.MAX_ENCODED_BODY_BYTES) return null
         return try {
             val input = DataInputStream(ByteArrayInputStream(body))
-            if (input.readInt() != BODY_MAGIC || input.readInt() != BODY_VERSION) return null
+            if (input.readInt() != BODY_MAGIC) return null
+            // Body v1 predates the stock-suppress/rotate flags; it decodes with both off.
+            // Body v2 appends them right after the burn-in interval.
+            // Body v3 appends the canvas anchor after the layout groups.
+            // Body v4 appends the rotation settle delay after the anchor.
+            // Body v5 appends the landscape anchor, text scale, and padding.
+            // Body v6 appends the rotation mode; v2-v5 derive it from the legacy boolean.
+            // Body v7 appends per-axis padding percent; v6 and older derive both
+            // axes from the legacy dp padding.
+            // Body v8 splits padding per orientation; v7 and older use the
+            // shared pair for both portrait and landscape.
+            // Body v9 appends one concurrent lyric line; older bodies render solo.
+            val bodyVersion = input.readInt()
+            if (bodyVersion != BODY_VERSION_V1 && bodyVersion != BODY_VERSION_V2 &&
+                bodyVersion != BODY_VERSION_V3 && bodyVersion != BODY_VERSION_V4 &&
+                bodyVersion != BODY_VERSION_V5 && bodyVersion != BODY_VERSION_V6 &&
+                bodyVersion != BODY_VERSION_V7 && bodyVersion != BODY_VERSION_V8 &&
+                bodyVersion != BODY_VERSION
+            ) return null
             val wordCount = input.readBoundedCount(AodStateWireLimits.MAX_WORDS) ?: return null
             val rubyCount = input.readBoundedCount(AodStateWireLimits.MAX_RUBY) ?: return null
             val layoutCount = input.readBoundedCount(AodStateWireLimits.MAX_LAYOUT_GROUPS) ?: return null
@@ -333,6 +429,16 @@ internal object AodStateWireCodec {
                 budget = budget
             ) ?: return null
             val burnInIntervalMs = input.readLong()
+            val suppressStockAodContent = if (bodyVersion >= BODY_VERSION_V2) {
+                input.readStrictBoolean() ?: return null
+            } else {
+                false
+            }
+            val aodRotateWithDevice = if (bodyVersion >= BODY_VERSION_V2) {
+                input.readStrictBoolean() ?: return null
+            } else {
+                false
+            }
             val original = input.readBoundedString(
                 AodStateWireLimits.MAX_LYRIC_CHARS,
                 allowEmpty = false,
@@ -424,6 +530,83 @@ internal object AodStateWireCodec {
                     confidence = input.readDouble()
                 )
             }
+            val aodCanvasAnchor = if (bodyVersion >= BODY_VERSION_V3) {
+                input.readFloat().takeIf { it.isFinite() && it in 0f..1f } ?: return null
+            } else {
+                BODY_V1_V2_DEFAULT_ANCHOR
+            }
+            val aodRotationSettleMs = if (bodyVersion >= BODY_VERSION_V4) {
+                input.readLong().takeIf { it == normalizeAodRotationSettleMs(it) } ?: return null
+            } else {
+                BODY_V1_V3_DEFAULT_SETTLE_MS
+            }
+            val aodCanvasAnchorLandscape = if (bodyVersion >= BODY_VERSION_V5) {
+                input.readFloat().takeIf { it.isFinite() && it in 0f..1f } ?: return null
+            } else {
+                BODY_V1_V4_DEFAULT_ANCHOR
+            }
+            val aodLandscapeTextScale = if (bodyVersion >= BODY_VERSION_V5) {
+                input.readFloat()
+                    .takeIf { it == normalizeAodLandscapeTextScale(it) } ?: return null
+            } else {
+                BODY_V1_V4_DEFAULT_TEXT_SCALE
+            }
+            val aodCanvasPaddingDp = if (bodyVersion >= BODY_VERSION_V5) {
+                input.readInt()
+                    .takeIf { it == normalizeAodCanvasPaddingDp(it) } ?: return null
+            } else {
+                BODY_V1_V4_DEFAULT_PADDING_DP
+            }
+            val aodRotationMode = if (bodyVersion >= BODY_VERSION_V6) {
+                input.readStyleString(budget)?.let(::normalizeAodRotationMode) ?: return null
+            } else if (aodRotateWithDevice) {
+                AOD_ROTATION_MODE_AUTO
+            } else {
+                AOD_ROTATION_MODE_PORTRAIT
+            }
+            val legacyPaddingPercent = legacyPaddingDpToPercent(aodCanvasPaddingDp)
+            val aodCanvasPaddingXPercent = if (bodyVersion >= BODY_VERSION_V7) {
+                input.readFloat()
+                    .takeIf { it == normalizeAodCanvasPaddingPercent(it) } ?: return null
+            } else {
+                legacyPaddingPercent
+            }
+            val aodCanvasPaddingYPercent = if (bodyVersion >= BODY_VERSION_V7) {
+                input.readFloat()
+                    .takeIf { it == normalizeAodCanvasPaddingPercent(it) } ?: return null
+            } else {
+                legacyPaddingPercent
+            }
+            // v8 splits padding per orientation; older bodies reuse the shared
+            // pair for both portrait and landscape.
+            val orientedDefaults = listOf(
+                aodCanvasPaddingXPercent,
+                aodCanvasPaddingYPercent,
+                aodCanvasPaddingXPercent,
+                aodCanvasPaddingYPercent
+            )
+            val orientedPadding = orientedDefaults.map { shared ->
+                if (bodyVersion >= BODY_VERSION_V8) {
+                    input.readFloat()
+                        .takeIf { it == normalizeAodCanvasPaddingPercent(it) } ?: return null
+                } else {
+                    shared
+                }
+            }
+            val aodCanvasPaddingPortraitXPercent = orientedPadding[0]
+            val aodCanvasPaddingPortraitYPercent = orientedPadding[1]
+            val aodCanvasPaddingLandscapeXPercent = orientedPadding[2]
+            val aodCanvasPaddingLandscapeYPercent = orientedPadding[3]
+            val hasSecondLine = if (bodyVersion >= BODY_VERSION) {
+                input.readStrictBoolean() ?: return null
+            } else {
+                false
+            }
+            val secondLine = if (hasSecondLine) {
+                decodeSecondLine(input, budget) ?: return null
+            } else {
+                null
+            }
             if (input.available() != 0) return null
             AodStateWireSnapshot(
                 trackGeneration = trackGeneration,
@@ -433,6 +616,9 @@ internal object AodStateWireCodec {
                 positionFollowingEnabled = positionFollowingEnabled,
                 burnInPattern = burnInPattern,
                 burnInIntervalMs = burnInIntervalMs,
+                suppressStockAodContent = suppressStockAodContent,
+                aodRotateWithDevice = aodRotateWithDevice,
+                aodRotationMode = aodRotationMode,
                 original = original,
                 romanized = romanized,
                 translated = translated,
@@ -462,18 +648,120 @@ internal object AodStateWireCodec {
                 alignmentMode = alignmentMode,
                 metadataVisible = metadataVisible,
                 metadataAnchor = metadataAnchor,
-                adaptiveSectioning = adaptiveSectioning
+                adaptiveSectioning = adaptiveSectioning,
+                aodCanvasAnchor = aodCanvasAnchor,
+                aodRotationSettleMs = aodRotationSettleMs,
+                aodCanvasAnchorLandscape = aodCanvasAnchorLandscape,
+                aodLandscapeTextScale = aodLandscapeTextScale,
+                aodCanvasPaddingDp = aodCanvasPaddingDp,
+                aodCanvasPaddingXPercent = aodCanvasPaddingXPercent,
+                aodCanvasPaddingYPercent = aodCanvasPaddingYPercent,
+                aodCanvasPaddingPortraitXPercent = aodCanvasPaddingPortraitXPercent,
+                aodCanvasPaddingPortraitYPercent = aodCanvasPaddingPortraitYPercent,
+                aodCanvasPaddingLandscapeXPercent = aodCanvasPaddingLandscapeXPercent,
+                aodCanvasPaddingLandscapeYPercent = aodCanvasPaddingLandscapeYPercent,
+                secondLine = secondLine
             ).takeIf(::isValidSnapshot)
         } catch (_: Exception) {
             null
         }
     }
 
+    private fun decodeSecondLine(
+        input: DataInputStream,
+        budget: Utf8Budget
+    ): AodStateWireSecondLine? {
+        return try {
+            val wordCount = input.readBoundedCount(AodStateWireLimits.MAX_WORDS) ?: return null
+            val rubyCount = input.readBoundedCount(AodStateWireLimits.MAX_RUBY) ?: return null
+            val layoutCount = input.readBoundedCount(AodStateWireLimits.MAX_LAYOUT_GROUPS)
+                ?: return null
+            val text = input.readBoundedString(
+                AodStateWireLimits.MAX_LYRIC_CHARS, allowEmpty = false, budget = budget
+            ) ?: return null
+            val romanized = input.readBoundedString(
+                AodStateWireLimits.MAX_LYRIC_CHARS, allowEmpty = true, budget = budget
+            ) ?: return null
+            val translated = input.readBoundedString(
+                AodStateWireLimits.MAX_LYRIC_CHARS, allowEmpty = true, budget = budget
+            ) ?: return null
+            val alignedRight = input.readStrictBoolean() ?: return null
+            val lineStartMs = input.readLong()
+            val lineEndMs = input.readLong()
+            val words = ArrayList<AodStateWireWord>(wordCount)
+            repeat(wordCount) {
+                val wordText = input.readBoundedString(
+                    AodStateWireLimits.MAX_LYRIC_CHARS, allowEmpty = true, budget = budget
+                ) ?: return null
+                val wordRomanized = input.readBoundedString(
+                    AodStateWireLimits.MAX_LYRIC_CHARS, allowEmpty = true, budget = budget
+                ) ?: return null
+                words += AodStateWireWord(
+                    text = wordText,
+                    romanized = wordRomanized,
+                    startMs = input.readLong(),
+                    endMs = input.readLong(),
+                    boundaryAfter = input.readStrictBoolean() ?: return null,
+                    sourceStart = input.readInt(),
+                    sourceEnd = input.readInt()
+                )
+            }
+            val ruby = ArrayList<AodStateWireRuby>(rubyCount)
+            repeat(rubyCount) {
+                ruby += AodStateWireRuby(
+                    start = input.readInt(),
+                    end = input.readInt(),
+                    reading = input.readBoundedString(
+                        AodStateWireLimits.MAX_LYRIC_CHARS, allowEmpty = true, budget = budget
+                    ) ?: return null
+                )
+            }
+            val layoutGroups = ArrayList<AodStateWireLayoutGroup>(layoutCount)
+            repeat(layoutCount) {
+                layoutGroups += AodStateWireLayoutGroup(
+                    start = input.readInt(),
+                    end = input.readInt(),
+                    kind = input.readBoundedString(
+                        AodStateWireLimits.MAX_METADATA_CHARS, allowEmpty = true, budget = budget
+                    ) ?: return null,
+                    keepTogether = input.readStrictBoolean() ?: return null,
+                    confidence = input.readDouble()
+                )
+            }
+            AodStateWireSecondLine(
+                text = text,
+                romanized = romanized,
+                translated = translated,
+                alignedRight = alignedRight,
+                lineStartMs = lineStartMs,
+                lineEndMs = lineEndMs,
+                words = words.toList(),
+                ruby = ruby.toList(),
+                layoutGroups = layoutGroups.toList()
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun isValidSnapshot(snapshot: AodStateWireSnapshot): Boolean {
+        val secondWords = snapshot.secondLine?.words.orEmpty()
+        val secondRuby = snapshot.secondLine?.ruby.orEmpty()
+        val secondGroups = snapshot.secondLine?.layoutGroups.orEmpty()
         if (snapshot.words.size > AodStateWireLimits.MAX_WORDS ||
             snapshot.ruby.size > AodStateWireLimits.MAX_RUBY ||
-            snapshot.layoutGroups.size > AodStateWireLimits.MAX_LAYOUT_GROUPS
+            snapshot.layoutGroups.size > AodStateWireLimits.MAX_LAYOUT_GROUPS ||
+            snapshot.words.size + secondWords.size > AodStateWireLimits.MAX_WORDS ||
+            snapshot.ruby.size + secondRuby.size > AodStateWireLimits.MAX_RUBY ||
+            snapshot.layoutGroups.size + secondGroups.size > AodStateWireLimits.MAX_LAYOUT_GROUPS
         ) return false
+        snapshot.secondLine?.let { second ->
+            if (second.text.isBlank() || second.text.length > AodStateWireLimits.MAX_LYRIC_CHARS ||
+                second.lineStartMs < 0L || second.lineEndMs < second.lineStartMs ||
+                second.lineEndMs > snapshot.durationMs ||
+                secondWords.any { it.startMs < 0L || it.endMs < it.startMs }
+            ) return false
+        }
         if (snapshot.trackGeneration < 0L || snapshot.lineStartMs < 0L ||
             snapshot.lineEndMs < snapshot.lineStartMs ||
             snapshot.durationMs !in 1L..AodStateWireLimits.MAX_MEDIA_DURATION_MS ||
@@ -481,7 +769,38 @@ internal object AodStateWireCodec {
             snapshot.positionMs !in 0L..snapshot.durationMs ||
             snapshot.sampledAtElapsedMs < 0L || !snapshot.speed.isFinite() ||
             snapshot.speed !in 0f..AodStateWireLimits.MAX_PLAYBACK_SPEED ||
-            snapshot.textSizeCustom !in 0..500
+            snapshot.textSizeCustom !in 0..500 ||
+            !snapshot.aodCanvasAnchor.isFinite() || snapshot.aodCanvasAnchor !in 0f..1f ||
+            snapshot.aodRotationSettleMs != normalizeAodRotationSettleMs(
+                snapshot.aodRotationSettleMs
+            ) ||
+            snapshot.aodRotationMode != normalizeAodRotationMode(snapshot.aodRotationMode) ||
+            !snapshot.aodCanvasAnchorLandscape.isFinite() ||
+            snapshot.aodCanvasAnchorLandscape !in 0f..1f ||
+            snapshot.aodLandscapeTextScale != normalizeAodLandscapeTextScale(
+                snapshot.aodLandscapeTextScale
+            ) ||
+            snapshot.aodCanvasPaddingDp != normalizeAodCanvasPaddingDp(
+                snapshot.aodCanvasPaddingDp
+            ) ||
+            snapshot.aodCanvasPaddingXPercent != normalizeAodCanvasPaddingPercent(
+                snapshot.aodCanvasPaddingXPercent
+            ) ||
+            snapshot.aodCanvasPaddingYPercent != normalizeAodCanvasPaddingPercent(
+                snapshot.aodCanvasPaddingYPercent
+            ) ||
+            snapshot.aodCanvasPaddingPortraitXPercent != normalizeAodCanvasPaddingPercent(
+                snapshot.aodCanvasPaddingPortraitXPercent
+            ) ||
+            snapshot.aodCanvasPaddingPortraitYPercent != normalizeAodCanvasPaddingPercent(
+                snapshot.aodCanvasPaddingPortraitYPercent
+            ) ||
+            snapshot.aodCanvasPaddingLandscapeXPercent != normalizeAodCanvasPaddingPercent(
+                snapshot.aodCanvasPaddingLandscapeXPercent
+            ) ||
+            snapshot.aodCanvasPaddingLandscapeYPercent != normalizeAodCanvasPaddingPercent(
+                snapshot.aodCanvasPaddingLandscapeYPercent
+            )
         ) return false
         if (snapshot.burnInPattern != normalizeAodBurnInPattern(snapshot.burnInPattern) ||
             snapshot.burnInIntervalMs != normalizeAodBurnInInterval(snapshot.burnInIntervalMs) ||
@@ -618,7 +937,20 @@ internal object AodStateWireCodec {
     }
 
     private const val BODY_MAGIC = 0x414F4453
-    private const val BODY_VERSION = 1
+    private const val BODY_VERSION_V1 = 1
+    private const val BODY_VERSION_V2 = 2
+    private const val BODY_VERSION_V3 = 3
+    private const val BODY_VERSION_V4 = 4
+    private const val BODY_VERSION_V5 = 5
+    private const val BODY_VERSION_V6 = 6
+    private const val BODY_VERSION_V7 = 7
+    private const val BODY_VERSION_V8 = 8
+    private const val BODY_VERSION = 9
+    private const val BODY_V1_V2_DEFAULT_ANCHOR = 0.5f
+    private const val BODY_V1_V3_DEFAULT_SETTLE_MS = 1_000L
+    private const val BODY_V1_V4_DEFAULT_ANCHOR = 0.5f
+    private const val BODY_V1_V4_DEFAULT_TEXT_SCALE = 1f
+    private const val BODY_V1_V4_DEFAULT_PADDING_DP = 8
     private const val MAX_UTF8_BYTES_PER_UTF16_CHAR = 4
 }
 

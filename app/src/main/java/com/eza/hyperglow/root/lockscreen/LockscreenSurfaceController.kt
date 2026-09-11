@@ -1,6 +1,7 @@
 package com.eza.hyperglow.root.lockscreen
 
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
@@ -16,7 +17,10 @@ import com.eza.hyperglow.root.HookLogger
 import com.eza.hyperglow.root.readHierarchyField
 import com.eza.hyperglow.customization.CompiledCustomization
 import com.eza.hyperglow.customization.CompiledSurfaceProfile
+import com.eza.hyperglow.customization.DEFAULT_CARD_ALPHA
+import com.eza.hyperglow.customization.DEFAULT_CARD_COLOR
 import com.eza.hyperglow.customization.SceneCompiler
+import com.eza.hyperglow.customization.normalizeCardColor
 import com.eza.hyperglow.root.aod.AodLyricCanvasView
 import com.eza.hyperglow.root.aod.AodCanvasVerticalAlignment
 import com.eza.hyperglow.root.aod.PAUSED_AOD_KEEP_ALIVE_MS
@@ -119,7 +123,6 @@ private const val CARD_HORIZONTAL_PADDING_DP = 16f
 private const val CARD_VERTICAL_PADDING_DP = 16f
 private const val CARD_CORNER_RADIUS_DP = 28f
 private const val LOCKSCREEN_CARD_WIDTH_FRACTION = 0.92f
-private val CARD_BACKGROUND_COLOR = 0xD91A1A1Au.toInt()
 private const val MIN_VISIBLE_ALPHA = 0.01f
 private const val MAX_NOTIFICATION_TRACE_CHILDREN = 6
 private const val VISIBILITY_DIAGNOSTIC_INTERVAL_MS = 2_000L
@@ -130,8 +133,27 @@ private const val REVERSE_ANCHOR_FALLBACK_DEADLINE_MS = 240L
 private const val REVERSE_ANCHOR_PROBE_MS = 16L
 private const val LOCKSCREEN_ENTRY_SLIDE_DP = 20f
 
+internal fun lockscreenCardRgb(color: String): Int = when (normalizeCardColor(color)) {
+    "charcoal" -> 0xFF1A1A1A.toInt()
+    "deep_purple" -> 0xFF2C2740.toInt()
+    else -> normalizeCardColor(color).let { token ->
+        if (token.matches(Regex("#[0-9a-fA-F]{6}"))) {
+            token.substring(1).toLongOrNull(16)?.toInt()?.let { 0xFF000000.toInt() or it } ?: 0xFF000000.toInt()
+        } else 0xFF000000.toInt()
+    }
+}
+
+internal fun lockscreenCardPaintColor(color: String, alpha: Float): Int {
+    val rgb = lockscreenCardRgb(color)
+    val safeAlpha = alpha.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: DEFAULT_CARD_ALPHA
+    return ((safeAlpha * 255f).roundToInt().coerceIn(0, 255) shl 24) or
+        (rgb and 0x00FFFFFF)
+}
+
 private class AdaptiveLyricCardBackgroundView(context: android.content.Context) : View(context) {
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = CARD_BACKGROUND_COLOR }
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = lockscreenCardPaintColor(DEFAULT_CARD_COLOR, DEFAULT_CARD_ALPHA)
+    }
     private val rect = RectF()
     private val density = resources.displayMetrics.density
     private var lyricCanvas: AodLyricCanvasView? = null
@@ -149,6 +171,13 @@ private class AdaptiveLyricCardBackgroundView(context: android.content.Context) 
         if (cardEnabled == enabled) return
         cardEnabled = enabled
         visibility = if (enabled) VISIBLE else GONE
+        invalidate()
+    }
+
+    fun setAppearance(color: String, alpha: Float) {
+        val next = lockscreenCardPaintColor(color, alpha)
+        if (paint.color == next) return
+        paint.color = next
         invalidate()
     }
 
@@ -1025,7 +1054,9 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
             if (!wasVisible || renderContent != lastRenderContent ||
                 renderProfile != lastRenderedProfile
             ) {
-                canvas.setContent(eligibleSnapshot.toAodCanvasContent(renderProfile))
+                canvas.setContent(
+                    eligibleSnapshot.toAodCanvasContent(renderProfile, includeSecondLine = false)
+                )
                 lastRenderContent = renderContent
                 lastRenderedProfile = renderProfile
             }
@@ -1173,7 +1204,7 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
         val lyricHeight = (rect.height - progressHeight - progressGap - verticalInset * 2)
             .coerceAtLeast(0)
         val card = sceneCard ?: return null
-        applyCardBackground(renderProfile.backgroundStyle)
+        applyCardBackground(renderProfile)
         applyFrameLayoutGeometry(card, rect.width, rect.height, rect.left, rect.top)
         applyFrameLayoutGeometry(canvas, contentWidth, lyricHeight, horizontalInset, verticalInset)
         progressView?.let { progress ->
@@ -1513,11 +1544,13 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
         }
     }
 
-    private fun applyCardBackground(style: String) {
-        if (lastCardBackgroundStyle == style) return
-        lastCardBackgroundStyle = style
-        sceneCard?.background = null
-        cardBackgroundView?.setCardEnabled(style == "card")
+    private fun applyCardBackground(profile: CompiledSurfaceProfile) {
+        if (lastCardBackgroundStyle != profile.backgroundStyle) {
+            lastCardBackgroundStyle = profile.backgroundStyle
+            sceneCard?.background = null
+        }
+        cardBackgroundView?.setAppearance(profile.cardColor, profile.cardAlpha)
+        cardBackgroundView?.setCardEnabled(profile.backgroundStyle == "card")
     }
 
     private fun observeLayouts(controller: Any, root: ViewGroup, host: FrameLayout) {

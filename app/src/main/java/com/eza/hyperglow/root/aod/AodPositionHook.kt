@@ -6,6 +6,7 @@ import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import com.eza.hyperglow.root.HookLogger
+import com.eza.hyperglow.root.HookRegistry
 import com.eza.hyperglow.root.hierarchyField
 import com.eza.hyperglow.root.readHierarchyField
 import io.github.libxposed.api.XposedInterface.Chain
@@ -19,6 +20,8 @@ internal object AodPositionHook {
     private data class ControllerState(
         var lastStockTranslationX: Int? = null,
         var lastStockTranslationY: Float? = null,
+        var heldTranslationX: Int? = null,
+        var heldTranslationY: Float? = null,
         var managedStep: Int = -1,
         var currentManagedDecision: AodClockPlacementDecision? = null,
         var pendingManagedDecision: AodClockPlacementDecision? = null
@@ -52,6 +55,31 @@ internal object AodPositionHook {
     private val targetViewScratch = Rect()
     private val targetRootLocation = IntArray(2)
 
+    /**
+     * Full-screen canvas mode owns no clock geometry: translation callbacks pass
+     * through to Xiaomi untouched and produce no module geometry work.
+     */
+    @Volatile
+    private var suppressActive = false
+
+    /** Lyrics are rendering with stock visible: hold the widget bundle still. */
+    @Volatile
+    private var holdStockPosition = false
+
+    fun setSuppressActive(active: Boolean) {
+        suppressActive = active
+    }
+
+    fun setHoldStockPosition(active: Boolean) {
+        holdStockPosition = active
+        if (!active) synchronized(controllerStates) {
+            controllerStates.values.forEach { state ->
+                state.heldTranslationX = null
+                state.heldTranslationY = null
+            }
+        }
+    }
+
     fun install(module: XposedModule, classLoader: ClassLoader) {
         val controller = runCatching { classLoader.loadClass(CONTROLLER_CLASS) }.getOrNull() ?: return
         val update = controller.getDeclaredMethod(
@@ -63,10 +91,8 @@ internal object AodPositionHook {
         val updatePosition = classLoader.loadClass(DOZE_HOST_CLASS)
             .getDeclaredMethod("updatePosition").apply { isAccessible = true }
         if (!hookedClassLoaders.add(classLoader)) return
-        module.deoptimize(update)
-        module.deoptimize(updatePosition)
-        module.hook(update).intercept(PositionHooker)
-        module.hook(updatePosition).intercept(PositionCompletionHooker)
+        HookRegistry.hook(module, FEATURE_ID, update, PositionHooker)
+        HookRegistry.hook(module, FEATURE_ID, updatePosition, PositionCompletionHooker)
         HookLogger.i(TAG, "AOD position hook installed")
     }
 
@@ -102,6 +128,7 @@ internal object AodPositionHook {
 
     private object PositionHooker : Hooker {
         override fun intercept(chain: Chain): Any? {
+            if (suppressActive) return chain.proceed()
             val controller = chain.thisObject
             if (controller != null) captureTargetView(controller)
             val requestedX = (chain.args.getOrNull(1) as? Number)?.toInt()
@@ -307,6 +334,34 @@ internal object AodPositionHook {
             state.lastStockTranslationX = requestedX
             state.lastStockTranslationY = requestedY
             lastControllerRef = WeakReference(controller)
+            // Hold mode: the module manages the stock widget bundle while
+            // lyrics render. Xiaomi's burn-in steps request new positions;
+            // the hold freezes the bundle at the position captured when the
+            // hold activated, so the reserved stock band and the lyric band
+            // above it stay put for the whole episode.
+            if (holdStockPosition) {
+                val heldX = state.heldTranslationX ?: requestedX.also {
+                    state.heldTranslationX = it
+                }
+                val heldY = state.heldTranslationY ?: requestedY.also {
+                    state.heldTranslationY = it
+                }
+                val top = (heldY + geometry.viewTop).toInt()
+                return@synchronized PositionResolution(
+                    AodClockPlacementDecision(
+                        requestedTranslationX = requestedX,
+                        requestedTranslationY = requestedY,
+                        appliedTranslationX = heldX,
+                        appliedTranslationY = heldY,
+                        clockTop = top,
+                        clockBottom = top + geometry.viewHeight,
+                        lyricTopSafe = top.coerceAtLeast(0),
+                        zone = AodSceneZone.STOCK,
+                        zoneChanged = false,
+                        overridden = true
+                    )
+                )
+            }
             if (AodSurfaceController.isStockWidgetControlActive()) {
                 val current = state.currentManagedDecision
                 if (current != null) {
@@ -425,6 +480,7 @@ internal object AodPositionHook {
     private const val LINKAGE_MODE = 3
     private const val MIN_VISIBLE_ALPHA = 0.02f
     private const val TAG = "AodPositionHook"
+    private const val FEATURE_ID = "aod-position"
 }
 
 internal fun shouldRollbackFailedManagedAdvance(

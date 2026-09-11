@@ -10,9 +10,17 @@ import com.eza.hyperglow.root.projection.LyricKeepAliveSignal
 import com.eza.hyperglow.root.projection.LyricSnapshot
 import com.eza.hyperglow.root.projection.LyricSurfaceKind
 import com.eza.hyperglow.root.projection.SystemUiLyricSubscriber
+import com.eza.hyperglow.customization.CompiledCustomization
 
 internal object AodPowerCoordinator : SystemUiLyricSubscriber {
     override val surfaceKind = LyricSurfaceKind.AOD
+
+    override fun onCustomization(configuration: CompiledCustomization) {
+        AodBrightnessController.setBrightnessOverride(
+            enabled = configuration.aodBrightnessOverride,
+            level = configuration.aodBrightnessLevel
+        )
+    }
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var surfaceAttached = false
@@ -168,6 +176,7 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
         hideRaceRecoveryPending = false
         lastWakeSignal = Long.MIN_VALUE
         lastDetachedRetrySignal = Long.MIN_VALUE
+        AodBrightnessController.setBrightnessOverride(false, DEFAULT_READABLE_BRIGHTNESS)
         updateLifetimeGuard()
     }
 
@@ -224,6 +233,7 @@ internal object AodPowerCoordinator : SystemUiLyricSubscriber {
     }
 
     private const val TAG = "AodPowerCoordinator"
+    private const val DEFAULT_READABLE_BRIGHTNESS = 255
 }
 
 /**

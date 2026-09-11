@@ -3,8 +3,15 @@ package com.eza.hyperglow.root.aod
 import com.eza.hyperglow.customization.CompiledSurfaceProfile
 import com.eza.hyperglow.root.projection.LyricSnapshot
 
+/**
+ * Snapshot-to-canvas mapping shared by both surfaces. The lockscreen card is
+ * too cramped for concurrent sections, so it always maps solo: the overlap
+ * stays an AOD-only presentation and lockscreen transitions, identity, and
+ * collision geometry keep their single-line behavior.
+ */
 internal fun LyricSnapshot.toAodCanvasContent(
-    profile: CompiledSurfaceProfile? = null
+    profile: CompiledSurfaceProfile? = null,
+    includeSecondLine: Boolean = true
 ): AodCanvasContent = AodCanvasContent(
     trackGeneration = trackGeneration,
     metadata = metadata,
@@ -58,6 +65,37 @@ internal fun LyricSnapshot.toAodCanvasContent(
     transitionMode = transitionMode,
     fontFamily = profile?.fontFamily ?: fontFamily,
     alignmentMode = profile?.alignment ?: alignmentMode,
+    secondLine = if (!includeSecondLine) {
+        null
+    } else secondLine?.let { second ->
+        AodCanvasSecondLine(
+            text = second.text,
+            romanized = second.romanized,
+            translated = second.translated,
+            alignedRight = second.alignedRight,
+            lineStartMs = second.lineStartMs,
+            lineEndMs = second.lineEndMs,
+            words = second.words.map {
+                AodCanvasWord(
+                    it.text,
+                    it.romanized,
+                    it.startMs,
+                    it.endMs,
+                    it.boundaryAfter,
+                    it.sourceStart,
+                    it.sourceEnd
+                )
+            },
+            ruby = if (profile?.rubyVisible == false) {
+                emptyList()
+            } else {
+                second.ruby.map { AodCanvasRuby(it.start, it.end, it.reading) }
+            },
+            layoutGroups = second.layoutGroups.map {
+                AodCanvasLayoutGroup(it.start, it.end, it.kind, it.keepTogether, it.confidence)
+            }
+        )
+    },
     metadataVisible = profile?.metadataVisible ?: metadataVisible,
     metadataAnchor = if ((profile?.metadataAnchor ?: metadataAnchor) == "bottom") "bottom" else "top",
     metadataSizePercent = profile?.metadataSizePercent ?: 100,

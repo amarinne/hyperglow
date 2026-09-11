@@ -398,6 +398,7 @@ object AodProjectionEngine {
         logAodEnabledEdge(aodEnabled, profilePresent = aodProfile != null, prefs.aodEnabled)
         val lockscreenEnabled = compiled?.profiles?.get(SceneCompiler.SURFACE_LOCKSCREEN)?.enabled
             ?: prefs.lockscreenEnabled
+        val duetEnabled = aodProfile?.duetEnabled ?: prefs.duetEnabled
         val projectedState = projectToDisplay(
             state = state,
             document = document,
@@ -408,7 +409,8 @@ object AodProjectionEngine {
                 prefs = prefs,
                 aodEnabled = aodEnabled,
                 lockscreenEnabled = lockscreenEnabled,
-                metadataVisible = aodProfile?.metadataVisible ?: (prefs.metadataVisible != "hide")
+                metadataVisible = aodProfile?.metadataVisible ?: (prefs.metadataVisible != "hide"),
+                duetEnabled = duetEnabled
             ),
             metadataIntroPolicy = metadataIntroPolicy,
             powerSessionPolicy = powerSessionPolicy
@@ -588,7 +590,12 @@ object AodProjectionEngine {
         type.equals("Line", ignoreCase = true) || type.equals("Syllable", ignoreCase = true)
 
     internal fun hasActualLyricTiming(document: SpicyBridgeDocument): Boolean =
-        isTimedDocumentType(document.type) && document.rows.any { it.endMs > it.startMs }
+        // Instrumental dot rows carry timing windows too, but are not sung lyrics. Counting an
+        // interlude-only document as timed kept the AOD in its interlude scene and held keepalive
+        // for songs whose provider returned no vocal rows.
+        isTimedDocumentType(document.type) && document.rows.any {
+            it.role != ROW_ROLE_INTERLUDE && it.endMs > it.startMs
+        }
 
     internal fun shouldKeepAodAlive(
         playing: Boolean,

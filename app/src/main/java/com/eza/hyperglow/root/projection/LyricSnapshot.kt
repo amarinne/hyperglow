@@ -42,6 +42,18 @@ internal data class LyricSnapshot(
     val positionFollowingEnabled: Boolean = false,
     val burnInPattern: String = "static_bottom",
     val burnInIntervalMs: Long = 60_000L,
+    val suppressStockAodContent: Boolean = false,
+    val aodRotateWithDevice: Boolean = false,
+    val aodRotationMode: String = "portrait",
+    val aodCanvasAnchor: Float = 0.5f,
+    val aodRotationSettleMs: Long = 1_000L,
+    val aodCanvasAnchorLandscape: Float = 0.5f,
+    val aodLandscapeTextScale: Float = 1f,
+    val aodCanvasPaddingPortraitXPercent: Float = 2f,
+    val aodCanvasPaddingPortraitYPercent: Float = 2f,
+    val aodCanvasPaddingLandscapeXPercent: Float = 2f,
+    val aodCanvasPaddingLandscapeYPercent: Float = 2f,
+    val secondLine: LyricSecondLine? = null,
     val wakeSignal: Long = 0L,
     val original: String = "",
     val romanized: String = "",
@@ -91,6 +103,7 @@ internal data class LyricSnapshot(
         words,
         ruby,
         layoutGroups,
+        secondLine,
         weight,
         textSizeMode,
         textSizeCustom,
@@ -109,6 +122,18 @@ internal data class LyricSnapshot(
     )
 }
 
+internal data class LyricSecondLine(
+    val text: String = "",
+    val romanized: String = "",
+    val translated: String = "",
+    val alignedRight: Boolean = false,
+    val lineStartMs: Long = 0L,
+    val lineEndMs: Long = 0L,
+    val words: List<LyricWord> = emptyList(),
+    val ruby: List<LyricRuby> = emptyList(),
+    val layoutGroups: List<LyricLayoutGroup> = emptyList()
+)
+
 internal data class LyricRenderContent(
     val trackGeneration: Long,
     val original: String,
@@ -126,6 +151,7 @@ internal data class LyricRenderContent(
     val words: List<LyricWord>,
     val ruby: List<LyricRuby>,
     val layoutGroups: List<LyricLayoutGroup>,
+    val secondLine: LyricSecondLine? = null,
     val weight: String,
     val textSizeMode: String,
     val textSizeCustom: Int,
@@ -359,6 +385,42 @@ internal fun AodStateWireMessage.toLyricProjectionMessage(): LyricProjectionMess
             positionFollowingEnabled = value.positionFollowingEnabled,
             burnInPattern = value.burnInPattern,
             burnInIntervalMs = value.burnInIntervalMs,
+            suppressStockAodContent = value.suppressStockAodContent,
+            aodRotateWithDevice = value.aodRotateWithDevice,
+            aodRotationMode = value.aodRotationMode,
+            aodCanvasAnchor = value.aodCanvasAnchor,
+            aodRotationSettleMs = value.aodRotationSettleMs,
+            aodCanvasAnchorLandscape = value.aodCanvasAnchorLandscape,
+            aodLandscapeTextScale = value.aodLandscapeTextScale,
+            aodCanvasPaddingPortraitXPercent = value.aodCanvasPaddingPortraitXPercent,
+            aodCanvasPaddingPortraitYPercent = value.aodCanvasPaddingPortraitYPercent,
+            aodCanvasPaddingLandscapeXPercent = value.aodCanvasPaddingLandscapeXPercent,
+            aodCanvasPaddingLandscapeYPercent = value.aodCanvasPaddingLandscapeYPercent,
+            secondLine = value.secondLine?.let { second ->
+                LyricSecondLine(
+                    text = second.text,
+                    romanized = second.romanized,
+                    translated = second.translated,
+                    alignedRight = second.alignedRight,
+                    lineStartMs = second.lineStartMs,
+                    lineEndMs = second.lineEndMs,
+                    words = second.words.map { word ->
+                        LyricWord(
+                            word.text, word.romanized, word.startMs, word.endMs,
+                            word.boundaryAfter, word.sourceStart, word.sourceEnd
+                        )
+                    },
+                    ruby = second.ruby.map { item ->
+                        LyricRuby(item.start, item.end, item.reading)
+                    },
+                    layoutGroups = second.layoutGroups.map { group ->
+                        LyricLayoutGroup(
+                            group.start, group.end, group.kind, group.keepTogether,
+                            group.confidence
+                        )
+                    }
+                )
+            },
             wakeSignal = wakeSignal,
             original = value.original,
             romanized = value.romanized,

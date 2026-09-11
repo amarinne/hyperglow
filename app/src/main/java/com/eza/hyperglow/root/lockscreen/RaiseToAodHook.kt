@@ -2,6 +2,7 @@ package com.eza.hyperglow.root.lockscreen
 
 import com.eza.hyperglow.root.aod.AodWakeBroker
 import com.eza.hyperglow.root.HookLogger
+import com.eza.hyperglow.root.HookRegistry
 import com.eza.hyperglow.root.capability.XiaomiCapability
 import com.eza.hyperglow.root.capability.XiaomiCapabilityResolver
 import io.github.libxposed.api.XposedInterface.Chain
@@ -35,8 +36,7 @@ internal object RaiseToAodHook {
             Long::class.javaPrimitiveType,
             String::class.java
         ).apply { isAccessible = true }
-        module.deoptimize(wakeUp)
-        module.hook(wakeUp).intercept(WakeUpHooker)
+        HookRegistry.hook(module, FEATURE_ID, wakeUp, WakeUpHooker)
         installed = true
         HookLogger.i(TAG, "Pickup wake remap hook installed")
     }
@@ -47,14 +47,20 @@ internal object RaiseToAodHook {
             if (!RaiseToAodController.shouldSuppress(details)) return chain.proceed()
             if (AodWakeBroker.requestPickupWake()) {
                 HookLogger.i(TAG, "Requested pickup AOD and suppressed full wake")
+                return null
             } else {
-                HookLogger.i(TAG, "Pickup AOD unavailable; full wake remains suppressed")
+                // If the wake broker cannot dispatch (for example while Xiaomi's AOD master
+                // switch is disabled or the host has already been torn down), preserve the
+                // platform pickup wake. Suppressing it without a successful AOD request leaves
+                // the user with no visible wake at all.
+                HookLogger.i(TAG, "Pickup AOD unavailable; allowing full wake")
+                return chain.proceed()
             }
-            return null
         }
     }
 
     private const val POWER_MANAGER = "android.os.PowerManager"
+    private const val FEATURE_ID = "raise-to-aod"
     private const val TAG = "RaiseToAodHook"
 }
 
