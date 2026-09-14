@@ -5,6 +5,8 @@ import com.eza.hyperglow.root.HookLogger
 import com.eza.hyperglow.root.HookRegistry
 import com.eza.hyperglow.root.capability.XiaomiCapability
 import com.eza.hyperglow.root.capability.XiaomiCapabilityResolver
+import com.eza.hyperglow.root.symbols.SymbolRequest
+import com.eza.hyperglow.root.symbols.SymbolResolver
 import io.github.libxposed.api.XposedInterface.Chain
 import io.github.libxposed.api.XposedInterface.Hooker
 import io.github.libxposed.api.XposedModule
@@ -30,12 +32,11 @@ internal object RaiseToAodHook {
     @Synchronized
     fun install(module: XposedModule, classLoader: ClassLoader) {
         if (installed) return
-        val powerManager = classLoader.loadClass(POWER_MANAGER)
-        val wakeUp = powerManager.getDeclaredMethod(
-            "wakeUp",
-            Long::class.javaPrimitiveType,
-            String::class.java
-        ).apply { isAccessible = true }
+        val wakeUp = SymbolResolver.resolveMethod(
+            classLoader,
+            FEATURE_ID,
+            SymbolRequest.method(POWER_MANAGER, "wakeUp", "long", "java.lang.String")
+        ) ?: return
         HookRegistry.hook(module, FEATURE_ID, wakeUp, WakeUpHooker)
         installed = true
         HookLogger.i(TAG, "Pickup wake remap hook installed")

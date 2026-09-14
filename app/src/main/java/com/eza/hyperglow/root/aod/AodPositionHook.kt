@@ -7,6 +7,8 @@ import android.view.View
 import android.view.ViewGroup
 import com.eza.hyperglow.root.HookLogger
 import com.eza.hyperglow.root.HookRegistry
+import com.eza.hyperglow.root.symbols.SymbolRequest
+import com.eza.hyperglow.root.symbols.SymbolResolver
 import com.eza.hyperglow.root.hierarchyField
 import com.eza.hyperglow.root.readHierarchyField
 import io.github.libxposed.api.XposedInterface.Chain
@@ -81,15 +83,16 @@ internal object AodPositionHook {
     }
 
     fun install(module: XposedModule, classLoader: ClassLoader) {
-        val controller = runCatching { classLoader.loadClass(CONTROLLER_CLASS) }.getOrNull() ?: return
-        val update = controller.getDeclaredMethod(
-            "updateTranslation",
-            Boolean::class.javaPrimitiveType,
-            Int::class.javaPrimitiveType,
-            Float::class.javaPrimitiveType
-        ).apply { isAccessible = true }
-        val updatePosition = classLoader.loadClass(DOZE_HOST_CLASS)
-            .getDeclaredMethod("updatePosition").apply { isAccessible = true }
+        val update = SymbolResolver.resolveMethod(
+            classLoader,
+            FEATURE_ID,
+            SymbolRequest.method(CONTROLLER_CLASS, "updateTranslation", "boolean", "int", "float")
+        ) ?: return
+        val updatePosition = SymbolResolver.resolveMethod(
+            classLoader,
+            FEATURE_ID,
+            SymbolRequest.method(DOZE_HOST_CLASS, "updatePosition")
+        ) ?: return
         if (!hookedClassLoaders.add(classLoader)) return
         HookRegistry.hook(module, FEATURE_ID, update, PositionHooker)
         HookRegistry.hook(module, FEATURE_ID, updatePosition, PositionCompletionHooker)

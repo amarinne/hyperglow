@@ -4,6 +4,8 @@ import android.os.Handler
 import android.os.Looper
 import com.eza.hyperglow.root.HookLogger
 import com.eza.hyperglow.root.HookRegistry
+import com.eza.hyperglow.root.symbols.SymbolRequest
+import com.eza.hyperglow.root.symbols.SymbolResolver
 import com.eza.hyperglow.root.readHierarchyField
 import io.github.libxposed.api.XposedInterface.Chain
 import io.github.libxposed.api.XposedInterface.Hooker
@@ -20,16 +22,18 @@ object AodLifetimeHook {
     )
 
     fun install(module: XposedModule, classLoader: ClassLoader) {
-        val controllerClass = runCatching { classLoader.loadClass(CONTROLLER_CLASS) }.getOrNull()
-            ?: return
+        val controllerClass = SymbolResolver.resolveClass(
+            classLoader, FEATURE_ID, CONTROLLER_CLASS
+        ) ?: return
         if (!hookedClassLoaders.add(classLoader)) return
         for (constructor in controllerClass.declaredConstructors) {
             constructor.isAccessible = true
             HookRegistry.hook(module, FEATURE_ID, constructor, ControllerConstructorHooker)
         }
         for (methodName in POLICY_HIDE_METHODS) {
-            val method = controllerClass.getDeclaredMethod(methodName)
-            method.isAccessible = true
+            val method = SymbolResolver.resolveMethod(
+                classLoader, FEATURE_ID, SymbolRequest.method(CONTROLLER_CLASS, methodName)
+            ) ?: continue
             HookRegistry.hook(module, FEATURE_ID, method, PolicyHideHooker(method))
         }
         installVisibilityTelemetry(module, classLoader)
@@ -41,8 +45,9 @@ object AodLifetimeHook {
     }
 
     private fun installVisibilityTelemetry(module: XposedModule, classLoader: ClassLoader) {
-        val hostClass = runCatching { classLoader.loadClass("com.miui.aod.DozeHost") }.getOrNull()
-            ?: return
+        val hostClass = SymbolResolver.resolveClass(
+            classLoader, FEATURE_ID, "com.miui.aod.DozeHost"
+        ) ?: return
         val methods = hostClass.declaredMethods.filter { it.name == "setAodVisibility" }
         methods.forEach { method ->
             runCatching {

@@ -6,6 +6,8 @@ import android.os.PowerManager
 import android.os.SystemClock
 import com.eza.hyperglow.root.HookLogger
 import com.eza.hyperglow.root.HookRegistry
+import com.eza.hyperglow.root.symbols.SymbolRequest
+import com.eza.hyperglow.root.symbols.SymbolResolver
 import com.eza.hyperglow.root.hierarchyField
 import com.eza.hyperglow.root.capability.XiaomiCapability
 import com.eza.hyperglow.root.capability.XiaomiCapabilityResolver
@@ -31,15 +33,16 @@ internal object AodWakeBroker {
     private var unavailableLogged = false
 
     fun install(module: XposedModule, classLoader: ClassLoader) {
-        val triggersClass = runCatching { classLoader.loadClass(DOZE_TRIGGERS_CLASS) }.getOrNull()
-            ?: return
+        val triggersClass = SymbolResolver.resolveClass(
+            classLoader, FEATURE_ID, DOZE_TRIGGERS_CLASS
+        ) ?: return
         val hostField = hierarchyField(triggersClass, "mHost") ?: return
         val contextField = hierarchyField(triggersClass, "mContext") ?: return
-        val fireAodState = classLoader.loadClass(DOZE_HOST_CLASS).getDeclaredMethod(
-            "fireAodState",
-            Boolean::class.javaPrimitiveType,
-            String::class.java
-        ).apply { isAccessible = true }
+        val fireAodState = SymbolResolver.resolveMethod(
+            classLoader,
+            FEATURE_ID,
+            SymbolRequest.method(DOZE_HOST_CLASS, "fireAodState", "boolean", "java.lang.String")
+        ) ?: return
         if (!hookedClassLoaders.add(classLoader)) return
         for (constructor in triggersClass.declaredConstructors) {
             constructor.isAccessible = true

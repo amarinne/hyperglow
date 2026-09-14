@@ -6,6 +6,8 @@ import com.eza.hyperglow.customization.MAX_AOD_BRIGHTNESS
 import com.eza.hyperglow.customization.MIN_AOD_BRIGHTNESS
 import com.eza.hyperglow.root.HookLogger
 import com.eza.hyperglow.root.HookRegistry
+import com.eza.hyperglow.root.symbols.SymbolRequest
+import com.eza.hyperglow.root.symbols.SymbolResolver
 import io.github.libxposed.api.XposedInterface.Chain
 import io.github.libxposed.api.XposedInterface.Hooker
 import io.github.libxposed.api.XposedModule
@@ -21,21 +23,19 @@ object AodBrightnessHook {
     )
 
     fun install(module: XposedModule, classLoader: ClassLoader) {
-        val adapterClass = runCatching { classLoader.loadClass(ADAPTER_CLASS) }.getOrNull()
-            ?: return
-        val controllerClass = runCatching { classLoader.loadClass(CONTROLLER_CLASS) }.getOrNull()
-            ?: return
-        val stateClass = runCatching { classLoader.loadClass(STATE_CLASS) }.getOrNull()
-            ?: return
-        val adapterMethod = adapterClass.getDeclaredMethod(
-            SET_BRIGHTNESS_METHOD,
-            Int::class.javaPrimitiveType
-        ).apply { isAccessible = true }
-        val transitionMethod = controllerClass.getDeclaredMethod(
-            TRANSITION_METHOD,
-            stateClass,
-            stateClass
-        ).apply { isAccessible = true }
+        val adapterMethod = SymbolResolver.resolveMethod(
+            classLoader,
+            FEATURE_ID,
+            SymbolRequest.method(ADAPTER_CLASS, SET_BRIGHTNESS_METHOD, "int")
+        ) ?: return
+        val adapterClass = SymbolResolver.resolveClass(
+            classLoader, FEATURE_ID, ADAPTER_CLASS
+        ) ?: return
+        val transitionMethod = SymbolResolver.resolveMethod(
+            classLoader,
+            FEATURE_ID,
+            SymbolRequest.method(CONTROLLER_CLASS, TRANSITION_METHOD, STATE_CLASS, STATE_CLASS)
+        ) ?: return
         val readableBrightness = resolveBrightnessOn(classLoader)
         if (!hookedClassLoaders.add(classLoader)) return
 
@@ -55,12 +55,12 @@ object AodBrightnessHook {
     }
 
     private fun resolveBrightnessOn(classLoader: ClassLoader): Int {
-        val value = runCatching {
-            classLoader.loadClass(COMMON_UTILS_CLASS)
-                .getDeclaredField(BRIGHTNESS_ON_FIELD)
-                .apply { isAccessible = true }
-                .get(null)
-        }.getOrNull()
+        val field = SymbolResolver.resolveField(
+            classLoader,
+            FEATURE_ID,
+            SymbolRequest.field(COMMON_UTILS_CLASS, BRIGHTNESS_ON_FIELD, "int")
+        )
+        val value = runCatching { field?.get(null) }.getOrNull()
         if (value is Int && value > 0) return value
         HookLogger.w(
             TAG,

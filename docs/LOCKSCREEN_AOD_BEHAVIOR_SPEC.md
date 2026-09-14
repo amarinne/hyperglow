@@ -34,8 +34,9 @@ contract. This spec defines surface visibility, privacy, continuity, customizati
   visible until its own end instead of being cut off when the next line starts. Sections form one
   connected stack in positional slots: a continuing line keeps its slot and never moves between
   sections, a newcomer inherits the vacated slot instead of appending, and a full swap keeps
-  current order. A lone line that never joined a chain centers as before; a chain survivor holds
-  its position instead of recentering, and the block fades out as a unit when the chain ends. Slot
+  current order. A lone line that never joined a chain centers as before; while an overlap is
+  active, a chain survivor holds its slot, then returns to the configured lone-line vertical
+  anchor when the overlap ends, and the block fades out as a unit when the chain ends. Slot
   anchors reset on track, metadata, or frame changes. The anchored block is clamped into the
   lyric area as a whole, so a tall newcomer lands in the freed slot instead of running
   off-screen; the survivor moves only when clipping is otherwise unavoidable. An overlap with
@@ -208,6 +209,8 @@ This guarantee is enforced by both compilation and SystemUI validation.
 - `Canvas position` is a free 0–100% vertical anchor for the full-screen canvas, applied as a
   bounded internal layout shift with no layout loop. It positions a lone lyric block; pinned duet
   sections ignore it. It has no effect outside suppression.
+- Canvas padding bounds the drawable frame on every side. Text wrapping, section fitting, scaling,
+  and vertical anchoring use the inset width and height; padding is not a post-layout crop.
 - Landscape carries its own anchor and text size (50–200%). Canvas padding is per orientation
   and per axis in percent of the logical frame (0–20%, 1% slider steps): each of portrait and
   landscape has its own horizontal/vertical pair, so landscape can carry extra padding to clear
@@ -496,6 +499,10 @@ compare a build's SystemUI/AOD version pair against a reference device: a survey
 builds, four phone models, and a tablet found the pair predicted nothing the probes do not establish
 directly, and could not separate a tablet shipping no AOD implementation from a phone, because both
 report the same SystemUI version. Every build attempts its hooks and is described by what resolved.
+
+Hook lookup first uses bundled reflection, then attempts DexKit against the loader's local APKs.
+The fallback requires the same exact symbol contract and rejects ambiguous matches. It does not
+guarantee support for renamed symbols. Native loading failure leaves bundled capabilities available.
 
 Fail-closed is per symbol: an unresolved seam removes its own capability and leaves the rest, and a
 build with no usable surface symbols is unsupported and runs nothing. A tablet that resolves the

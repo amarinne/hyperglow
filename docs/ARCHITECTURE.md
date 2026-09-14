@@ -211,6 +211,19 @@ visible lyric row, mirrored for RTL lyrics. Word/syllable timing remains unchang
   measurement. Geometry reads and the dedicated verified translation hook are the only stock-clock
   interactions.
 
+## Hook symbol resolution
+
+SystemUI tries bundled reflection first, then a local DexKit query when a symbol lookup fails.
+Both paths enforce the same owner name, member name, and parameter or field-type contract.
+Framework-owned symbols remain reflection-only. DexKit reads the owning loader's APK/JAR paths;
+it does not download symbols or infer renamed methods. An absent or ambiguous symbol disables
+only its dependent hook. Unverified builds attempt the same resolution policy.
+
+Resolved members and permanent misses are cached per loader without retaining retired loaders.
+Native loading waits for application context when APK extraction is needed, with three bounded
+extraction attempts. Missing native access leaves the bundled hooks usable. Bridges are deduplicated
+by APK path and closed during module retirement. Resolution runs during installation, not drawing.
+
 ## User-triggered diagnostic reporting
 
 The app process owns a dedicated Compose diagnostic destination, bounded metadata collection,

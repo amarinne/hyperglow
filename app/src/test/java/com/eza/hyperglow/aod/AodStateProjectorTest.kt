@@ -182,7 +182,7 @@ class AodStateProjectorTest {
         // The producer sends the opening instrumental as its own INTERLUDE row. Reading that as a
         // sung line made the intro look like a song that opens on vocals, which suppressed the
         // song-change metadata for the whole gap it was meant to occupy.
-        assertEquals("title \u00b7 artist", projected.original)
+        assertEquals("title\nartist", projected.original)
     }
 
     @Test

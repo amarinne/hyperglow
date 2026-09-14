@@ -17,6 +17,8 @@ import com.eza.hyperglow.root.lockscreen.LockscreenSurfaceHook
 import com.eza.hyperglow.root.lockscreen.LockscreenEditorGestureHook
 import com.eza.hyperglow.root.lockscreen.RaiseToAodHook
 import com.eza.hyperglow.root.projection.SystemUiLyricProjectionRuntime
+import com.eza.hyperglow.root.symbols.SymbolResolver
+import com.eza.hyperglow.root.symbols.SymbolSourceLog
 import com.eza.hyperglow.root.transition.LinkageTransitionHook
 import com.eza.hyperglow.root.transition.SystemUiClockMorphHook
 import io.github.libxposed.api.XposedInterface.Chain
@@ -49,12 +51,14 @@ class HookEntry : XposedModule() {
             return
         }
 
+        SymbolResolver.install(this)
         XiaomiCapabilityResolver.observeDefaultLoader(param.defaultClassLoader)
         XiaomiCapabilityResolver.observeAodLoader(param.defaultClassLoader)
         reportDefaultLoaderProbes()
         installDefaultLoaderHooks(this, param.defaultClassLoader)
         installAodHooks(this, param.defaultClassLoader)
         installClassLoaderHook(this)
+        HookLogger.bootstrap(TAG, "symbol_resolution ${SymbolResolver.statsLine()} ${SymbolSourceLog.summary()}")
     }
 
     /**
@@ -70,7 +74,10 @@ class HookEntry : XposedModule() {
         AodLifetimeController.cancelPendingForReload()
         AodBrightnessController.cancelPendingForReload()
         AodOrientationMonitor.stop()
+        // The previous generation's hooks own these cached members; drop them so a retired
+        // loader cannot survive through captured Method/Field references.
         val retired = HookRegistry.retireGeneration()
+        SymbolResolver.clearCaches()
         param.setSavedInstanceState(BuildConfig.VERSION_CODE)
         HookLogger.bootstrap(
             TAG,
@@ -99,6 +106,8 @@ class HookEntry : XposedModule() {
             return
         }
         val classLoader = application.classLoader
+        SymbolResolver.install(this)
+        SymbolResolver.observeContext(application)
         XiaomiCapabilityResolver.observeDefaultLoader(classLoader)
         XiaomiCapabilityResolver.observeAodLoader(classLoader)
         reportDefaultLoaderProbes()
@@ -109,7 +118,8 @@ class HookEntry : XposedModule() {
         HookLogger.bootstrap(
             TAG,
             "hot_reloaded unhooked=$unhooked active=${HookRegistry.activeCount()} " +
-                "savedVersion=$savedVersion"
+                "savedVersion=$savedVersion symbol_resolution ${SymbolResolver.statsLine()} " +
+                SymbolSourceLog.summary()
         )
     }
 

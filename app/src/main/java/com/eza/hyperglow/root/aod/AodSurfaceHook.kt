@@ -4,6 +4,8 @@ import android.view.View
 import android.view.ViewGroup
 import com.eza.hyperglow.root.HookLogger
 import com.eza.hyperglow.root.HookRegistry
+import com.eza.hyperglow.root.symbols.SymbolRequest
+import com.eza.hyperglow.root.symbols.SymbolResolver
 import io.github.libxposed.api.XposedInterface.Chain
 import io.github.libxposed.api.XposedInterface.Hooker
 import io.github.libxposed.api.XposedModule
@@ -34,10 +36,16 @@ object AodSurfaceHook {
                 HookLogger.w(TAG, "Stock visibility enforcement unavailable", error)
             }
         }
-        val aodViewClass = runCatching { classLoader.loadClass(AOD_VIEW_CLASS) }.getOrNull() ?: return
+        val aodViewClass = SymbolResolver.resolveClass(
+            classLoader, FEATURE_ID, AOD_VIEW_CLASS
+        ) ?: return
         if (!hookedClassLoaders.add(classLoader)) return
-        val attached = aodViewClass.getDeclaredMethod("onAttachedToWindow")
-        val detached = aodViewClass.getDeclaredMethod("onDetachedFromWindow")
+        val attached = SymbolResolver.resolveMethod(
+            classLoader, FEATURE_ID, SymbolRequest.method(AOD_VIEW_CLASS, "onAttachedToWindow")
+        ) ?: return
+        val detached = SymbolResolver.resolveMethod(
+            classLoader, FEATURE_ID, SymbolRequest.method(AOD_VIEW_CLASS, "onDetachedFromWindow")
+        ) ?: return
         HookRegistry.hook(module, FEATURE_ID, attached, AttachedHooker())
         HookRegistry.hook(module, FEATURE_ID, detached, DetachedHooker())
         HookLogger.i(TAG, "Direct AOD hooks installed")

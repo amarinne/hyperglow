@@ -3,6 +3,8 @@ package com.eza.hyperglow.root.transition
 import android.os.SystemClock
 import com.eza.hyperglow.root.HookLogger
 import com.eza.hyperglow.root.HookRegistry
+import com.eza.hyperglow.root.symbols.SymbolRequest
+import com.eza.hyperglow.root.symbols.SymbolResolver
 import io.github.libxposed.api.XposedInterface.Chain
 import io.github.libxposed.api.XposedInterface.Hooker
 import io.github.libxposed.api.XposedModule
@@ -17,18 +19,18 @@ internal object LinkageTransitionHook {
 
     fun install(module: XposedModule, classLoader: ClassLoader) {
         if (!hookedClassLoaders.add(classLoader)) return
-        val controller = runCatching { classLoader.loadClass(CONTROLLER_CLASS) }.getOrNull()
-        val primary = controller?.let { owner ->
-            runCatching {
-                owner.getDeclaredMethod(
-                    "linkageViewAnim\$default",
-                    owner,
-                    Boolean::class.javaPrimitiveType,
-                    String::class.java,
-                    Int::class.javaPrimitiveType
-                )
-            }.getOrNull()
-        }
+        val primary = SymbolResolver.resolveMethod(
+            classLoader,
+            FEATURE_ID,
+            SymbolRequest.method(
+                CONTROLLER_CLASS,
+                "linkageViewAnim\$default",
+                CONTROLLER_CLASS,
+                "boolean",
+                "java.lang.String",
+                "int"
+            )
+        )
         if (primary != null) {
             runCatching {
                 HookRegistry.hook(module, FEATURE_ID, primary, PrimaryHooker)
@@ -38,23 +40,23 @@ internal object LinkageTransitionHook {
                 HookLogger.w(TAG, "Primary linkage direction hook failed", it)
             }
         }
-        val animationHelper = runCatching { classLoader.loadClass(ANIMATION_HELPER_CLASS) }.getOrNull()
-            ?: return
-        runCatching {
-            animationHelper.getDeclaredMethod(
+        val fallback = SymbolResolver.resolveMethod(
+            classLoader,
+            FEATURE_ID,
+            SymbolRequest.method(
+                ANIMATION_HELPER_CLASS,
                 "doAnimationToAod",
-                Boolean::class.javaPrimitiveType,
-                Boolean::class.javaPrimitiveType,
-                Boolean::class.javaPrimitiveType
+                "boolean",
+                "boolean",
+                "boolean"
             )
-        }.onSuccess { fallback ->
-            runCatching {
-                HookRegistry.hook(module, FEATURE_ID, fallback, FallbackHooker)
-            }.onSuccess {
-                HookLogger.i(TAG, "Fallback linkage direction hook installed")
-            }.onFailure {
-                HookLogger.w(TAG, "Fallback linkage direction hook failed", it)
-            }
+        ) ?: return
+        runCatching {
+            HookRegistry.hook(module, FEATURE_ID, fallback, FallbackHooker)
+        }.onSuccess {
+            HookLogger.i(TAG, "Fallback linkage direction hook installed")
+        }.onFailure {
+            HookLogger.w(TAG, "Fallback linkage direction hook failed", it)
         }
     }
 

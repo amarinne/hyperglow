@@ -3,6 +3,8 @@ package com.eza.hyperglow.root.capability
 import android.content.Context
 import android.os.Build
 import com.eza.hyperglow.root.HookLogger
+import com.eza.hyperglow.root.symbols.SymbolRequest
+import com.eza.hyperglow.root.symbols.SymbolResolver
 import java.util.EnumSet
 
 internal enum class XiaomiCapability {
@@ -399,8 +401,7 @@ internal object XiaomiCapabilityResolver {
     }.getOrDefault("missing")
 
     private fun hasClass(classLoader: ClassLoader, className: String): Boolean =
-        runCatching { classLoader.loadClass(className) }.isSuccess
-
+        SymbolResolver.resolveClass(classLoader, CAPABILITY_FEATURE, className) != null
     private fun hasNoArgMethod(
         classLoader: ClassLoader,
         className: String,
@@ -419,15 +420,11 @@ internal object XiaomiCapabilityResolver {
         className: String,
         fieldName: String,
         expectedTypeName: String? = null
-    ): Boolean {
-        val field = searchHierarchy(classLoader, className) { owner ->
-            runCatching { owner.getDeclaredField(fieldName) }.getOrNull()
-        } ?: return false
-        if (expectedTypeName == null) return true
-        val expectedType = runCatching { classLoader.loadClass(expectedTypeName) }.getOrNull()
-            ?: return false
-        return expectedType.isAssignableFrom(field.type)
-    }
+    ): Boolean = SymbolResolver.resolveField(
+        classLoader,
+        CAPABILITY_FEATURE,
+        SymbolRequest.field(className, fieldName, expectedTypeName)
+    ) != null
 
     /**
      * Deliberately does NOT walk the superclass chain, unlike [hasField]. These probes gate hook
@@ -442,35 +439,13 @@ internal object XiaomiCapabilityResolver {
         className: String,
         methodName: String,
         vararg parameterTypeNames: String
-    ): Boolean = runCatching {
-        val owner = classLoader.loadClass(className)
-        val parameterTypes = parameterTypeNames.map { typeName ->
-            primitiveClass(typeName) ?: classLoader.loadClass(typeName)
-        }.toTypedArray()
-        owner.getDeclaredMethod(methodName, *parameterTypes)
-    }.isSuccess
+    ): Boolean = SymbolResolver.resolveMethod(
+        classLoader,
+        CAPABILITY_FEATURE,
+        SymbolRequest.method(className, methodName, *parameterTypeNames)
+    ) != null
 
-    private fun <T : Any> searchHierarchy(
-        classLoader: ClassLoader,
-        className: String,
-        select: (Class<*>) -> T?
-    ): T? {
-        var type = runCatching { classLoader.loadClass(className) }.getOrNull()
-        while (type != null) {
-            val current = type
-            select(current)?.let { return it }
-            type = current.superclass
-        }
-        return null
-    }
-
-    private fun primitiveClass(name: String): Class<*>? = when (name) {
-        "boolean" -> Boolean::class.javaPrimitiveType
-        "int" -> Int::class.javaPrimitiveType
-        "float" -> Float::class.javaPrimitiveType
-        "long" -> Long::class.javaPrimitiveType
-        else -> null
-    }
+    private const val CAPABILITY_FEATURE = "capability-probe"
 
     private const val SYSTEM_UI_PACKAGE = "com.android.systemui"
     private const val AOD_PACKAGE = "com.miui.aod"

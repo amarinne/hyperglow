@@ -411,6 +411,32 @@ internal fun lexicalGroupIds(
     }.takeIf { it >= 0 }
 }
 
+/** Attaches common Latin punctuation to its neighboring lexical chunk. */
+internal fun attachAodPunctuationGroups(words: List<AodCanvasWord>, ids: List<Int?>): List<Int?> {
+    if (words.size != ids.size) return ids
+    val result = ids.mapIndexed { index, id -> id ?: -(index + 1) }.toMutableList()
+    val openQuotes = mutableSetOf<Char>()
+    words.forEachIndexed { index, word ->
+        val text = word.text.trim()
+        val neighbor = when {
+            text.isEmpty() -> null
+            text == "\"" || text == "'" -> {
+                if (openQuotes.add(text.single())) index + 1
+                else { openQuotes.remove(text.single()); index - 1 }
+            }
+            text.all { aodPunctuationAttachToPrevious(it.code) } -> index - 1
+            text.all { aodPunctuationAttachToNext(it.code) } -> index + 1
+            else -> null
+        }
+        if (neighbor != null && neighbor in result.indices) {
+            val from = result[index]
+            val to = result[neighbor]
+            for (i in result.indices) if (result[i] == from) result[i] = to
+        }
+    }
+    return result
+}
+
 internal fun coveredLayoutRanges(text: String, groups: List<AodCanvasLayoutGroup>): List<IntRange> {
     val valid = groups.asSequence()
         .filter { it.keepTogether && it.start >= 0 && it.end > it.start && it.end <= text.length }
@@ -502,6 +528,13 @@ internal fun balancedChunkRanges(widths: List<Float>, available: Float, maxLines
     result.reverse()
     return result
 }
+
+/** Writing-system line-break classes used by producers and tests. */
+internal fun aodPunctuationAttachToPrevious(codePoint: Int): Boolean =
+    codePoint.toChar() in ",.;:!?…，。！？：；、)]}」』】》〉》”’"
+
+internal fun aodPunctuationAttachToNext(codePoint: Int): Boolean =
+    codePoint.toChar() in "([{「『【《〈“‘"
 
 internal fun legacyWordLineRanges(
     wordWidths: List<Float>,
@@ -743,19 +776,23 @@ internal fun metadataLayoutBounds(
     logicalPadBottom: Float,
     metadataAscent: Float,
     metadataDescent: Float,
-    gap: Float
+    gap: Float,
+    extraLineHeight: Float = 0f
 ): MetadataLayoutBounds {
     val metadataBaseline = if (anchor == "bottom") {
-        height - logicalPadBottom - metadataDescent
+        height - logicalPadBottom - metadataDescent - extraLineHeight
     } else {
         logicalPadTop - metadataAscent
     }
     return if (anchor == "bottom") {
         MetadataLayoutBounds(metadataBaseline, logicalPadTop, metadataBaseline + metadataAscent - gap)
     } else {
-        MetadataLayoutBounds(metadataBaseline, metadataBaseline + metadataDescent + gap, height - logicalPadBottom)
+        MetadataLayoutBounds(metadataBaseline, metadataBaseline + metadataDescent + extraLineHeight + gap, height - logicalPadBottom)
     }
 }
+
+internal fun metadataLineTexts(text: String): List<String> =
+    text.split('·', '\n').map { it.trim() }.filter { it.isNotEmpty() }
 
 internal fun metadataTextSizeMultiplier(percent: Int): Float =
     percent.coerceIn(50, 200) / 100f
@@ -1612,6 +1649,16 @@ internal class AodLyricCanvasView(
             canvas.save()
         }
         if (translateY != 0f) canvas.translate(0f, translateY)
+        // All lyric draw paths (original, ruby, secondary, timed sweeps, and
+        // scaled duet sections) share this logical clip. This enforces both
+        // horizontal padding edges even when an indivisible word or animated
+        // visual overhang exceeds its measured advance width.
+        canvas.clipRect(
+            logicalPadLeft,
+            logicalPadTop,
+            layoutFrameWidth() - logicalPadRight,
+            layoutFrameHeight() - logicalPadBottom
+        )
         // Each section draws at its own fit scale around its precomputed
         // alignment-aware pivot, so a tall newcomer shrinks itself without
         // moving the survivor's alignment edge. The common all-full-size
@@ -1969,7 +2016,10 @@ internal class AodLyricCanvasView(
             logicalPadBottom,
             metadataPaint.fontMetrics.ascent,
             metadataPaint.fontMetrics.descent,
-            10f * density
+            10f * density,
+            (metadataLineTexts(content.metadata).size - 1).coerceAtLeast(0) *
+                safeSecondaryLineHeight(metadataPaint.fontMetrics.ascent,
+                    metadataPaint.fontMetrics.descent, metadataPaint.fontMetrics.bottom)
         )
         return bounds.lyricStart to bounds.lyricEnd
     }
@@ -1984,7 +2034,7 @@ internal class AodLyricCanvasView(
             content.words.any { it.endMs > it.startMs }
         )
         if (content.metadataVisible && content.metadata.isNotBlank() && !metadataPlaceholder) {
-            metadataRows += row(RowKind.METADATA, content.metadata, metadataPaint, 0f, false)
+            metadataRows += row(RowKind.METADATA, content.metadata, metadataPaint, 0f, true)
                 .copy(blockIndex = -1)
         }
         val primary = MainLineData(content)
@@ -1995,6 +2045,11 @@ internal class AodLyricCanvasView(
         // keeps its exact rows while a newcomer stacks adjacently, an
         // expired line's slot stays logically reserved, and the next arrival
         // takes it. A lone fresh line centers exactly as before.
+        // Keep the previous visual membership before replacing the ordered
+        // ids below. When a duet leaves, the remaining line must be treated
+        // as a fresh solo so the configured vertical bias (50% by default)
+        // is applied again instead of retaining the duet's lower slot.
+        val wasDuet = lastOrderedIds.size > 1
         val primaryId =
             DuetSectionId(content.trackGeneration, content.lineStartMs, content.lineEndMs)
         val ordered: List<Pair<DuetSectionId, MainLineData>>
@@ -2016,6 +2071,11 @@ internal class AodLyricCanvasView(
         }
         lastOrderedIds = ordered.map { it.first }
         val orderedIds = ordered.map { it.first }
+        val duetEnded = shouldRecenterAfterDuet(wasDuet, orderedIds.size)
+        if (duetEnded) {
+            clearSectionAnchors()
+            lastOrderedIds = orderedIds
+        }
         forcedHits.clear()
         sectionPresentation.keys.retainAll(orderedIds.toSet())
         // Anchor continuity: only a new track invalidates line coordinates.
@@ -2041,7 +2101,7 @@ internal class AodLyricCanvasView(
         val episodeHadDuet = episodeDuetGenerations.contains(content.trackGeneration)
         if (second != null) episodeDuetGenerations.add(content.trackGeneration)
         if (episodeDuetGenerations.size > 8) episodeDuetGenerations.clear()
-        val freshSolo = orderedIds.size == 1 && !episodeHadDuet
+        val freshSolo = orderedIds.size == 1 && (!episodeHadDuet || duetEnded)
         val secondaryCap = duetSecondaryLineCap(!freshSolo, isSideStep())
         var primaryVisualIndex = 0
         val built = ordered.mapIndexed { index, (_, data) ->
@@ -2135,7 +2195,7 @@ internal class AodLyricCanvasView(
         // a fresh formation shares one exact scale so the pair keeps
         // matching glyph sizes; only when a newcomer cannot fit the leftover
         // at all does the whole set rescale to the uniform shared fit.
-        fun widthCappedScale(index: Int, base: Float): Float = if (index in unwrappedSections) {
+        fun widthCappedScale(index: Int, base: Float): Float {
             var widest = 0f
             built[index].first.lines.forEach { line ->
                 val (visualLeft, visualRight) = visualExtents(line.text, originalPaint, line.width)
@@ -2147,9 +2207,7 @@ internal class AodLyricCanvasView(
                     widest = maxOf(widest, visualRight - visualLeft)
                 }
             }
-            minOf(base, resolveVisualWidthFitScale(widest, drawAvailableWidth))
-        } else {
-            base
+            return minOf(base, resolveVisualWidthFitScale(widest, drawAvailableWidth))
         }
         fun commitScale(index: Int, base: Float) {
             val scale = widthCappedScale(index, base)
@@ -2159,6 +2217,12 @@ internal class AodLyricCanvasView(
         val continuing = built.indices.filter { index ->
             sectionTops.containsKey(orderedIds[index]) &&
                 sectionScaleCommit.containsKey(orderedIds[index])
+        }
+        continuing.forEach { index ->
+            sectionScales[index] = widthCappedScale(
+                index,
+                sectionScaleCommit.getValue(orderedIds[index])
+            )
         }
         val newcomers = built.indices.filter { index -> index !in continuing }
         val committedDrawn = continuing.sumOf { index ->
@@ -2609,7 +2673,11 @@ internal class AodLyricCanvasView(
     }
 
     private fun row(kind: RowKind, text: String, paint: Paint, gap: Float, allowWrap: Boolean = true): Row {
-        val lines = if (allowWrap) {
+        val lines = if (kind == RowKind.METADATA) {
+            metadataLineTexts(text).map {
+                textLine(it, paint.measureText(it), paint, alignmentFor(kind))
+            }
+        } else if (allowWrap) {
             wrapSecondaryText(text, paint, MAX_SECONDARY_LINES)
         } else {
             listOf(textLine(text, paint.measureText(text), paint, alignmentFor(kind)))
@@ -2657,7 +2725,8 @@ internal class AodLyricCanvasView(
                 logicalPadBottom.toFloat(),
                 metadata.paint.fontMetrics.ascent,
                 metadata.paint.fontMetrics.descent,
-                10f * density
+                10f * density,
+                (metadata.lines.size - 1).coerceAtLeast(0) * metadata.lineHeight
             )
             val metadataBaseline = metadataBounds.metadataBaseline
             positioned += PositionedRow(metadata, metadataBaseline, false)
@@ -3073,9 +3142,9 @@ internal class AodLyricCanvasView(
         if (content.overflowMode == "Wrap") return -1
         val save = canvas.save()
         canvas.clipRect(
-            logicalPadLeft,
+            -Float.MAX_VALUE,
             max(logicalPadTop, rubyClipTop(baseBaseline, originalPaint.fontMetrics.ascent, rubyHeight)),
-            layoutFrameWidth() - logicalPadRight,
+            Float.MAX_VALUE,
             (layoutFrameHeight() - logicalPadBottom)
         )
         return save
@@ -3163,6 +3232,16 @@ internal class AodLyricCanvasView(
         lineId: DuetSectionId?,
         forceSingleLine: Boolean = false
     ): OriginalLayout {
+        // Metadata placeholders keep explicit title/artist rows even in Clip or landscape mode.
+        if (isSongChangeMetadataPlaceholder(content.original, content.metadata,
+                content.lineStartMs, content.lineEndMs, content.words.any { it.endMs > it.startMs })) {
+            val lines = metadataLineTexts(content.metadata).map {
+                originalLine(it, originalPaint.measureText(it), null, null)
+            }
+            val metrics = originalPaint.fontMetrics
+            return OriginalLayout(lines, metrics.descent - metrics.ascent + 2f * density,
+                ORIGINAL_LINE_GAP_DP * density, false)
+        }
         val words = coalesceRubyWords(
             content.original,
             content.words.filter { it.text.isNotBlank() },
@@ -3310,7 +3389,10 @@ internal class AodLyricCanvasView(
                 wordLine(lineWords)
             }
         }
-        val groupIds = lexicalGroupIds(offsets, content.layoutGroups)
+        val groupIds = attachAodPunctuationGroups(
+            words,
+            lexicalGroupIds(offsets, content.layoutGroups)
+        )
         val chunks = ArrayList<List<PlacedWord>>()
         var index = 0
         while (index < placed.size) {
@@ -3323,11 +3405,14 @@ internal class AodLyricCanvasView(
             else chunks += chunk.toList()
             index = end
         }
-        // Packing widths exclude each chunk's trailing separator: rendering
-        // subtracts it, so including it can split a line that actually fits.
+        // Include each chunk's trailing separator while packing so rendered
+        // inter-chunk gaps cannot escape the padded drawable width.
         val chunkWidths = chunks.map { chunk ->
-            chunk.sumOf { (it.width + it.gapAfter).toDouble() }.toFloat() -
-                (chunk.lastOrNull()?.gapAfter ?: 0f)
+            // Keep the separator after each chunk while packing. The final
+            // separator is removed by wordLine(), but retaining it here is
+            // conservative and prevents a rendered inter-chunk gap from
+            // escaping the padded drawable width.
+            chunk.sumOf { (it.width + it.gapAfter).toDouble() }.toFloat()
         }
         val lines = balancedChunkRanges(chunkWidths, available, maxLines).map { range ->
             val lineWords = range.flatMap { chunks[it] }
@@ -3696,8 +3781,6 @@ internal class AodLyricCanvasView(
     }
 
     private fun drawText(canvas: Canvas, row: Row, baseline: Float) {
-        canvas.save()
-        canvas.clipRect(logicalPadLeft, logicalPadTop, layoutFrameWidth() - logicalPadRight, layoutFrameHeight() - logicalPadBottom)
         var lineIndex = 0
         while (lineIndex < row.lines.size) {
             val line = row.lines[lineIndex]
@@ -3711,7 +3794,6 @@ internal class AodLyricCanvasView(
             }
             lineIndex++
         }
-        canvas.restore()
     }
 
     private fun alignmentFor(kind: RowKind): Alignment = if (kind == RowKind.METADATA) {
@@ -4527,6 +4609,9 @@ internal fun resolveOverflowShrinkScale(
     if (totalHeight <= availableHeight) return 1f
     return (availableHeight / totalHeight).coerceIn(minScale.coerceIn(0f, 1f), 1f)
 }
+
+internal fun shouldRecenterAfterDuet(wasDuet: Boolean, sectionCount: Int): Boolean =
+    wasDuet && sectionCount == 1
 
 /**
  * Shift that keeps a laid-out lyric block inside its area. A fitting block

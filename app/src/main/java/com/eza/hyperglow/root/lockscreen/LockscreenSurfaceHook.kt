@@ -5,6 +5,8 @@ import android.view.ViewGroup
 import com.eza.hyperglow.root.HookLogger
 import com.eza.hyperglow.root.HookRegistry
 import com.eza.hyperglow.root.readHierarchyField
+import com.eza.hyperglow.root.symbols.SymbolRequest
+import com.eza.hyperglow.root.symbols.SymbolResolver
 import io.github.libxposed.api.XposedInterface.Chain
 import io.github.libxposed.api.XposedInterface.Hooker
 import io.github.libxposed.api.XposedModule
@@ -17,21 +19,31 @@ internal object LockscreenSurfaceHook {
     )
 
     fun install(module: XposedModule, classLoader: ClassLoader) {
-        val sectionClass = runCatching { classLoader.loadClass(SECTION_CLASS) }.getOrNull() ?: return
-        val controllerClass = runCatching { classLoader.loadClass(CONTROLLER_CLASS) }.getOrNull()
-            ?: return
-        val constraintLayout = classLoader.loadClass("androidx.constraintlayout.widget.ConstraintLayout")
+        val sectionClass = SymbolResolver.resolveClass(
+            classLoader, FEATURE_ID, SECTION_CLASS
+        ) ?: return
+        val controllerClass = SymbolResolver.resolveClass(
+            classLoader, FEATURE_ID, CONTROLLER_CLASS
+        ) ?: return
+        val constraintLayout = SymbolResolver.resolveClass(
+            classLoader, FEATURE_ID, "androidx.constraintlayout.widget.ConstraintLayout"
+        ) ?: return
         if (!hookedClassLoaders.add(classLoader)) return
-        val bindData = sectionClass.getDeclaredMethod("bindData", constraintLayout)
-        val removeViews = sectionClass.getDeclaredMethod("removeViews", constraintLayout)
-        HookRegistry.hook(module, FEATURE_ID, bindData, BindHooker)
-        HookRegistry.hook(module, FEATURE_ID, removeViews, RemoveHooker)
-        hookOptional(module, controllerClass, "onViewAttachedToWindow", AttachedHooker, View::class.java)
-        hookOptional(module, controllerClass, "onViewDetachedFromWindow", DetachedHooker, View::class.java)
-        hookOptional(module, controllerClass, "updateKeyguardElementsVisibility", RefreshHooker)
-        hookOptional(module, controllerClass, "onUpdateNotificationState", NotificationRefreshHooker)
+        val bindData = SymbolResolver.resolveMethod(
+            classLoader, FEATURE_ID, SymbolRequest.method(SECTION_CLASS, "bindData", constraintLayout.name)
+        )
+        val removeViews = SymbolResolver.resolveMethod(
+            classLoader, FEATURE_ID, SymbolRequest.method(SECTION_CLASS, "removeViews", constraintLayout.name)
+        )
+        bindData?.let { HookRegistry.hook(module, FEATURE_ID, it, BindHooker) }
+        removeViews?.let { HookRegistry.hook(module, FEATURE_ID, it, RemoveHooker) }
+        hookOptional(module, classLoader, controllerClass, "onViewAttachedToWindow", AttachedHooker, View::class.java)
+        hookOptional(module, classLoader, controllerClass, "onViewDetachedFromWindow", DetachedHooker, View::class.java)
+        hookOptional(module, classLoader, controllerClass, "updateKeyguardElementsVisibility", RefreshHooker)
+        hookOptional(module, classLoader, controllerClass, "onUpdateNotificationState", NotificationRefreshHooker)
         hookOptional(
             module,
+            classLoader,
             controllerClass,
             "maybeLockScreenThemeChanged",
             RefreshHooker,
@@ -39,6 +51,7 @@ internal object LockscreenSurfaceHook {
         )
         hookOptional(
             module,
+            classLoader,
             controllerClass,
             "onLockScreenInfoChange",
             RefreshHooker,
@@ -105,14 +118,20 @@ internal object LockscreenSurfaceHook {
 
     private fun hookOptional(
         module: XposedModule,
+        classLoader: ClassLoader,
         owner: Class<*>,
         name: String,
         hooker: Hooker,
         vararg parameterTypes: Class<*>?
     ) {
         runCatching {
-            val method = owner.getDeclaredMethod(name, *parameterTypes)
-            HookRegistry.hook(module, FEATURE_ID, method, hooker)
+            val request = SymbolRequest.method(
+                owner.name,
+                name,
+                *parameterTypes.filterNotNull().map { it.name }.toTypedArray()
+            )
+            SymbolResolver.resolveMethod(classLoader, FEATURE_ID, request)
+                ?.let { HookRegistry.hook(module, FEATURE_ID, it, hooker) }
         }.onFailure { HookLogger.w(TAG, "Optional lockscreen hook unavailable: $name", it) }
     }
 

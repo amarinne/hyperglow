@@ -5,6 +5,8 @@ import com.eza.hyperglow.root.HookLogger
 import com.eza.hyperglow.root.HookRegistry
 import com.eza.hyperglow.root.capability.XiaomiCapability
 import com.eza.hyperglow.root.capability.XiaomiCapabilityResolver
+import com.eza.hyperglow.root.symbols.SymbolRequest
+import com.eza.hyperglow.root.symbols.SymbolResolver
 import io.github.libxposed.api.XposedInterface.Chain
 import io.github.libxposed.api.XposedInterface.Hooker
 import io.github.libxposed.api.XposedModule
@@ -36,17 +38,21 @@ internal object LockscreenEditorGestureHook {
     @Synchronized
     fun install(module: XposedModule, classLoader: ClassLoader) {
         if (installed) return
-        val helper = classLoader.loadClass(EDITOR_HELPER)
-        val touch = helper.getDeclaredMethod("onTouchEvent", MotionEvent::class.java).apply {
-            isAccessible = true
-        }
-        val launch = helper.getDeclaredMethod("tryStartEditActivity").apply {
-            isAccessible = true
-        }
-        val magazine = classLoader.loadClass(MAGAZINE_CONTROLLER)
-        val showMagazinePreview = magazine.getDeclaredMethod("handleSingleClickEvent").apply {
-            isAccessible = true
-        }
+        val touch = SymbolResolver.resolveMethod(
+            classLoader,
+            FEATURE_ID,
+            SymbolRequest.method(EDITOR_HELPER, "onTouchEvent", MotionEvent::class.java.name)
+        ) ?: return
+        val launch = SymbolResolver.resolveMethod(
+            classLoader,
+            FEATURE_ID,
+            SymbolRequest.method(EDITOR_HELPER, "tryStartEditActivity")
+        ) ?: return
+        val showMagazinePreview = SymbolResolver.resolveMethod(
+            classLoader,
+            FEATURE_ID,
+            SymbolRequest.method(MAGAZINE_CONTROLLER, "handleSingleClickEvent")
+        ) ?: return
         HookRegistry.hook(module, FEATURE_ID, touch, EditorTouchHooker)
         HookRegistry.hook(module, FEATURE_ID, launch, EditorLaunchHooker)
         HookRegistry.hook(module, FEATURE_ID, showMagazinePreview, MagazinePreviewHooker)

@@ -16,6 +16,39 @@ import org.junit.Test
 
 class AodCanvasLayoutTest {
     @Test
+    fun metadataSeparatorsProduceTrimmedRowsWithoutEmptyLines() {
+        assertEquals(listOf("Song", "Artist"), metadataLineTexts("Song · Artist"))
+        assertEquals(listOf("Song", "Mix", "Artist"), metadataLineTexts("Song · Mix · Artist"))
+        assertEquals(listOf("Song", "Artist"), metadataLineTexts("Song ·\n Artist"))
+        assertEquals(listOf("Song"), metadataLineTexts("Song"))
+    }
+
+    @Test
+    fun metadataBoundsReserveBothRowsAtEitherAnchor() {
+        val top = metadataLayoutBounds("top", 200f, 10f, 10f, -12f, 4f, 8f, 20f)
+        assertEquals(54f, top.lyricStart, 0.01f)
+        val bottom = metadataLayoutBounds("bottom", 200f, 10f, 10f, -12f, 4f, 8f, 20f)
+        assertEquals(166f, bottom.metadataBaseline, 0.01f)
+        assertEquals(146f, bottom.lyricEnd, 0.01f)
+    }
+
+    @Test
+    fun standalonePunctuationAttachesWithoutProducerGroups() {
+        fun groups(vararg texts: String) = attachAodPunctuationGroups(
+            texts.map { AodCanvasWord(it, "", 0L, 0L, true) }, List(texts.size) { null })
+        val closed = groups("hello", ",", "world")
+        assertEquals(closed[0], closed[1])
+        assertTrue(closed[1] != closed[2])
+        val opened = groups("hello", "(", "world", ")")
+        assertEquals(opened[1], opened[2])
+        assertEquals(opened[2], opened[3])
+        val quoted = groups("\"", "hello", "\"", "world")
+        assertEquals(quoted[0], quoted[1])
+        assertEquals(quoted[1], quoted[2])
+        assertTrue(quoted[2] != quoted[3])
+    }
+
+    @Test
     fun semanticPaletteResolvesOnceToBoundedColors() {
         val default = resolveAodPalette(emptyMap())
         val dimmed = resolveAodPalette(
@@ -817,6 +850,23 @@ class AodCanvasLayoutTest {
     }
 
     @Test
+    fun lexicalChunkPackingAccountsForRenderedSeparators() {
+        // Two 45px chunks with a 15px separator exceed a 100px drawable area.
+        assertEquals(
+            listOf(0 until 1, 1 until 2),
+            balancedChunkRanges(listOf(60f, 45f), 100f, 2)
+        )
+    }
+
+    @Test
+    fun punctuationUsesWritingSystemAttachmentClasses() {
+        assertTrue(aodPunctuationAttachToPrevious('.'.code))
+        assertTrue(aodPunctuationAttachToPrevious('。'.code))
+        assertTrue(aodPunctuationAttachToNext('('.code))
+        assertTrue(aodPunctuationAttachToNext('「'.code))
+    }
+
+    @Test
     fun legacyWrappingUsesUpstreamGreedyBreaksInsteadOfBalancing() {
         assertEquals(
             listOf(0 until 3, 3 until 4),
@@ -1173,6 +1223,13 @@ class AodCanvasLayoutTest {
         val first = DuetSectionId(7L, 1000L, 5000L)
         assertEquals(listOf(first), assignDuetSlots(listOf(first), emptyList()))
         assertEquals(emptyList<DuetSectionId>(), assignDuetSlots(emptyList(), listOf(first)))
+    }
+
+    @Test
+    fun duetEndRecentersTheRemainingSolo() {
+        assertTrue(shouldRecenterAfterDuet(wasDuet = true, sectionCount = 1))
+        assertFalse(shouldRecenterAfterDuet(wasDuet = true, sectionCount = 2))
+        assertFalse(shouldRecenterAfterDuet(wasDuet = false, sectionCount = 1))
     }
 
     @Test

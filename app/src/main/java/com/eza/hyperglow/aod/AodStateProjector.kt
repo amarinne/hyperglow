@@ -51,7 +51,8 @@ internal fun projectToDisplay(
     val row = timedDocument?.primaryRowAt(position).takeUnless { noLyrics }
     val metadata = listOf(state.title, state.artist)
         .filter { it.isNotBlank() }
-        .joinToString(" · ")
+        .joinToString("\n")
+        .replace('·', '\n')
     val fallbackLine = state.line.takeIf {
         !unsynced && !noLyrics && document == null && state.status == "ready" && it.isNotBlank()
     }

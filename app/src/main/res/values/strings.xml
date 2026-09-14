@@ -1,4 +1,6 @@
 <resources>
+    <!-- String contract spans values/, values-zh-rCN/, and app/translation/strings-template.xml.
+         app/translation/strings-template.xml is enforced by UiStringsContractTest. -->
     <string name="app_name">HyperGlow</string>
 
     <string name="nav_overview">Home</string>
