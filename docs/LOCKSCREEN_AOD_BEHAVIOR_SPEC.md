@@ -264,8 +264,11 @@ This guarantee is enforced by both compilation and SystemUI validation.
 - Super-wallpaper, flip, unknown modes, invalid geometry, missing symbols, or inactive lyrics pass
   through Xiaomi's original translation unchanged.
 - Disabling the feature, stock Spotify media-player removal, stale/disconnected projection, Binder
-  failure, or failed surface eligibility releases static/moving ownership, cancels any module timer,
-  and restores Xiaomi's last unmodified translation target. An eligible Spotify pause retains the
+  failure, failed surface eligibility, or an exhausted managed-position retry (ROM controller
+  geometry unreadable) releases static/moving ownership, cancels any module timer,
+  and restores Xiaomi's last unmodified translation target. The exhausted latch holds for the
+  attachment: lyrics follow Xiaomi's stock clock geometry instead of the initial top fallback,
+  and only a changed burn-in pattern/interval re-arms one fresh managed attempt. An eligible Spotify pause retains the
   frozen AOD scene and current managed clock placement only for the shared configured timeout.
 - A playing song-generation change starts an 8-second presentation lease and emits a wake event so
   synced and unsynced songs may briefly present song-change metadata. Presentation policy shows the

@@ -163,6 +163,8 @@ internal object DiagnosticReportFactory {
                     "raiseToAod" to renderPreferences.raiseToAod.toString(),
                     "positionFollowing" to
                         renderPreferences.experimentalPositionFollowing.toString(),
+                    "burnInPattern" to
+                        renderPreferences.burnInPattern,
                     "diagnosticLogging" to
                         DiagnosticLoggingPreferences.read(context).toString(),
                     "diagnosticLoggingDuringCapture" to

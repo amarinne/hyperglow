@@ -322,6 +322,16 @@ internal fun smoothAodRevealProgress(progress: Float): Float {
 internal fun shouldRetryManagedAodPosition(attempts: Int, maximumAttempts: Int): Boolean =
     attempts < maximumAttempts
 
+/**
+ * Managed clock control stays off once the ROM geometry proved unreadable, so the
+ * scene actually uses the stock geometry the exhaustion log claims. A changed
+ * pattern/interval re-arms one fresh attempt; anything else keeps following Xiaomi.
+ */
+internal fun shouldAttemptManagedPosition(
+    latchedUnavailable: Boolean,
+    scheduleChanged: Boolean
+): Boolean = !latchedUnavailable || scheduleChanged
+
 internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     private const val TAG = "AodSurfaceController"
     private const val SURFACE_TAG = "hyper_aod_lyrics_surface"
@@ -425,6 +435,7 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
     private var stockMotionAlphaTo = 1f
     private var drawWakeRenewalActive = false
     private var managedPositionRetryCount = 0
+    private var managedPositionUnavailable = false
     private var initialRevealPending = true
     private var initialRevealActive = false
     private var initialRevealStartedAt = 0L
@@ -597,6 +608,12 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
                 ) {
                     mainHandler.postDelayed(this, MANAGED_BURN_IN_RETRY_MS)
                 } else {
+                    // The controller geometry never resolved on this ROM. Release managed
+                    // control so the scene follows Xiaomi's stock clock (enabling the
+                    // stock-geometry measurement path) instead of staying pinned to the
+                    // initial top fallback with control nominally still on.
+                    managedPositionUnavailable = true
+                    setStockWidgetControlActive(false)
                     HookLogger.i(TAG, "Managed AOD position unavailable; using stock geometry")
                 }
             }
@@ -868,11 +885,13 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         AodPositionHook.setHoldStockPosition(
             !suppressStockAodContent && canRenderAod(resolvedSnapshot)
         )
+        if (burnInScheduleChanged) managedPositionUnavailable = false
         setStockWidgetControlActive(
             !suppressStockAodContent &&
                 resolvedSnapshot.positionFollowingEnabled &&
                 canRenderAod(resolvedSnapshot) &&
-                XiaomiCapabilityResolver.hasCapability(XiaomiCapability.AOD_POSITION_UPDATES),
+                XiaomiCapabilityResolver.hasCapability(XiaomiCapability.AOD_POSITION_UPDATES) &&
+                shouldAttemptManagedPosition(managedPositionUnavailable, burnInScheduleChanged),
             restartSchedule = burnInScheduleChanged
         )
         updateStockContentSuppression(canRenderAod(resolvedSnapshot))
@@ -1088,6 +1107,8 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         cancelStockMotionTransition(resetAlpha = false)
         positionUpdates.clear()
         stockWidgetControlActive = false
+        managedPositionUnavailable = false
+        managedPositionRetryCount = 0
         AodPositionHook.restoreStockTranslation()
         AodPositionHook.abandonManagedSession()
         setDrawWakeRenewalActive(false)

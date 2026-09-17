@@ -439,4 +439,19 @@ class AodPositionUpdateTest {
         assertEquals(1300, resolved.bottom)
     }
 
+    @Test
+    fun exhaustedManagedRetriesFallBackToStockGeometry() {
+        assertTrue(shouldRetryManagedAodPosition(0, 5))
+        assertTrue(shouldRetryManagedAodPosition(4, 5))
+        assertFalse(shouldRetryManagedAodPosition(5, 5))
+        assertFalse(shouldRetryManagedAodPosition(6, 5))
+    }
+
+    @Test
+    fun latchedManagedFailureStaysOnStockUntilScheduleChanges() {
+        assertTrue(shouldAttemptManagedPosition(false, false))
+        assertTrue(shouldAttemptManagedPosition(false, true))
+        assertFalse(shouldAttemptManagedPosition(true, false))
+        assertTrue(shouldAttemptManagedPosition(true, true))
+    }
 }

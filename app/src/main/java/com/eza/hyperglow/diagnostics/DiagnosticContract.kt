@@ -361,6 +361,7 @@ internal object DiagnosticReportCodec {
         "lockscreenKeepAwake",
         "raiseToAod",
         "positionFollowing",
+        "burnInPattern",
         "diagnosticLogging",
         "diagnosticLoggingDuringCapture"
     )
