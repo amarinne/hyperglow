@@ -34,6 +34,29 @@ class AodStateProjectorTest {
     }
 
     @Test
+    fun wordDocumentKeepsItsTimedWordsAndSecondaryText() {
+        val source = document("Word")
+        val row = source.rows.single().copy(
+            text = "hello world",
+            romanized = "reading",
+            translated = "translation",
+            words = listOf(
+                SpicyBridgeWord("hello", "", 0L, 400L, true),
+                SpicyBridgeWord("world", "", 400L, 900L, true)
+            )
+        )
+
+        val projected = project(state(), source.copy(rows = listOf(row)), positionMs = 500L)
+
+        assertEquals("hello world", projected.original)
+        assertEquals(listOf("hello", "world"), projected.words.map { it.text })
+        assertEquals("reading", projected.romanized)
+        assertEquals("translation", projected.translated)
+        assertFalse(projected.lineLevelSync)
+        assertTrue(projected.keepAlive)
+    }
+
+    @Test
     fun fillEndPastActiveWindowIsClampedForRendering() {
         val source = document("Line")
         val row = source.rows.single().copy(endMs = 800L, fillEndMs = 900L)
@@ -149,6 +172,33 @@ class AodStateProjectorTest {
     }
 
     @Test
+    fun indefiniteIntroNeverHoldsKeepAliveForUntimedSongs() {
+        val policy = AodPowerSessionPolicy()
+        val intro = SongMetadataIntroPolicy()
+        intro.setDurationMs(-1L)
+        val shown = project(
+            state(title = "title", artist = "artist"),
+            document("Static"),
+            prefs = AodRenderConfig(keepAwake = true),
+            powerSessionPolicy = policy,
+            introPolicy = intro
+        )
+        val afterLease = project(
+            state(title = "title", artist = "artist"),
+            document("Static"),
+            nowElapsedMs = 10_000L + AodPowerSessionPolicy.DEFAULT_SONG_CHANGE_LEASE_MS,
+            prefs = AodRenderConfig(keepAwake = true),
+            powerSessionPolicy = policy,
+            introPolicy = intro
+        )
+
+        assertEquals("title\nartist", shown.original)
+        assertTrue(shown.keepAlive)
+        assertEquals("title\nartist", afterLease.original)
+        assertFalse(afterLease.keepAlive)
+    }
+
+    @Test
     fun noLyricsStatusSuppressesTransitionAndSecondaryText() {
         val projected = project(state(status = "no_lyrics"), document = null)
 
@@ -194,6 +244,33 @@ class AodStateProjectorTest {
         )
 
         assertEquals("line", projected.original)
+    }
+
+    @Test
+    fun singleSongInfoLayoutJoinsTitleAndArtistWithMiddleDot() {
+        val projected = project(
+            state(title = "title", artist = "artist"),
+            documentWithIntro(),
+            positionMs = 1_000L,
+            prefs = AodRenderConfig(keepAwake = true, metadataLayout = "single")
+        )
+
+        assertEquals("title · artist", projected.metadata)
+        assertEquals("title · artist", projected.original)
+        assertEquals("single", projected.metadataLayout)
+    }
+
+    @Test
+    fun stackedSongInfoLayoutKeepsTitleAndArtistOnSeparateLines() {
+        val projected = project(
+            state(title = "title", artist = "artist"),
+            documentWithIntro(),
+            positionMs = 1_000L
+        )
+
+        assertEquals("title\nartist", projected.metadata)
+        assertEquals("title\nartist", projected.original)
+        assertEquals("stacked", projected.metadataLayout)
     }
 
     @Test
@@ -346,7 +423,8 @@ class AodStateProjectorTest {
         prefs: AodRenderConfig = AodRenderConfig(keepAwake = true),
         aodEnabled: Boolean = true,
         duetEnabled: Boolean = true,
-        powerSessionPolicy: AodPowerSessionPolicy = AodPowerSessionPolicy()
+        powerSessionPolicy: AodPowerSessionPolicy = AodPowerSessionPolicy(),
+        introPolicy: SongMetadataIntroPolicy = SongMetadataIntroPolicy()
     ) = projectToDisplay(
         state = state,
         document = document,
@@ -360,7 +438,7 @@ class AodStateProjectorTest {
             metadataVisible = true,
             duetEnabled = duetEnabled
         ),
-        metadataIntroPolicy = SongMetadataIntroPolicy(),
+        metadataIntroPolicy = introPolicy,
         powerSessionPolicy = powerSessionPolicy
     )
 

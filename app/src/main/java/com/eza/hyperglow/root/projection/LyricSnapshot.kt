@@ -84,6 +84,7 @@ internal data class LyricSnapshot(
     val alignmentMode: String = "auto",
     val metadataVisible: Boolean = true,
     val metadataAnchor: String = "top",
+    val metadataLayout: String = "stacked",
     val adaptiveSectioning: Boolean = true
 ) {
     fun renderContent(): LyricRenderContent = LyricRenderContent(
@@ -118,6 +119,7 @@ internal data class LyricSnapshot(
         alignmentMode,
         metadataVisible,
         metadataAnchor,
+        metadataLayout,
         adaptiveSectioning
     )
 }
@@ -166,6 +168,7 @@ internal data class LyricRenderContent(
     val alignmentMode: String,
     val metadataVisible: Boolean,
     val metadataAnchor: String,
+    val metadataLayout: String,
     val adaptiveSectioning: Boolean
 )
 
@@ -471,6 +474,7 @@ internal fun AodStateWireMessage.toLyricProjectionMessage(): LyricProjectionMess
             alignmentMode = value.alignmentMode,
             metadataVisible = value.metadataVisible,
             metadataAnchor = value.metadataAnchor,
+            metadataLayout = value.metadataLayout,
             adaptiveSectioning = value.adaptiveSectioning
         )
     )

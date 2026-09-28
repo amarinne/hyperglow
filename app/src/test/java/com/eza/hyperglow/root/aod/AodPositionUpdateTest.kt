@@ -454,4 +454,117 @@ class AodPositionUpdateTest {
         assertFalse(shouldAttemptManagedPosition(true, false))
         assertTrue(shouldAttemptManagedPosition(true, true))
     }
+
+    @Test
+    fun topBandClockReservesTheTopSoLyricsUseTheRegionBelow() {
+        // A clock measured in the top band resolves as CLOCK_TOP because the free space is below
+        // it. Reserving the bottom band instead collapsed the drawable frame to the strip above
+        // the clock, which pinned the lyrics under the camera cutout on a device whose stock
+        // AOD clock is not at the bottom.
+        val reserve = aodStockClockReserve(
+            zone = AodSceneZone.CLOCK_TOP,
+            rootHeight = 2670,
+            clockTop = 562,
+            clockBottom = 1372,
+            stockContentHidden = false
+        )
+
+        assertEquals(AodStockReserve(topPx = 1372, bottomPx = 0), reserve)
+    }
+
+    @Test
+    fun bottomBandClockKeepsReservingTheBottomBand() {
+        assertEquals(
+            AodStockReserve(topPx = 0, bottomPx = 1210),
+            aodStockClockReserve(
+                zone = AodSceneZone.CLOCK_BOTTOM,
+                rootHeight = 2670,
+                clockTop = 1460,
+                clockBottom = 2270,
+                stockContentHidden = false
+            )
+        )
+    }
+
+    @Test
+    fun unknownZoneKeepsTheHistoricalBottomReservation() {
+        assertEquals(
+            AodStockReserve(topPx = 0, bottomPx = 2108),
+            aodStockClockReserve(
+                zone = AodSceneZone.STOCK,
+                rootHeight = 2670,
+                clockTop = 562,
+                clockBottom = 1372,
+                stockContentHidden = false
+            )
+        )
+    }
+
+    @Test
+    fun hiddenStockContentReservesNothingAndDegenerateGeometryStaysInBounds() {
+        assertEquals(
+            AodStockReserve(topPx = 0, bottomPx = 0),
+            aodStockClockReserve(
+                zone = AodSceneZone.CLOCK_TOP,
+                rootHeight = 2670,
+                clockTop = 562,
+                clockBottom = 1372,
+                stockContentHidden = true
+            )
+        )
+        assertEquals(
+            AodStockReserve(topPx = 0, bottomPx = 0),
+            aodStockClockReserve(
+                zone = AodSceneZone.CLOCK_TOP,
+                rootHeight = 0,
+                clockTop = 0,
+                clockBottom = 0,
+                stockContentHidden = false
+            )
+        )
+        // A clock band that covers the panel clamps the reservation to the panel itself, which
+        // leaves no drawable frame. Painting nothing beats painting lyrics over the stock clock.
+        assertEquals(
+            AodStockReserve(topPx = 2670, bottomPx = 0),
+            aodStockClockReserve(
+                zone = AodSceneZone.CLOCK_TOP,
+                rootHeight = 2670,
+                clockTop = 4000,
+                clockBottom = 9000,
+                stockContentHidden = false
+            )
+        )
+    }
+
+    /**
+     * Stands in for `AODUpdatePositionController`, whose declared widths are mixed on every
+     * surveyed AOD build: `mTranslationY` is an `int`, `mTranslationYStep` a `float`.
+     */
+    private class RomController {
+        @Suppress("unused")
+        var mTranslationY: Int = 24
+
+        @Suppress("unused")
+        var mTranslationYStep: Float = 1.5f
+
+        @Suppress("unused")
+        var mViewTop: Int = 310
+    }
+
+    @Test
+    fun numericRomFieldReadsDoNotDependOnTheDeclaredWidth() {
+        val controller = RomController()
+        // SymbolResolver marks every resolved member accessible before handing it over, so the
+        // read helper can rely on that rather than doing it per call site.
+        fun read(name: String) = readNumericField(
+            controller,
+            RomController::class.java.getDeclaredField(name).apply { isAccessible = true }
+        )
+
+        // The bug this covers: getFloat on this field threw, and the surrounding runCatching turned
+        // that into "no clock geometry", so managed position never engaged on any build.
+        assertEquals(24f, read("mTranslationY").toFloat(), 0f)
+        assertEquals(1.5f, read("mTranslationYStep").toFloat(), 0f)
+        assertEquals(310, read("mViewTop").toInt())
+    }
 }

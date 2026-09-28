@@ -39,6 +39,60 @@ class DiagnosticCaptureCollectorTest {
     }
 
     @Test
+    fun rootProbeOutlivesTheCommandTimeoutBecauseARootPromptWaitsForTheUser() {
+        var probeTimeout = 0L
+        val collector = DiagnosticCaptureCollector { _, timeoutMs ->
+            probeTimeout = timeoutMs
+            DiagnosticRootCommandResult(exitCode = 1, output = "permission denied")
+        }
+
+        collector.collect(0L)
+
+        assertEquals(DiagnosticLimits.ROOT_PROBE_TIMEOUT_MS, probeTimeout)
+        assertTrue(DiagnosticLimits.ROOT_PROBE_TIMEOUT_MS > DiagnosticLimits.COMMAND_TIMEOUT_MS)
+    }
+
+    @Test
+    fun rootBinarySearchMovesOnOnlyWhenTheBinaryCannotBeSpawned() {
+        val attempted = mutableListOf<String>()
+        val granted = DiagnosticRootCommandResult(0, "0\n")
+
+        val result = runFirstRootBinary(listOf("su", "/data/adb/ap/bin/su")) { binary ->
+            attempted += binary
+            if (binary == "su") null else granted
+        }
+
+        assertEquals(listOf("su", "/data/adb/ap/bin/su"), attempted)
+        assertEquals(granted, result)
+    }
+
+    @Test
+    fun rootBinarySearchStopsOnARefusalAndOnATimeout() {
+        for (answer in listOf(
+            DiagnosticRootCommandResult(exitCode = 1, output = "permission denied"),
+            DiagnosticRootCommandResult(exitCode = -1, output = "", timedOut = true)
+        )) {
+            var attempts = 0
+            val result = runFirstRootBinary(listOf("su", "/data/adb/ap/bin/su")) { _ ->
+                attempts++
+                answer
+            }
+
+            assertEquals(answer, result)
+            assertEquals(1, attempts)
+        }
+    }
+
+    @Test
+    fun rootBinarySearchReportsNoBinaryWhenEveryCandidateIsMissing() {
+        val result = runFirstRootBinary(listOf("su", "/data/adb/ap/bin/su")) { null }
+
+        assertEquals(-1, result.exitCode)
+        assertTrue(result.output.isBlank())
+        assertEquals("error", checkDiagnosticRootAccess { _, _ -> result })
+    }
+
+    @Test
     fun captureFiltersCrashPackagesAndLsposedIdentity() {
         var lsposedCommand = ""
         var logsCommand = ""

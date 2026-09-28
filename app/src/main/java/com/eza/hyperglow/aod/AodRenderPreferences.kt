@@ -17,6 +17,7 @@ data class AodRenderConfig(
     val overflowMode: String = "Wrap",
     val metadataVisible: String = "hide",
     val metadataAnchor: String = "top",
+    val metadataLayout: String = "stacked",
     val weight: String = "Medium",
     val textSize: String = "normal",
     val textSizeCustom: Int = 100,
@@ -46,6 +47,7 @@ data class AodRenderConfig(
     val raiseToAod: Boolean = false,
     val suppressLockscreenEditorLongPress: Boolean = false,
     val songChangeInfoEnabled: Boolean = true,
+    val songIntroDurationMs: Long = 5_000L,
     val hideLauncherIcon: Boolean = false,
     val hideFromRecents: Boolean = false,
     val duetEnabled: Boolean = true,
@@ -89,6 +91,15 @@ internal fun normalizeAodMetadataVisible(value: String?): String =
 
 internal fun normalizeAodMetadataAnchor(value: String?): String =
     if (value == "bottom") "bottom" else "top"
+
+internal fun normalizeAodMetadataLayout(value: String?): String =
+    if (value == "single") "single" else "stacked"
+
+internal fun normalizeSongIntroDurationMs(value: Long): Long = when {
+    value < 0L -> -1L
+    value in 2_000L..30_000L -> value
+    else -> 5_000L
+}
 
 internal fun normalizeAodWeight(value: String?): String = when (value) {
     "Regular" -> "Regular"
@@ -200,6 +211,8 @@ object AodRenderPreferences {
     const val OVERFLOW = "overflow"
     const val METADATA_VISIBLE = "metadata_visible"
     const val METADATA_ANCHOR = "metadata_anchor"
+    const val METADATA_LAYOUT = "metadata_layout"
+    const val SONG_INTRO_DURATION_MS = "song_intro_duration_ms"
     const val WEIGHT = "weight"
     const val TEXT_SIZE = "text_size"
     const val TEXT_SIZE_CUSTOM = "text_size_custom"
@@ -298,6 +311,7 @@ object AodRenderPreferences {
             normalizeAodOverflow(prefs.safeString(OVERFLOW, DEFAULTS.overflowMode)),
             normalizeAodMetadataVisible(prefs.safeString(METADATA_VISIBLE, DEFAULTS.metadataVisible)),
             normalizeAodMetadataAnchor(prefs.safeString(METADATA_ANCHOR, DEFAULTS.metadataAnchor)),
+            normalizeAodMetadataLayout(prefs.safeString(METADATA_LAYOUT, DEFAULTS.metadataLayout)),
             normalizeAodWeight(prefs.safeString(WEIGHT, DEFAULTS.weight)),
             normalizeAodTextSize(prefs.safeString(TEXT_SIZE, DEFAULTS.textSize)),
             prefs.safeInt(
@@ -375,6 +389,9 @@ object AodRenderPreferences {
                 DEFAULTS.suppressLockscreenEditorLongPress
             ),
             prefs.safeBoolean(SONG_CHANGE_INFO_ENABLED, DEFAULTS.songChangeInfoEnabled),
+            normalizeSongIntroDurationMs(
+                prefs.safeLong(SONG_INTRO_DURATION_MS, DEFAULTS.songIntroDurationMs)
+            ),
             prefs.safeBoolean(HIDE_LAUNCHER_ICON, DEFAULTS.hideLauncherIcon),
             prefs.safeBoolean(HIDE_FROM_RECENTS, DEFAULTS.hideFromRecents),
             prefs.safeBoolean(DUET_ENABLED, DEFAULTS.duetEnabled),

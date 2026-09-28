@@ -165,7 +165,7 @@ internal class DiagnosticCaptureCollector(
 }
 
 internal fun checkDiagnosticRootAccess(runner: DiagnosticRootCommandRunner): String {
-    val result = runner.run("id -u", DiagnosticLimits.COMMAND_TIMEOUT_MS)
+    val result = runner.run("id -u", DiagnosticLimits.ROOT_PROBE_TIMEOUT_MS)
     return when {
         result.timedOut -> "error"
         result.exitCode == 0 && result.output.trim() == "0" -> "granted"

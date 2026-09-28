@@ -192,6 +192,7 @@ internal data class AodCanvasContent(
     val alignmentMode: String,
     val metadataVisible: Boolean,
     val metadataAnchor: String,
+    val metadataLayout: String = "stacked",
     val metadataSizePercent: Int = 100,
     val secondLine: AodCanvasSecondLine? = null,
     val adaptiveSectioning: Boolean,
@@ -266,6 +267,7 @@ internal fun layoutEquivalent(a: AodCanvasContent, b: AodCanvasContent): Boolean
         a.metadata != b.metadata ||
         a.metadataVisible != b.metadataVisible ||
         a.metadataAnchor != b.metadataAnchor ||
+        a.metadataLayout != b.metadataLayout ||
         a.metadataSizePercent != b.metadataSizePercent ||
         a.adaptiveSectioning != b.adaptiveSectioning ||
         a.lyricLineLimit != b.lyricLineLimit ||
@@ -469,7 +471,12 @@ internal fun coveredLayoutRanges(text: String, groups: List<AodCanvasLayoutGroup
     return ranges
 }
 
-internal fun balancedChunkRanges(widths: List<Float>, available: Float, maxLines: Int): List<IntRange> {
+internal fun balancedChunkRanges(
+    widths: List<Float>,
+    available: Float,
+    maxLines: Int,
+    breakAfter: List<Boolean> = emptyList()
+): List<IntRange> {
     if (widths.isEmpty() || maxLines <= 0) return emptyList()
     if (widths.size == 1 || available <= 0f) return listOf(widths.indices)
     val greedy = ArrayList<IntRange>()
@@ -494,6 +501,15 @@ internal fun balancedChunkRanges(widths: List<Float>, available: Float, maxLines
     val prefix = FloatArray(widths.size + 1)
     widths.indices.forEach { index -> prefix[index + 1] = prefix[index] + widths[index] }
     val target = prefix.last() / lineCount
+    // A line that ends at clause punctuation reads as a finished phrase, so
+    // ending there is discounted by a fraction of the squared target width.
+    // The line count is already minimal and every line must still fit, so
+    // the discount only reorders breaks within the same compact layout.
+    val breakBonus = if (target > 0f) {
+        PUNCTUATION_BREAK_BONUS_FRACTION * target * target
+    } else {
+        0f
+    }
     val infinity = Float.POSITIVE_INFINITY
     val costs = Array(lineCount + 1) { FloatArray(widths.size + 1) { infinity } }
     val previous = Array(lineCount + 1) { IntArray(widths.size + 1) { -1 } }
@@ -507,7 +523,14 @@ internal fun balancedChunkRanges(widths: List<Float>, available: Float, maxLines
                 val previousCost = costs[line - 1][candidate]
                 if (!previousCost.isFinite()) continue
                 val delta = lineWidth - target
-                val cost = previousCost + delta * delta
+                val bonus = if (breakBonus > 0f && line < lineCount &&
+                    breakAfter.getOrElse(end - 1) { false }
+                ) {
+                    breakBonus
+                } else {
+                    0f
+                }
+                val cost = previousCost + delta * delta - bonus
                 if (cost < costs[line][end]) {
                     costs[line][end] = cost
                     previous[line][end] = candidate
@@ -532,6 +555,26 @@ internal fun balancedChunkRanges(widths: List<Float>, available: Float, maxLines
 /** Writing-system line-break classes used by producers and tests. */
 internal fun aodPunctuationAttachToPrevious(codePoint: Int): Boolean =
     codePoint.toChar() in ",.;:!?…，。！？：；、)]}」』】》〉》”’"
+
+/**
+ * Fraction of the squared balanced-line target discounted for ending a line
+ * at clause punctuation. Large enough to prefer a phrase boundary over a
+ * near-equal arbitrary split, small enough that a badly ragged phrase break
+ * still loses to a balanced one.
+ */
+internal const val PUNCTUATION_BREAK_BONUS_FRACTION = 0.2f
+
+/**
+ * Whether [text] ends at a clause boundary that reads naturally as a line
+ * break: sentence or clause punctuation, ignoring trailing closers. Uses the
+ * same writing-system classes as the punctuation-attachment rules above.
+ */
+internal fun endsWithClausePunctuation(text: String): Boolean {
+    var end = text.length
+    while (end > 0 && (text[end - 1].isWhitespace() || text[end - 1] in "\"'’”«»()]}」』】》〉")) end--
+    if (end <= 0) return false
+    return text[end - 1] in ",.;:!?…，。！？：；、"
+}
 
 internal fun aodPunctuationAttachToNext(codePoint: Int): Boolean =
     codePoint.toChar() in "([{「『【《〈“‘"
@@ -596,7 +639,8 @@ internal fun secondaryTimedLineRanges(
 ): List<IntRange> = balancedChunkRanges(
     segments.map { it.width + it.gapAfter },
     available,
-    maxLines
+    maxLines,
+    segments.map { endsWithClausePunctuation(it.text) }
 )
 
 internal fun secondaryTimedVisualRanges(
@@ -702,8 +746,12 @@ internal fun balancedTokenLineTexts(
 ): List<String> {
     if (tokens.isEmpty() || tokens.size != tokenWidths.size) return emptyList()
     val effectiveWidths = tokenWidths.map { it + spaceWidth }
-    return balancedChunkRanges(effectiveWidths, available + spaceWidth, maxLines)
-        .map { range -> range.joinToString(" ") { tokens[it] } }
+    return balancedChunkRanges(
+        effectiveWidths,
+        available + spaceWidth,
+        maxLines,
+        tokens.map(::endsWithClausePunctuation)
+    ).map { range -> range.joinToString(" ") { tokens[it] } }
 }
 
 internal fun joinedRomanizedWords(words: List<Pair<String, Boolean>>): String = buildString {
@@ -793,6 +841,10 @@ internal fun metadataLayoutBounds(
 
 internal fun metadataLineTexts(text: String): List<String> =
     text.split('·', '\n').map { it.trim() }.filter { it.isNotEmpty() }
+
+/** Single-line song-info form: stacked pieces joined with a middle dot. */
+internal fun metadataSingleLineText(text: String): String =
+    metadataLineTexts(text).joinToString(" · ")
 
 internal fun metadataTextSizeMultiplier(percent: Int): Float =
     percent.coerceIn(50, 200) / 100f
@@ -1095,6 +1147,7 @@ internal class AodLyricCanvasView(
         alignmentMode = "auto",
         metadataVisible = true,
         metadataAnchor = "top",
+        metadataLayout = "stacked",
         metadataSizePercent = 100,
         adaptiveSectioning = true,
         palette = emptyMap(),
@@ -1153,8 +1206,6 @@ internal class AodLyricCanvasView(
     /** Center of the last lyric block, for anchoring full swaps. */
     private var lastBlockCenter: Float? = null
     private var anchorGeneration: Long? = null
-    /** Track generations that have shown a duet; stable chain-membership policy. */
-    private val episodeDuetGenerations = HashSet<Long>()
 
     private fun clearSectionAnchors() {
         sectionTops = emptyMap()
@@ -2017,7 +2068,7 @@ internal class AodLyricCanvasView(
             metadataPaint.fontMetrics.ascent,
             metadataPaint.fontMetrics.descent,
             10f * density,
-            (metadataLineTexts(content.metadata).size - 1).coerceAtLeast(0) *
+            (metadataTextLines().size - 1).coerceAtLeast(0) *
                 safeSecondaryLineHeight(metadataPaint.fontMetrics.ascent,
                     metadataPaint.fontMetrics.descent, metadataPaint.fontMetrics.bottom)
         )
@@ -2090,18 +2141,14 @@ internal class AodLyricCanvasView(
             lastBlockCenter = null
             anchorGeneration = content.trackGeneration
         }
-        // A lone line with no anchor is a fresh solo and centers; everything
-        // else (chain solo included) holds its slot through the helper.
+        // Every lone line uses the configured free anchor. Duet slot memory
+        // must not pin later solos after the overlap ends.
         // Landscape anchored sections cap secondary rows at one line each so
         // the pair fits without shrinking the survivor; fresh solos and
         // portrait keep legacy two-line secondaries. Participation comes
-        // from the episode flag, not anchor presence: anchors appear after
-        // the first build, so deriving policy from them flips a solo's
-        // sizing policy on its second rebuild.
-        val episodeHadDuet = episodeDuetGenerations.contains(content.trackGeneration)
-        if (second != null) episodeDuetGenerations.add(content.trackGeneration)
-        if (episodeDuetGenerations.size > 8) episodeDuetGenerations.clear()
-        val freshSolo = orderedIds.size == 1 && (!episodeHadDuet || duetEnded)
+        // from section count, not anchor presence: anchors appear after the
+        // first build, so deriving policy from them flips a solo's sizing.
+        val freshSolo = orderedIds.size == 1
         val secondaryCap = duetSecondaryLineCap(!freshSolo, isSideStep())
         var primaryVisualIndex = 0
         val built = ordered.mapIndexed { index, (_, data) ->
@@ -2674,15 +2721,28 @@ internal class AodLyricCanvasView(
 
     private fun row(kind: RowKind, text: String, paint: Paint, gap: Float, allowWrap: Boolean = true): Row {
         val lines = if (kind == RowKind.METADATA) {
-            metadataLineTexts(text).map {
-                textLine(it, paint.measureText(it), paint, alignmentFor(kind))
-            }
+            metadataTextLines()
         } else if (allowWrap) {
             wrapSecondaryText(text, paint, MAX_SECONDARY_LINES)
         } else {
             listOf(textLine(text, paint.measureText(text), paint, alignmentFor(kind)))
         }
         return rowWithLines(kind, text, paint, gap, lines)
+    }
+
+    /**
+     * Laid-out song-info lines for the current layout mode. Single mode joins
+     * title and artist into one middle-dot line; stacked keeps one row per
+     * piece. Either way a piece too wide for the frame wraps onto further
+     * lines instead of shrinking the whole block down to fit one line.
+     */
+    private fun metadataTextLines(): List<TextLine> {
+        val logical = if (content.metadataLayout == "single") {
+            listOf(metadataSingleLineText(content.metadata)).filter { it.isNotEmpty() }
+        } else {
+            metadataLineTexts(content.metadata)
+        }
+        return logical.flatMap { wrapSecondaryText(it, metadataPaint, 1) }
     }
 
     private fun rowWithLines(
@@ -3233,11 +3293,17 @@ internal class AodLyricCanvasView(
         forceSingleLine: Boolean = false
     ): OriginalLayout {
         // Metadata placeholders keep explicit title/artist rows even in Clip or landscape mode.
+        // A long title or artist wraps onto further lines at lyric size instead
+        // of shrinking the whole intro down to fit one line.
         if (isSongChangeMetadataPlaceholder(content.original, content.metadata,
                 content.lineStartMs, content.lineEndMs, content.words.any { it.endMs > it.startMs })) {
-            val lines = metadataLineTexts(content.metadata).map {
-                originalLine(it, originalPaint.measureText(it), null, null)
+            val available = (layoutFrameWidth() - logicalPadLeft - logicalPadRight).coerceAtLeast(1f)
+            val pieces = if (content.metadataLayout == "single") {
+                listOf(metadataSingleLineText(content.metadata))
+            } else {
+                metadataLineTexts(content.metadata)
             }
+            val lines = pieces.flatMap { wrapMetadataOriginalLine(it, available) }
             val metrics = originalPaint.fontMetrics
             return OriginalLayout(lines, metrics.descent - metrics.ascent + 2f * density,
                 ORIGINAL_LINE_GAP_DP * density, false)
@@ -3414,7 +3480,12 @@ internal class AodLyricCanvasView(
             // escaping the padded drawable width.
             chunk.sumOf { (it.width + it.gapAfter).toDouble() }.toFloat()
         }
-        val lines = balancedChunkRanges(chunkWidths, available, maxLines).map { range ->
+        val lines = balancedChunkRanges(
+            chunkWidths,
+            available,
+            maxLines,
+            chunks.map { chunk -> endsWithClausePunctuation(chunk.lastOrNull()?.word?.text.orEmpty()) }
+        ).map { range ->
             val lineWords = range.flatMap { chunks[it] }
             wordLine(lineWords)
         }
@@ -3484,6 +3555,38 @@ internal class AodLyricCanvasView(
             content.original.length,
             wordCount
         )
+
+    /**
+     * Wraps one song-info piece (title or artist) for the intro placeholder at
+     * lyric size. Phrase-aware like the main balancer, capped by the
+     * configured lyric line limit, so a long title flows onto further lines
+     * instead of shrinking the whole intro.
+     */
+    private fun wrapMetadataOriginalLine(piece: String, available: Float): List<OriginalLine> {
+        val tokens = secondaryTokens(piece).flatMap { token ->
+            if (originalPaint.measureText(token) <= available) {
+                listOf(token)
+            } else {
+                val parts = ArrayList<String>()
+                var remaining = token
+                while (remaining.isNotEmpty()) {
+                    val count = originalPaint.breakText(remaining, true, available, null)
+                        .coerceAtLeast(1)
+                    parts += remaining.take(count)
+                    remaining = remaining.drop(count)
+                }
+                parts
+            }
+        }
+        if (tokens.isEmpty()) return emptyList()
+        return balancedTokenLineTexts(
+            tokens,
+            tokens.map(originalPaint::measureText),
+            originalPaint.measureText(" "),
+            available,
+            lyricLayoutLineLimit(0)
+        ).map { line -> originalLine(line, originalPaint.measureText(line), null, null) }
+    }
 
     private fun transliterationLines(
         originalLayout: OriginalLayout,

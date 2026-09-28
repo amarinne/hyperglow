@@ -1683,21 +1683,23 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
         // height is an upper bound the stock-clock reservation would silently
         // cut down (a "75%" request landed at ~43%), so instead the surface
         // takes the maximum and the lyrics position themselves inside it via
-        // the canvas anchor and padding. The module manages the stock AOD
-        // position from here: lyrics take the TOP section, and everything
-        // from the stock clock's top edge downward is reserved for the stock
-        // content (clock + image) as logical canvas padding in portrait.
-        // Side steps rotate the axes and run stock-suppressed, so no
-        // reservation applies there.
-        val reserveTop = 0
-        val reserveBottom = if (stockContentHiddenByModule) {
-            0
-        } else {
-            (root.height - effectiveClockTop).coerceAtLeast(0)
-        }
-        if (clockReserveTopPx != reserveTop || clockReserveBottomPx != reserveBottom) {
-            clockReserveTopPx = reserveTop
-            clockReserveBottomPx = reserveBottom
+        // the canvas anchor and padding. The stock clock-or-image band is
+        // reserved as logical canvas padding in portrait, on the side that band
+        // actually occupies: the module-managed bottom zone leaves the lyrics the
+        // top section, and a clock resolved into the top band reserves the top
+        // instead, so the lyrics use the free region below it rather than the
+        // strip under the camera cutout. Side steps rotate the axes and run
+        // stock-suppressed, so no reservation applies there.
+        val reserve = aodStockClockReserve(
+            zone = layoutZone,
+            rootHeight = root.height,
+            clockTop = effectiveClockTop,
+            clockBottom = effectiveClockBottom,
+            stockContentHidden = stockContentHiddenByModule
+        )
+        if (clockReserveTopPx != reserve.topPx || clockReserveBottomPx != reserve.bottomPx) {
+            clockReserveTopPx = reserve.topPx
+            clockReserveBottomPx = reserve.bottomPx
             applyCanvasPresentation()
         }
         if (placed != null) {

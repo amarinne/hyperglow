@@ -119,6 +119,37 @@ internal fun aodBurnInPatternSlots(pattern: String): List<AodBurnInPatternSlot> 
 internal fun managedAodPatternRepeats(pattern: String): Boolean =
     pattern != "static_top" && pattern != "static_bottom"
 
+/**
+ * Canvas padding, in root pixels, that keeps lyric content clear of the stock
+ * clock-or-image container.
+ *
+ * The reservation has to follow the clock onto whichever side it actually occupies.
+ * Reserving only the band below the clock is correct for a bottom-zone clock, where it
+ * leaves the lyrics the top section, but a clock that sits in the top band turns that
+ * same reservation into the whole panel: the drawable frame collapses to the strip
+ * above the clock, so the lyrics pin under the camera cutout while the free region
+ * below the clock goes unused. A measured top-band clock is resolved as
+ * [AodSceneZone.CLOCK_TOP] precisely because the free space is below it, so the top
+ * band is what gets reserved there.
+ */
+internal data class AodStockReserve(val topPx: Int, val bottomPx: Int)
+
+internal fun aodStockClockReserve(
+    zone: AodSceneZone,
+    rootHeight: Int,
+    clockTop: Int,
+    clockBottom: Int,
+    stockContentHidden: Boolean
+): AodStockReserve {
+    if (stockContentHidden || rootHeight <= 0) return AodStockReserve(0, 0)
+    val height = rootHeight.coerceAtLeast(0)
+    return if (zone == AodSceneZone.CLOCK_TOP) {
+        AodStockReserve(clockBottom.coerceIn(0, height), 0)
+    } else {
+        AodStockReserve(0, (height - clockTop).coerceIn(0, height))
+    }
+}
+
 internal fun managedAodPlacementChanged(
     previous: AodClockPlacementDecision,
     next: AodClockPlacementDecision

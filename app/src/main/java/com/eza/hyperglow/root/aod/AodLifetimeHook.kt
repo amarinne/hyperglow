@@ -77,6 +77,11 @@ object AodLifetimeHook {
 
     private class VisibilityTelemetryHooker(private val method: Method) : Hooker {
         override fun intercept(chain: Chain): Any? {
+            // This hook already receives the live DozeHost on every visibility change, which makes
+            // it the one seam that can supply a wake host on a ROM whose AOD plugin instance
+            // pre-dates the constructor hook. Adopted on both edges, not only on hide, so a host
+            // captured while AOD comes up is the same reference that serves a later wake.
+            AodWakeBroker.adoptHost(chain.thisObject, "set_aod_visibility")
             val hidden = chain.args.firstOrNull() as? Boolean == false
             if (hidden) {
                 HookLogger.i(

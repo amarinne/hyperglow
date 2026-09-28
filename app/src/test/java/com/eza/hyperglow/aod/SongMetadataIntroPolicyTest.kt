@@ -199,6 +199,40 @@ class SongMetadataIntroPolicyTest {
         assertFalse(policy.shouldShowLargeMetadata(input(now = 5_100L, nextStart = 12_000L)))
     }
 
+    @Test
+    fun configuredDurationBoundsTheIntro() {
+        val policy = SongMetadataIntroPolicy()
+        policy.setDurationMs(2_000L)
+
+        assertTrue(policy.shouldShowLargeMetadata(input(now = 1_000L, nextStart = 9_000L)))
+        assertFalse(policy.shouldShowLargeMetadata(input(now = 3_000L, nextStart = 9_000L)))
+    }
+
+    @Test
+    fun unknownDurationFallsBackToFiveSeconds() {
+        val policy = SongMetadataIntroPolicy()
+        policy.setDurationMs(123L)
+
+        assertTrue(policy.shouldShowLargeMetadata(input(now = 1_000L, nextStart = 9_000L)))
+        assertTrue(policy.shouldShowLargeMetadata(input(now = 5_999L, nextStart = 9_000L)))
+        assertFalse(policy.shouldShowLargeMetadata(input(now = 6_000L, nextStart = 9_000L)))
+    }
+
+    @Test
+    fun noLimitIntroLastsTheWholeInterlude() {
+        val policy = SongMetadataIntroPolicy()
+        policy.setDurationMs(-1L)
+
+        assertTrue(policy.shouldShowLargeMetadata(input(now = 1_000L, nextStart = 120_000L)))
+        assertTrue(policy.shouldShowLargeMetadata(input(now = 60_000L, nextStart = 120_000L)))
+        // A lyric taking the row still ends the intro; only the time cap is gone.
+        assertFalse(
+            policy.shouldShowLargeMetadata(
+                input(now = 61_000L, lyricState = SongIntroLyricState.ACTIVE)
+            )
+        )
+    }
+
     private fun input(
         now: Long,
         position: Long = now,

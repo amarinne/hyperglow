@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import com.eza.hyperglow.root.capability.XiaomiCapabilityResolver
 import com.eza.hyperglow.root.aod.AodPowerCoordinator
+import com.eza.hyperglow.root.aod.AodWakeBroker
 import com.eza.hyperglow.root.projection.SystemUiLyricProjectionRuntime
 import com.eza.hyperglow.root.symbols.SymbolRequest
 import com.eza.hyperglow.root.symbols.SymbolResolver
@@ -49,6 +50,7 @@ internal object SystemUiLifecycleHook {
     fun bootstrap(application: Application) {
         XiaomiCapabilityResolver.observeContext(application)
         SymbolResolver.observeContext(application)
+        AodWakeBroker.observeContext(application)
         SystemUiLyricProjectionRuntime.projection.bootstrap(application)
         HookLogger.bootstrap(TAG, "systemui_projection_bootstrapped")
         SystemUiLyricProjectionRuntime.projection.attach(AodPowerCoordinator, application)

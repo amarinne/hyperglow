@@ -399,6 +399,7 @@ object AodProjectionEngine {
         val lockscreenEnabled = compiled?.profiles?.get(SceneCompiler.SURFACE_LOCKSCREEN)?.enabled
             ?: prefs.lockscreenEnabled
         val duetEnabled = aodProfile?.duetEnabled ?: prefs.duetEnabled
+        metadataIntroPolicy.setDurationMs(prefs.songIntroDurationMs)
         val projectedState = projectToDisplay(
             state = state,
             document = document,
@@ -587,7 +588,8 @@ object AodProjectionEngine {
         else line.takeIf { it.isNotBlank() }
 
     fun isTimedDocumentType(type: String): Boolean =
-        type.equals("Line", ignoreCase = true) || type.equals("Syllable", ignoreCase = true)
+        type.equals("Line", ignoreCase = true) || type.equals("Word", ignoreCase = true) ||
+            type.equals("Syllable", ignoreCase = true)
 
     internal fun hasActualLyricTiming(document: SpicyBridgeDocument): Boolean =
         // Instrumental dot rows carry timing windows too, but are not sung lyrics. Counting an
@@ -611,7 +613,8 @@ object AodProjectionEngine {
 
     fun isEffectiveLineLevelSync(type: String, wordCount: Int): Boolean =
         isLineLevelDocumentType(type) ||
-            type.equals("Syllable", ignoreCase = true) && wordCount <= 0
+            (type.equals("Word", ignoreCase = true) ||
+                type.equals("Syllable", ignoreCase = true)) && wordCount <= 0
 
     internal fun sessionWakeSignal(state: SpicyBridgeState, hasTimedLyrics: Boolean): Long {
         val phase = if (hasTimedLyrics) "timed" else "song"

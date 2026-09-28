@@ -21,6 +21,14 @@ internal object DiagnosticLimits {
     const val LYRIC_LINE_BYTES = 8 * 1024
     const val CAPTURE_TTL_MS = 30L * 60L * 1000L
     const val COMMAND_TIMEOUT_MS = 5_000L
+
+    /**
+     * The root probe is the one capture command a person can be asked to answer. A root manager
+     * shows its grant prompt and the command waits for that tap, so the shared command window is
+     * short enough to time out and destroy a root that the user did approve a few seconds later.
+     * The report then carries `error` and no evidence at all.
+     */
+    const val ROOT_PROBE_TIMEOUT_MS = 15_000L
 }
 
 @Serializable

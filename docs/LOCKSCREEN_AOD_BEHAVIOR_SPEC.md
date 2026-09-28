@@ -36,7 +36,8 @@ contract. This spec defines surface visibility, privacy, continuity, customizati
   sections, a newcomer inherits the vacated slot instead of appending, and a full swap keeps
   current order. A lone line that never joined a chain centers as before; while an overlap is
   active, a chain survivor holds its slot, then returns to the configured lone-line vertical
-  anchor when the overlap ends, and the block fades out as a unit when the chain ends. Slot
+  anchor when the overlap ends. Every later solo in the same song uses that free anchor too.
+  The block fades out as a unit when the chain ends. Slot
   anchors reset on track, metadata, or frame changes. The anchored block is clamped into the
   lyric area as a whole, so a tall newcomer lands in the freed slot instead of running
   off-screen; the survivor moves only when clipping is otherwise unavoidable. An overlap with
@@ -226,8 +227,13 @@ This guarantee is enforced by both compilation and SystemUI validation.
 - Xiaomi linkage slot zero and later burn-in positions are fixed-grid coordinates, not random. The
   module registers the position controller at AOD-root attach and derives the initial natural target
   after valid layout instead of waiting for Xiaomi's delayed first `updateTranslation()` callback.
-- Lyrics resolve inside the free region physically opposite the authoritative clock bounds. A
-  managed dynamic-zone change is transactional: fade lyrics out for 150 ms, wait for Xiaomi's exact
+- Lyrics resolve inside the free region physically opposite the authoritative clock bounds. The stock
+  clock-or-image band is reserved as logical canvas padding on the side that band actually occupies:
+  a bottom-zone clock reserves the band from its top edge down and leaves the lyrics the top section,
+  while a clock resolved into the top band reserves the band down to its own bottom edge and leaves
+  the lyrics the free region below it. Reserving only the bottom band is what pinned the lyrics into
+  the strip under the camera cutout on devices whose stock AOD clock is not at the bottom. A managed
+  dynamic-zone change is transactional: fade lyrics out for 150 ms, wait for Xiaomi's exact
   `DozeHost.updatePosition()` animation-completion callback, apply the destination geometry once,
   then fade lyrics in for 180 ms. A bounded 1500 ms timeout fails forward if the OEM callback is
   missed. The canvas does not continuously cross the clock path. Static managed placement remains
@@ -272,7 +278,8 @@ This guarantee is enforced by both compilation and SystemUI validation.
   frozen AOD scene and current managed clock placement only for the shared configured timeout.
 - A playing song-generation change starts an 8-second presentation lease and emits a wake event so
   synced and unsynced songs may briefly present song-change metadata. Presentation policy shows the
-  title and artist at lyric size for five seconds or until the opening interlude ends, whichever comes
+  title and artist at lyric size for the configured intro length (`Intro length` slider, 2 to 30
+  seconds or indefinite, default five seconds) or until the opening interlude ends, whichever comes
   first, then morphs or crossfades to persistent small song info when enabled; otherwise it removes
   the title/artist. A song whose opening is already known to be an active lyric, or a gap shorter
   than three seconds, presents no intro then and defers one full intro to the next interlude with at
@@ -295,7 +302,7 @@ This guarantee is enforced by both compilation and SystemUI validation.
   document for that generation emits a second wake event, allowing a synced track to restore AOD
   after an earlier unsynced track timed out. The exact verified wake broker calls Xiaomi's
   `DozeHost.fireAodState(true, "reason_keycode_goto")` only while the device is non-interactive.
-- Default keepalive additionally requires a `Line` or `Syllable` document containing at least one
+- Default keepalive additionally requires a `Line`, `Word`, or `Syllable` document containing at least one
   positive-duration row. Timed-document arrival upgrades the current presentation lease to persistent
   keepalive without a false gap. Static, missing, loading, no-lyrics, and degenerate zero-duration
   documents release naturally when the lease expires. `Also keep AOD active without timed lyrics`
@@ -363,6 +370,22 @@ This guarantee is enforced by both compilation and SystemUI validation.
   AOD plugin teardown. If a persistent session has no attached AOD surface, each bounded heartbeat
   may retry the same wake identity until Xiaomi recreates the surface. Interactive-screen requests
   remain suppressed and the system AOD master setting remains authoritative.
+- The broker captures that host from two seams, because a host reached only through the
+  `DozeTriggers` constructor is never observed on a ROM that builds its AOD plugin instance before
+  the hook installs. It adopts a live `DozeHost` from the existing AOD visibility seam as well, and
+  keeps the same single bounded reference either way. A `DozeHost` in Xiaomi's own active use is
+  the verification the constructor supplied; nothing weaker is accepted, and a repeat of the
+  instance already held is not a new capture.
+- A wake the broker cannot serve names the absent reference — host, wake method, or power manager —
+  rather than reporting one undifferentiated "unavailable". A missing reference outranks an
+  interactive screen in that report, so an ordinary suppression is never described as a fault, and a
+  fault is never hidden behind one. Each distinct reason is reported once; recovering clears the
+  latch so a later regression is reported again.
+- A missing-host refusal also carries why the installer last bailed, or `none` when it never did. On a
+  healthy ROM an installer skip is ordinary, because a class loader that cannot see the AOD dex bails
+  while a later one on the same dex succeeds, so a skip is recorded rather than reported and is only
+  read at the moment a wake is actually refused. That keeps one line able to separate a host that was
+  never handed over from an installer that never bound.
 - A keepalive edge that arrives while Xiaomi is already hiding AOD cannot be suppressed: the policy
   hide has run, its alarm can no longer be cancelled, and a wake delivered mid-animation only re-arms
   Xiaomi's own timer. That single race re-asserts the current wake identity once, on the first
@@ -401,7 +424,8 @@ This guarantee is enforced by both compilation and SystemUI validation.
   detail is `com.android.systemui:PICK_UP` are remapped. The module first requests AOD through the
   verified Xiaomi `DozeHost.fireAodState(true, "reason_keycode_goto")` state-machine seam, then
   always suppresses the full wake. If AOD is already sustained by active lyrics, the request is
-  effectively redundant and the existing AOD remains visible.
+  effectively redundant and the existing AOD remains visible. The wake method is resolved at hook
+  install rather than from the captured host, so a host obtained by adoption can still serve a wake.
 - The remap is global for this owner device and does not depend on Spotify, lyrics, media state, or
   either lyric surface being enabled.
 - Power-button, fingerprint, double-tap, notification, biometric, camera, and application wake
@@ -455,8 +479,11 @@ This guarantee is enforced by both compilation and SystemUI validation.
   choices do not alter text timing, placement, or the shared lyric source.
 - Lockscreen card color and opacity are independent. Existing profiles retain charcoal at 217/255
   opacity. Turning the card off hides its controls without discarding its saved appearance.
-- Each surface profile stores metadata size from 50% to 200% and ruby-reading visibility. Ruby is
-  shown by default and, when disabled, reserves no drawing or layout height.
+ - Each surface profile stores metadata size from 50% to 200% and ruby-reading visibility. Ruby is
+   shown by default and, when disabled, reserves no drawing or layout height.
+ - Each surface profile stores the song-info layout: `stacked` (title over artist, default) or
+   `single` (one middle-dot line, wrapped when too wide). A stacked piece or single line too wide
+   for the frame wraps onto further lines instead of shrinking the block to fit.
 - During the generation-bound song intro, matching one-line title/artist text suppresses the duplicate
   metadata row and morphs into the persistent metadata position and size when the intro ends.
   Incompatible or wrapped geometry uses bounded crossfade. Neither path changes whole-surface alpha,
@@ -511,13 +538,21 @@ Fail-closed is per symbol: an unresolved seam removes its own capability and lea
 build with no usable surface symbols is unsupported and runs nothing. A tablet that resolves the
 lockscreen seams but no AOD seam therefore runs lockscreen lyrics and reports AOD as unavailable.
 
+A resolved capability states that the ROM contract is present, not that a live instance was reached.
+A seam that installs and then finds no instance — a plugin built before the hook, or a host never
+handed over — keeps its capability and says so in the module log rather than reporting nothing.
+Capability and reachability are separate facts and the log names both.
+
 Verified, verified-with-missing-symbols, experimental-eligible, and experimental-active are retired
 as live states. They are decoded only for reports written by an earlier build or sent by a SystemUI
 process that has not restarted, and are treated as runnable when they appear.
 
 Capability report protocol v2 includes the report timestamp, effective profile state, experimental
 state, raw probe set, and resolved capability set. Protocol v1 remains accepted only for app/SystemUI
-update transition compatibility.
+update transition compatibility. A hook process that has not restarted rejects a state payload from
+a newer app build by name — protocol, scalars, kind, body, or body decode — rather than by one
+undifferentiated rejection, because the common cause is that self-healing update transition and
+must not be read as corruption.
 
 Capabilities are independent:
 

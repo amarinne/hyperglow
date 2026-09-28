@@ -318,7 +318,17 @@ private fun SurfaceAppearanceSettings(session: SettingsSession, surface: String)
     SmallTitle(text = stringResource(R.string.section_song_information))
     SettingsCard {
         if (isAod) SwitchPreference(renderConfig.songChangeInfoEnabled, { value -> session.updateConfig { it.copy(songChangeInfoEnabled = value) } }, stringResource(R.string.setting_song_change_info))
+        if (isAod && renderConfig.songChangeInfoEnabled) {
+            SongIntroDurationSlider(renderConfig.songIntroDurationMs) { value ->
+                session.updateConfig { it.copy(songIntroDurationMs = value) }
+            }
+        }
         SwitchPreference(profile.metadataVisible, { value -> update { withMetadataVisible(it, value) } }, stringResource(R.string.setting_show_song_info))
+        // Song-info layout also shapes the song-change intro, so it stays
+        // visible even when persistent song info is off.
+        AodChoiceRow(AodChoiceKind.SONG_INFO_LAYOUT, profile.metadataLayout) {
+            choose(AodChoiceKind.SONG_INFO_LAYOUT, listOf("stacked", "single"), profile.metadataLayout) { value -> update { it.copy(metadataLayout = value) } }
+        }
         if (profile.metadataVisible) {
             AodChoiceRow(AodChoiceKind.SONG_INFO_POSITION, profile.metadataAnchor) {
                 choose(AodChoiceKind.SONG_INFO_POSITION, listOf("top", "bottom"), profile.metadataAnchor) { value -> update { it.copy(metadataAnchor = value) } }
@@ -1519,6 +1529,45 @@ private fun rotationSettleLabel(context: android.content.Context, value: Long): 
 
 private val ROTATION_SETTLE_OPTIONS = listOf(0L, 500L, 1_000L, 2_000L, 5_000L, 10_000L)
 
+private const val SONG_INTRO_MIN_SECONDS = 2
+private const val SONG_INTRO_MAX_SECONDS = 30
+
+/** Slider stop past the maximum that keeps the intro up for the whole interlude. */
+private const val SONG_INTRO_NO_LIMIT_SECONDS = SONG_INTRO_MAX_SECONDS + 1
+
+private fun songIntroSliderSeconds(durationMs: Long): Int =
+    if (durationMs < 0L) SONG_INTRO_NO_LIMIT_SECONDS
+    else (durationMs / 1_000L).toInt().coerceIn(SONG_INTRO_MIN_SECONDS, SONG_INTRO_MAX_SECONDS)
+
+private fun songIntroSliderToMs(seconds: Int): Long =
+    if (seconds >= SONG_INTRO_NO_LIMIT_SECONDS) -1L
+    else seconds.coerceIn(SONG_INTRO_MIN_SECONDS, SONG_INTRO_MAX_SECONDS) * 1_000L
+
+@Composable
+private fun SongIntroDurationSlider(
+    durationMs: Long,
+    onDurationChange: (Long) -> Unit
+) {
+    val summary = if (durationMs < 0L) {
+        stringResource(R.string.duration_keep_indefinitely)
+    } else {
+        stringResource(R.string.duration_n_seconds, songIntroSliderSeconds(durationMs))
+    }
+    BasicComponent(
+        title = stringResource(R.string.choice_song_info_duration),
+        summary = summary,
+        endActions = {
+            Slider(
+                value = songIntroSliderSeconds(durationMs).toFloat(),
+                onValueChange = { onDurationChange(songIntroSliderToMs(it.roundToInt())) },
+                modifier = Modifier.width(150.dp),
+                valueRange = SONG_INTRO_MIN_SECONDS.toFloat()..SONG_INTRO_NO_LIMIT_SECONDS.toFloat(),
+                steps = SONG_INTRO_NO_LIMIT_SECONDS - SONG_INTRO_MIN_SECONDS - 1
+            )
+        }
+    )
+}
+
 private fun aodRotationModeLabel(context: android.content.Context, value: String): String =
     context.getString(
         when (normalizeAodRotationMode(value)) {
@@ -1596,6 +1645,7 @@ private fun LyricLayoutScreen(
     // mutates it directly. Persistence is the session's debounced background flush.
     val editorState = CustomizationEditorState(document, initialSurface)
     val songChangeInfo = config.songChangeInfoEnabled
+    val songIntroDurationMs = config.songIntroDurationMs
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -1811,6 +1861,15 @@ private fun LyricLayoutScreen(
                         { visible -> updateSelected { withMetadataVisible(it, visible) } },
                         stringResource(R.string.setting_show_song_info)
                     )
+                    // Song-info layout also shapes the song-change intro, so
+                    // it stays visible even when persistent song info is off.
+                    AodChoiceRow(AodChoiceKind.SONG_INFO_LAYOUT, selectedProfile.metadataLayout) {
+                        openChoice(
+                            AodChoiceKind.SONG_INFO_LAYOUT,
+                            listOf("stacked", "single"),
+                            selectedProfile.metadataLayout
+                        ) { value -> updateSelected { it.copy(metadataLayout = value) } }
+                    }
                     SwitchPreference(
                         songChangeInfo,
                         { enabled ->
@@ -1820,6 +1879,13 @@ private fun LyricLayoutScreen(
                         },
                         stringResource(R.string.setting_song_change_info)
                     )
+                    if (songChangeInfo) {
+                        SongIntroDurationSlider(songIntroDurationMs) { value ->
+                            session.updateConfig {
+                                it.copy(songIntroDurationMs = value)
+                            }
+                        }
+                    }
                     if (selectedProfile.metadataVisible) {
                         AodChoiceRow(AodChoiceKind.SONG_INFO_POSITION, selectedProfile.metadataAnchor) {
                             openChoice(
@@ -2399,6 +2465,9 @@ private fun choiceDisplayLabel(
     AodChoiceKind.SONG_INFO_POSITION -> context.getString(
         if (value == "bottom") R.string.option_bottom else R.string.option_top
     )
+    AodChoiceKind.SONG_INFO_LAYOUT -> context.getString(
+        if (value == "single") R.string.option_song_info_single else R.string.option_song_info_stacked
+    )
     AodChoiceKind.LYRIC_LINES -> if (value == "0") {
         context.getString(R.string.option_no_limit)
     } else {
@@ -2472,6 +2541,7 @@ private enum class AodChoiceKind(@param:StringRes val titleRes: Int) {
     LONG_LINES(R.string.choice_long_lines),
     LYRIC_LINES(R.string.choice_lyric_lines),
     SONG_INFO_POSITION(R.string.choice_song_info_position),
+    SONG_INFO_LAYOUT(R.string.choice_song_info_layout),
     TEXT_WEIGHT(R.string.choice_text_weight),
     FONT(R.string.choice_font),
     WORD_ANIMATION(R.string.choice_word_animation),

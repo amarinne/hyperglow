@@ -24,6 +24,32 @@ class AodCanvasLayoutTest {
     }
 
     @Test
+    fun singleSongInfoLineJoinsStackedPiecesWithMiddleDot() {
+        assertEquals("Song · Artist", metadataSingleLineText("Song\nArtist"))
+        assertEquals("Song · Artist", metadataSingleLineText("Song · Artist"))
+        assertEquals("Song", metadataSingleLineText("Song"))
+        assertEquals("", metadataSingleLineText(""))
+    }
+
+    @Test
+    fun songInfoLayoutPrefersProfileOverTransportSnapshot() {
+        val profile = SceneCompiler.compile(
+            CustomizationDocument(
+                profiles = mapOf(
+                    SceneCompiler.SURFACE_AOD to SurfaceProfile(metadataLayout = "single")
+                )
+            )
+        ).profiles.getValue(SceneCompiler.SURFACE_AOD)
+
+        assertEquals("single", LyricSnapshot().toAodCanvasContent(profile).metadataLayout)
+        assertEquals("stacked", LyricSnapshot().toAodCanvasContent().metadataLayout)
+        assertEquals(
+            "single",
+            LyricSnapshot(metadataLayout = "single").toAodCanvasContent().metadataLayout
+        )
+    }
+
+    @Test
     fun metadataBoundsReserveBothRowsAtEitherAnchor() {
         val top = metadataLayoutBounds("top", 200f, 10f, 10f, -12f, 4f, 8f, 20f)
         assertEquals(54f, top.lyricStart, 0.01f)
@@ -855,6 +881,51 @@ class AodCanvasLayoutTest {
         assertEquals(
             listOf(0 until 1, 1 until 2),
             balancedChunkRanges(listOf(60f, 45f), 100f, 2)
+        )
+    }
+
+    @Test
+    fun clausePunctuationEndsPhrasesForLineBreaks() {
+        assertTrue(endsWithClausePunctuation("pire,"))
+        assertTrue(endsWithClausePunctuation("toi."))
+        assertTrue(endsWithClausePunctuation("vraiment ? »"))
+        assertTrue(endsWithClausePunctuation("終わり。"))
+        assertFalse(endsWithClausePunctuation("toi"))
+        assertFalse(endsWithClausePunctuation("(toi)"))
+        assertFalse(endsWithClausePunctuation(""))
+    }
+
+    @Test
+    fun balancedSplitPrefersCommaBreakWhenItNeedsNoExtraLine() {
+        val widths = listOf(20f, 50f, 45f, 30f, 20f, 35f)
+        // Without the punctuation hint the balanced split lands after "c'est".
+        assertEquals(
+            listOf(0 until 3, 3 until 6),
+            balancedChunkRanges(widths, 130f, 2)
+        )
+        // "Le pire," fits on one line and leaves room for the rest on the
+        // second, so the comma break wins at the same two-line count.
+        assertEquals(
+            listOf(0 until 2, 2 until 6),
+            balancedChunkRanges(
+                widths,
+                130f,
+                2,
+                breakAfter = listOf(false, true, false, false, false, false)
+            )
+        )
+    }
+
+    @Test
+    fun punctuationHintNeverAddsAnotherLine() {
+        assertEquals(
+            listOf(0 until 2, 2 until 4),
+            balancedChunkRanges(
+                listOf(50f, 50f, 50f, 50f),
+                100f,
+                3,
+                breakAfter = listOf(false, false, true, false)
+            )
         )
     }
 

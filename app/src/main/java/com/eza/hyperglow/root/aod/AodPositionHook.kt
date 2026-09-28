@@ -446,10 +446,10 @@ internal object AodPositionHook {
         hierarchyField(owner.javaClass, name) ?: throw NoSuchFieldException(name)
 
     private fun readIntField(controller: Any, name: String): Int =
-        requireField(controller, name).getInt(controller)
+        readNumericField(controller, requireField(controller, name)).toInt()
 
     private fun readFloatField(controller: Any, name: String): Float =
-        requireField(controller, name).getFloat(controller)
+        readNumericField(controller, requireField(controller, name)).toFloat()
 
     private fun readFodSafeBottom(controller: Any?): Int? = runCatching {
         controller ?: return null
@@ -505,3 +505,19 @@ internal fun shouldAnimateAodPosition(
     overridden: Boolean,
     placementChanged: Boolean
 ): Boolean = requested && (!overridden || placementChanged)
+
+/**
+ * Reads a numeric ROM field through its boxed value so the caller can narrow it.
+ *
+ * The ROM does not agree with itself about these widths: on every surveyed AOD build
+ * (`DEV-2344.0.0.1-07031920`, `DEV-2446.3.0.1-09042206`) `AODUpdatePositionController.mTranslationY`
+ * is an `int` while `mTranslationYStep` is a `float`. `Field.getFloat` on an int field throws, and
+ * because `readClockGeometry` wraps its whole body in `runCatching`, the throw read as "no clock
+ * geometry" rather than as a failure. That silently disabled managed position and the stock-widget
+ * hold on every build, including the owner's, with nothing surfacing it.
+ *
+ * Presence is not width: a width change must stay a non-event here and stay visible in
+ * `scripts/rom-symbol-check.py`, which reports the observed width of every field it maps.
+ */
+internal fun readNumericField(owner: Any, field: java.lang.reflect.Field): Number =
+    field.get(owner) as Number

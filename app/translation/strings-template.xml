@@ -115,6 +115,7 @@
     <string name="surface_aod">AOD</string>
     <string name="surface_lockscreen">lock screen</string>
     <string name="duration_clear_immediately">Clear immediately</string>
+    <string name="duration_n_seconds">%1$d seconds</string>
     <string name="duration_5_seconds">5 seconds</string>
     <string name="duration_10_seconds">10 seconds</string>
     <string name="duration_30_seconds">30 seconds</string>
@@ -149,6 +150,10 @@
     <string name="setting_show_song_info">Show song info</string>
     <string name="setting_song_change_info">Show song info on song change</string>
     <string name="choice_song_info_position">Song info position</string>
+    <string name="choice_song_info_layout">Song info layout</string>
+    <string name="option_song_info_stacked">Song Title\nArtist</string>
+    <string name="option_song_info_single">Song Title · Artist</string>
+    <string name="choice_song_info_duration">Intro length</string>
     <string name="setting_song_info_size">Song info size</string>
     <string name="choice_text_weight">Text weight</string>
     <string name="setting_lyric_size">Lyric size</string>

@@ -153,6 +153,7 @@ object SceneCompiler {
             metadataVisible = profile.metadataVisible &&
                 supportedWidgets.any { it.type == "metadata" },
             metadataAnchor = if (profile.metadataAnchor == "bottom") "bottom" else "top",
+            metadataLayout = if (profile.metadataLayout == "single") "single" else "stacked",
             metadataSizePercent = profile.metadataSizePercent.coerceIn(50, 200),
             rubyVisible = profile.rubyVisible,
             weight = profile.weight.takeIf { it in WEIGHTS } ?: "Medium",

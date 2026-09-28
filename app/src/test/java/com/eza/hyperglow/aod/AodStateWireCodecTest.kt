@@ -153,11 +153,44 @@ class AodStateWireCodecTest {
     }
 
     @Test
+    fun songInfoLayoutRoundTrips() {
+        val snapshot = snapshotMessage(
+            value = snapshotValue().copy(metadataLayout = "single")
+        )
+        val decoded = requireNotNull(AodStateWireCodec.encode(snapshot))
+            .let(AodStateWireCodec::decode) as AodStateWireMessage.Snapshot
+
+        assertEquals(snapshot, decoded)
+        assertEquals("single", decoded.value.metadataLayout)
+    }
+
+    @Test
+    fun bodyVersionNineDecodesStackedSongInfoLayout() {
+        val layoutBytes = "single".toByteArray(Charsets.UTF_8)
+        val envelope = requireNotNull(
+            AodStateWireCodec.encode(
+                snapshotMessage(
+                    value = snapshotValue().copy(metadataLayout = "single")
+                )
+            )
+        )
+        val bodyV10 = requireNotNull(envelope.body)
+        val bodyV9 = ByteBuffer.allocate(bodyV10.size - 4 - layoutBytes.size).apply {
+            put(bodyV10, 0, bodyV10.size - 4 - layoutBytes.size)
+            putInt(4, 9)
+        }.array()
+        val decoded = AodStateWireCodec.decode(envelope.copy(body = bodyV9))
+            as AodStateWireMessage.Snapshot
+
+        assertEquals("stacked", decoded.value.metadataLayout)
+    }
+
+    @Test
     fun bodyVersionEightDecodesWithoutConcurrentLine() {
         val envelope = requireNotNull(AodStateWireCodec.encode(snapshotMessage()))
-        val bodyV9 = requireNotNull(envelope.body)
-        val bodyV8 = ByteBuffer.allocate(bodyV9.size - 1).apply {
-            put(bodyV9, 0, bodyV9.size - 1)
+        val bodyV10 = requireNotNull(envelope.body)
+        val bodyV8 = ByteBuffer.allocate(bodyV10.size - 12).apply {
+            put(bodyV10, 0, bodyV10.size - 12)
             putInt(4, 8)
         }.array()
         val decoded = AodStateWireCodec.decode(envelope.copy(body = bodyV8))
@@ -175,9 +208,9 @@ class AodStateWireCodecTest {
                 aodCanvasPaddingYPercent = 10f
             )
         )))
-        val bodyV8 = requireNotNull(envelope.body)
-        val bodyV7 = ByteBuffer.allocate(bodyV8.size - 17).apply {
-            put(bodyV8, 0, bodyV8.size - 17)
+        val bodyV10 = requireNotNull(envelope.body)
+        val bodyV7 = ByteBuffer.allocate(bodyV10.size - 28).apply {
+            put(bodyV10, 0, bodyV10.size - 28)
             putInt(4, 7)
         }.array()
         val decoded = AodStateWireCodec.decode(envelope.copy(body = bodyV7))
@@ -194,9 +227,9 @@ class AodStateWireCodecTest {
         val envelope = requireNotNull(AodStateWireCodec.encode(snapshotMessage(
             value = snapshotValue().copy(aodCanvasPaddingDp = 16)
         )))
-        val bodyV8 = requireNotNull(envelope.body)
-        val bodyV6 = ByteBuffer.allocate(bodyV8.size - 25).apply {
-            put(bodyV8, 0, bodyV8.size - 25)
+        val bodyV10 = requireNotNull(envelope.body)
+        val bodyV6 = ByteBuffer.allocate(bodyV10.size - 36).apply {
+            put(bodyV10, 0, bodyV10.size - 36)
             putInt(4, 6)
         }.array()
         val decoded = AodStateWireCodec.decode(envelope.copy(body = bodyV6))
@@ -228,9 +261,9 @@ class AodStateWireCodecTest {
         val envelope = requireNotNull(AodStateWireCodec.encode(snapshotMessage(
             value = snapshotValue().copy(aodRotateWithDevice = true)
         )))
-        val bodyV8 = requireNotNull(envelope.body)
-        val bodyV5 = ByteBuffer.allocate(bodyV8.size - 37).apply {
-            put(bodyV8, 0, bodyV8.size - 37)
+        val bodyV10 = requireNotNull(envelope.body)
+        val bodyV5 = ByteBuffer.allocate(bodyV10.size - 48).apply {
+            put(bodyV10, 0, bodyV10.size - 48)
             putInt(4, 5)
         }.array()
         val decoded = AodStateWireCodec.decode(envelope.copy(body = bodyV5))
@@ -246,9 +279,9 @@ class AodStateWireCodecTest {
     @Test
     fun bodyVersionFourDecodesWithoutLandscapeFields() {
         val envelope = requireNotNull(AodStateWireCodec.encode(snapshotMessage()))
-        val bodyV8 = requireNotNull(envelope.body)
-        val bodyV4 = ByteBuffer.allocate(bodyV8.size - 49).apply {
-            put(bodyV8, 0, bodyV8.size - 49)
+        val bodyV10 = requireNotNull(envelope.body)
+        val bodyV4 = ByteBuffer.allocate(bodyV10.size - 60).apply {
+            put(bodyV10, 0, bodyV10.size - 60)
             putInt(4, 4)
         }.array()
         val decoded = AodStateWireCodec.decode(envelope.copy(body = bodyV4))
@@ -267,9 +300,9 @@ class AodStateWireCodecTest {
     @Test
     fun bodyVersionThreeDecodesWithoutRotationSettle() {
         val envelope = requireNotNull(AodStateWireCodec.encode(snapshotMessage()))
-        val bodyV8 = requireNotNull(envelope.body)
-        val bodyV3 = ByteBuffer.allocate(bodyV8.size - 57).apply {
-            put(bodyV8, 0, bodyV8.size - 57)
+        val bodyV10 = requireNotNull(envelope.body)
+        val bodyV3 = ByteBuffer.allocate(bodyV10.size - 68).apply {
+            put(bodyV10, 0, bodyV10.size - 68)
             putInt(4, 3)
         }.array()
         val decoded = AodStateWireCodec.decode(envelope.copy(body = bodyV3))
@@ -282,9 +315,9 @@ class AodStateWireCodecTest {
     @Test
     fun bodyVersionTwoDecodesWithoutCanvasAnchorOrSettle() {
         val envelope = requireNotNull(AodStateWireCodec.encode(snapshotMessage()))
-        val bodyV8 = requireNotNull(envelope.body)
-        val bodyV2 = ByteBuffer.allocate(bodyV8.size - 61).apply {
-            put(bodyV8, 0, bodyV8.size - 61)
+        val bodyV10 = requireNotNull(envelope.body)
+        val bodyV2 = ByteBuffer.allocate(bodyV10.size - 72).apply {
+            put(bodyV10, 0, bodyV10.size - 72)
             putInt(4, 2)
         }.array()
         val decoded = AodStateWireCodec.decode(envelope.copy(body = bodyV2))
@@ -302,12 +335,12 @@ class AodStateWireCodecTest {
         // Fixed prefix with default snapshotValue(): magic(4) version(4) counts(12)
         // trackGeneration(8) booleans(4) burnInPattern(4 + 13) interval(8).
         // Trailing anchor, settle, landscape anchor/scale, padding, mode,
-        // padding percent, and oriented padding are stripped.
+        // padding percent, oriented padding, and song-info layout are stripped.
         val flagsOffset = 4 + 4 + 12 + 8 + 4 + 4 + "static_bottom".length + 8
-        val bodyV1 = ByteBuffer.allocate(bodyV2.size - 63).apply {
+        val bodyV1 = ByteBuffer.allocate(bodyV2.size - 74).apply {
             put(bodyV2, 0, flagsOffset)
             putInt(4, 1)
-            put(bodyV2, flagsOffset + 2, bodyV2.size - flagsOffset - 2 - 61)
+            put(bodyV2, flagsOffset + 2, bodyV2.size - flagsOffset - 2 - 72)
         }.array()
         val decoded = AodStateWireCodec.decode(envelope.copy(body = bodyV1))
             as AodStateWireMessage.Snapshot
@@ -420,6 +453,62 @@ class AodStateWireCodecTest {
             )
         )
         assertNull(AodStateWireCodec.decode(envelope.copy(kind = 99)))
+    }
+
+    @Test
+    fun everyRejectionGateNamesItselfAndAValidEnvelopeNamesNone() {
+        // Report `R1-5X8J5PQVR8TRWBN0MS06X59FDW` logged six identical "Rejected invalid state
+        // payload" warnings. The cause was an app update reaching a hook process that had not
+        // restarted, which is self-healing; the log could not distinguish it from corruption.
+        val envelope = requireNotNull(AodStateWireCodec.encode(snapshotMessage()))
+        val body = requireNotNull(envelope.body)
+        val unknownBodyVersion = body.copyOf()
+        ByteBuffer.wrap(unknownBodyVersion).putInt(4, 99)
+
+        assertNull(AodStateWireCodec.decodeRejectReason(envelope))
+        assertEquals(
+            "protocol_mismatch",
+            AodStateWireCodec.decodeRejectReason(
+                envelope.copy(protocol = AodStateWireContract.PROTOCOL_VERSION + 1)
+            )
+        )
+        assertEquals(
+            "invalid_scalars",
+            AodStateWireCodec.decodeRejectReason(envelope.copy(revision = -1L))
+        )
+        assertEquals(
+            "unknown_kind",
+            AodStateWireCodec.decodeRejectReason(envelope.copy(kind = 99))
+        )
+        assertEquals(
+            "missing_body",
+            AodStateWireCodec.decodeRejectReason(envelope.copy(body = null))
+        )
+        assertEquals(
+            "undecodable_body",
+            AodStateWireCodec.decodeRejectReason(envelope.copy(body = unknownBodyVersion))
+        )
+        assertEquals(
+            "undecodable_body",
+            AodStateWireCodec.decodeRejectReason(envelope.copy(body = body.copyOf(body.size - 1)))
+        )
+    }
+
+    @Test
+    fun aNonSnapshotKindRejectsOnlyOnItsOwnGate() {
+        // The gates are ordered, so a keepalive with no body must not be reported as a missing body.
+        val envelope = requireNotNull(
+            AodStateWireCodec.encode(
+                AodStateWireMessage.KeepAlive(
+                    revision = 1L,
+                    userId = 0,
+                    updatedAtElapsedMs = 1L,
+                    keepAlive = true,
+                    wakeSignal = 0L
+                )
+            )
+        )
+        assertNull(AodStateWireCodec.decodeRejectReason(envelope))
     }
 
     @Test

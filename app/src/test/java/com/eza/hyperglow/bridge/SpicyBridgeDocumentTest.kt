@@ -270,14 +270,17 @@ class SpicyBridgeDocumentTest {
     }
 
     @Test
-    fun onlyLineAndSyllableDocumentsAreTimed() {
+    fun lineWordAndSyllableDocumentsAreTimed() {
         assertEquals(true, AodProjectionEngine.isTimedDocumentType("Line"))
+        assertEquals(true, AodProjectionEngine.isTimedDocumentType("Word"))
         assertEquals(true, AodProjectionEngine.isTimedDocumentType("Syllable"))
         assertEquals(false, AodProjectionEngine.isTimedDocumentType("Static"))
         assertEquals(false, AodProjectionEngine.isTimedDocumentType("Unknown"))
         assertEquals(true, AodProjectionEngine.isLineLevelDocumentType("Line"))
         assertEquals(false, AodProjectionEngine.isLineLevelDocumentType("Syllable"))
         assertEquals(true, AodProjectionEngine.isEffectiveLineLevelSync("Line", 4))
+        assertEquals(false, AodProjectionEngine.isEffectiveLineLevelSync("Word", 4))
+        assertEquals(true, AodProjectionEngine.isEffectiveLineLevelSync("Word", 0))
         assertEquals(false, AodProjectionEngine.isEffectiveLineLevelSync("Syllable", 4))
         assertEquals(true, AodProjectionEngine.isEffectiveLineLevelSync("Syllable", 0))
         assertEquals(false, AodProjectionEngine.isEffectiveLineLevelSync("Unknown", 0))

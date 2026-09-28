@@ -29,7 +29,9 @@ internal data class SongMetadataIntroInput(
  * Two rules, both about not interrupting lyrics and not flashing:
  *
  * - A song that opens on an interlude shows the intro for [durationMs], or until the interlude ends,
- *   whichever comes first. The intro is then done for that song either way.
+ *   whichever comes first. A negative [durationMs] means no time cap: the intro lasts the whole
+ *   interlude and ends only when a lyric takes the row. The intro is then done for that song
+ *   either way.
  * - A song that opens straight into a lyric shows nothing, and waits for the next interlude long
  *   enough to be worth it.
  *
@@ -41,7 +43,7 @@ internal data class SongMetadataIntroInput(
  * shows the title only for as long as nothing was known, and gets its real intro later.
  */
 internal class SongMetadataIntroPolicy(
-    private val durationMs: Long = DEFAULT_DURATION_MS,
+    private var durationMs: Long = DEFAULT_DURATION_MS,
     private val minimumInterludeMs: Long = DEFAULT_MINIMUM_INTERLUDE_MS
 ) {
     private enum class Phase { PENDING, SHOWING, DEFERRED, COMPLETE }
@@ -50,6 +52,16 @@ internal class SongMetadataIntroPolicy(
     private var phase = Phase.PENDING
     private var startedAtElapsedMs = 0L
     private var provisional = false
+
+    /**
+     * Applies the configured intro length without disturbing per-song state.
+     * The engine calls this on every projection so a settings change takes
+     * effect on the next song change instead of requiring a restart.
+     */
+    @Synchronized
+    fun setDurationMs(value: Long) {
+        durationMs = normalizeSongIntroDurationMs(value)
+    }
 
     @Synchronized
     fun shouldShowLargeMetadata(rawInput: SongMetadataIntroInput): Boolean {
@@ -82,7 +94,7 @@ internal class SongMetadataIntroPolicy(
                 provisional = false
             }
             val elapsedMs = (input.nowElapsedMs - startedAtElapsedMs).coerceAtLeast(0L)
-            if (elapsedMs >= durationMs) {
+            if (durationMs >= 0L && elapsedMs >= durationMs) {
                 phase = Phase.COMPLETE
                 startedAtElapsedMs = 0L
                 return false

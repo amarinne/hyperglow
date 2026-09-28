@@ -127,6 +127,7 @@
     <string name="surface_lockscreen">锁屏</string>
 
     <string name="duration_clear_immediately">立即清除</string>
+    <string name="duration_n_seconds">%1$d 秒</string>
     <string name="duration_5_seconds">5 秒</string>
     <string name="duration_10_seconds">10 秒</string>
     <string name="duration_30_seconds">30 秒</string>
@@ -162,6 +163,10 @@
     <string name="setting_show_song_info">显示歌曲信息</string>
     <string name="setting_song_change_info">切歌时显示歌曲信息</string>
     <string name="choice_song_info_position">歌曲信息位置</string>
+    <string name="choice_song_info_layout">歌曲信息布局</string>
+    <string name="option_song_info_stacked">歌曲标题\n歌手</string>
+    <string name="option_song_info_single">歌曲标题 · 歌手</string>
+    <string name="choice_song_info_duration">开场时长</string>
     <string name="setting_song_info_size">歌曲信息大小</string>
     <string name="choice_text_weight">文字粗细</string>
     <string name="setting_lyric_size">歌词大小</string>

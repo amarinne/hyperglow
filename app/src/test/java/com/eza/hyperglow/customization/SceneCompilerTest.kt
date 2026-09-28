@@ -381,6 +381,27 @@ class SceneCompilerTest {
     }
 
     @Test
+    fun songInfoLayoutCompilesThroughAndNormalizesUnknownValues() {
+        val compiled = SceneCompiler.compile(
+            CustomizationDocument(
+                profiles = mapOf(
+                    SceneCompiler.SURFACE_AOD to SurfaceProfile(metadataLayout = "single"),
+                    SceneCompiler.SURFACE_LOCKSCREEN to SurfaceProfile(metadataLayout = "one_line")
+                )
+            )
+        )
+
+        assertEquals(
+            "single",
+            compiled.profiles.getValue(SceneCompiler.SURFACE_AOD).metadataLayout
+        )
+        assertEquals(
+            "stacked",
+            compiled.profiles.getValue(SceneCompiler.SURFACE_LOCKSCREEN).metadataLayout
+        )
+    }
+
+    @Test
     fun systemUiValidationPreservesLockscreenOnlyCardAndSafeCollisionPolicy() {
         val compiled = SceneCompiler.compile(
             SceneCompiler.safeDefaultDocument().copy(

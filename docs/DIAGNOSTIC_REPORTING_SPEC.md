@@ -110,6 +110,14 @@ timeout:
 - lines from the newest LSPosed module log only, after a fixed 512 KiB tail bound, containing
   `HyperGlow` or `com.eza.hyperglow`, maximum 64 KiB.
 
+Root access is probed first, and that probe is the one command with a longer window: a root manager
+asks the user to approve the app and the command waits for that tap, so a five-second window would
+time out and destroy a grant the user was about to give. The probe also tries the known absolute
+`su` locations after `PATH`, because a manager that installs its binary outside the app's `PATH`
+otherwise fails to spawn, and a spawn failure is indistinguishable from a refusal in the report.
+A `su` that runs and refuses reports `denied`; a `su` that cannot be spawned at any known location,
+or a probe that outruns its window, reports `error`.
+
 Root denial produces a metadata-only report. Oversized sections preserve the first 25% and newest
 75% with an explicit truncation marker. Line-based sections discard partial boundary lines so a
 retained LSPosed fragment cannot lose its module-identity prefix.

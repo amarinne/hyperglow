@@ -120,6 +120,7 @@ internal data class AodStateWireSnapshot(
     val alignmentMode: String,
     val metadataVisible: Boolean,
     val metadataAnchor: String,
+    val metadataLayout: String = "stacked",
     val adaptiveSectioning: Boolean
 )
 
@@ -177,6 +178,25 @@ internal data class AodStateWireEnvelope(
     val pauseRetentionEligible: Boolean = false
 )
 
+/**
+ * Decode carries the named gate alongside the failure so one implementation answers both the
+ * value and the diagnosis. Splitting them would duplicate the gate order, and a gate that drifts
+ * between the two answers is worse than no reason at all.
+ */
+internal sealed interface AodStateWireDecodeOutcome {
+    val messageOrNull: AodStateWireMessage?
+    val rejectReason: String?
+
+    data class Decoded(val message: AodStateWireMessage) : AodStateWireDecodeOutcome {
+        override val messageOrNull: AodStateWireMessage get() = message
+        override val rejectReason: String? get() = null
+    }
+
+    data class Rejected(override val rejectReason: String) : AodStateWireDecodeOutcome {
+        override val messageOrNull: AodStateWireMessage? get() = null
+    }
+}
+
 internal object AodStateWireCodec {
     fun encode(message: AodStateWireMessage): AodStateWireEnvelope? {
         if (!validEnvelopeScalars(message.revision, message.userId, message.updatedAtElapsedMs)) {
@@ -225,48 +245,72 @@ internal object AodStateWireCodec {
         }
     }
 
-    fun decode(envelope: AodStateWireEnvelope): AodStateWireMessage? {
-        if (envelope.protocol != AodStateWireContract.PROTOCOL_VERSION) return null
+    fun decode(envelope: AodStateWireEnvelope): AodStateWireMessage? =
+        decodeOutcome(envelope).messageOrNull
+
+    /**
+     * Names the gate that refused an envelope. A bare null made "the app and the hook disagree"
+     * indistinguishable from "this payload is corrupt", and the first cost a field report a round
+     * trip: the common cause is an app update whose body version the not-yet-restarted hook process
+     * does not know, which is self-healing and needs no diagnosis at all.
+     */
+    fun decodeRejectReason(envelope: AodStateWireEnvelope): String? =
+        decodeOutcome(envelope).rejectReason
+
+    private fun decodeOutcome(envelope: AodStateWireEnvelope): AodStateWireDecodeOutcome {
+        if (envelope.protocol != AodStateWireContract.PROTOCOL_VERSION) {
+            return AodStateWireDecodeOutcome.Rejected("protocol_mismatch")
+        }
         if (!validEnvelopeScalars(
                 envelope.revision,
                 envelope.userId,
                 envelope.updatedAtElapsedMs
             )
-        ) return null
+        ) {
+            return AodStateWireDecodeOutcome.Rejected("invalid_scalars")
+        }
         return when (envelope.kind) {
             AodStateWireContract.KIND_SNAPSHOT -> {
-                val body = envelope.body ?: return null
-                val snapshot = decodeSnapshotBody(body) ?: return null
-                AodStateWireMessage.Snapshot(
+                val body = envelope.body
+                    ?: return AodStateWireDecodeOutcome.Rejected("missing_body")
+                val snapshot = decodeSnapshotBody(body)
+                    ?: return AodStateWireDecodeOutcome.Rejected("undecodable_body")
+                AodStateWireDecodeOutcome.Decoded(
+                    AodStateWireMessage.Snapshot(
+                        revision = envelope.revision,
+                        userId = envelope.userId,
+                        updatedAtElapsedMs = envelope.updatedAtElapsedMs,
+                        keepAlive = envelope.keepAlive,
+                        wakeSignal = envelope.wakeSignal,
+                        playbackActive = envelope.playbackActive,
+                        pauseRetentionEligible = envelope.pauseRetentionEligible,
+                        value = snapshot
+                    )
+                )
+            }
+            AodStateWireContract.KIND_HIDDEN -> AodStateWireDecodeOutcome.Decoded(
+                AodStateWireMessage.Hidden(
                     revision = envelope.revision,
                     userId = envelope.userId,
                     updatedAtElapsedMs = envelope.updatedAtElapsedMs,
                     keepAlive = envelope.keepAlive,
                     wakeSignal = envelope.wakeSignal,
                     playbackActive = envelope.playbackActive,
-                    pauseRetentionEligible = envelope.pauseRetentionEligible,
-                    value = snapshot
+                    pauseRetentionEligible = envelope.pauseRetentionEligible
                 )
-            }
-            AodStateWireContract.KIND_HIDDEN -> AodStateWireMessage.Hidden(
-                revision = envelope.revision,
-                userId = envelope.userId,
-                updatedAtElapsedMs = envelope.updatedAtElapsedMs,
-                keepAlive = envelope.keepAlive,
-                wakeSignal = envelope.wakeSignal,
-                playbackActive = envelope.playbackActive,
-                pauseRetentionEligible = envelope.pauseRetentionEligible
             )
-            AodStateWireContract.KIND_KEEPALIVE -> AodStateWireMessage.KeepAlive(
-                revision = envelope.revision,
-                userId = envelope.userId,
-                updatedAtElapsedMs = envelope.updatedAtElapsedMs,
-                keepAlive = envelope.keepAlive,
-                wakeSignal = envelope.wakeSignal,
-                playbackActive = envelope.playbackActive,
-                pauseRetentionEligible = envelope.pauseRetentionEligible
+            AodStateWireContract.KIND_KEEPALIVE -> AodStateWireDecodeOutcome.Decoded(
+                AodStateWireMessage.KeepAlive(
+                    revision = envelope.revision,
+                    userId = envelope.userId,
+                    updatedAtElapsedMs = envelope.updatedAtElapsedMs,
+                    keepAlive = envelope.keepAlive,
+                    wakeSignal = envelope.wakeSignal,
+                    playbackActive = envelope.playbackActive,
+                    pauseRetentionEligible = envelope.pauseRetentionEligible
+                )
             )
-            else -> null
+            else -> AodStateWireDecodeOutcome.Rejected("unknown_kind")
         }
     }
 
@@ -382,6 +426,7 @@ internal object AodStateWireCodec {
                     output.writeDouble(group.confidence)
                 }
             }
+            output.writeBoundedString(snapshot.metadataLayout)
             }
             bytes.toByteArray().takeIf {
                 it.isNotEmpty() && it.size <= AodStateWireLimits.MAX_ENCODED_BODY_BYTES
@@ -407,12 +452,14 @@ internal object AodStateWireCodec {
             // Body v8 splits padding per orientation; v7 and older use the
             // shared pair for both portrait and landscape.
             // Body v9 appends one concurrent lyric line; older bodies render solo.
+            // Body v10 appends the song-info layout; older bodies stack title
+            // over artist.
             val bodyVersion = input.readInt()
             if (bodyVersion != BODY_VERSION_V1 && bodyVersion != BODY_VERSION_V2 &&
                 bodyVersion != BODY_VERSION_V3 && bodyVersion != BODY_VERSION_V4 &&
                 bodyVersion != BODY_VERSION_V5 && bodyVersion != BODY_VERSION_V6 &&
                 bodyVersion != BODY_VERSION_V7 && bodyVersion != BODY_VERSION_V8 &&
-                bodyVersion != BODY_VERSION
+                bodyVersion != BODY_VERSION_V9 && bodyVersion != BODY_VERSION
             ) return null
             val wordCount = input.readBoundedCount(AodStateWireLimits.MAX_WORDS) ?: return null
             val rubyCount = input.readBoundedCount(AodStateWireLimits.MAX_RUBY) ?: return null
@@ -597,7 +644,7 @@ internal object AodStateWireCodec {
             val aodCanvasPaddingPortraitYPercent = orientedPadding[1]
             val aodCanvasPaddingLandscapeXPercent = orientedPadding[2]
             val aodCanvasPaddingLandscapeYPercent = orientedPadding[3]
-            val hasSecondLine = if (bodyVersion >= BODY_VERSION) {
+            val hasSecondLine = if (bodyVersion >= BODY_VERSION_V9) {
                 input.readStrictBoolean() ?: return null
             } else {
                 false
@@ -606,6 +653,11 @@ internal object AodStateWireCodec {
                 decodeSecondLine(input, budget) ?: return null
             } else {
                 null
+            }
+            val metadataLayout = if (bodyVersion >= BODY_VERSION) {
+                input.readStyleString(budget)?.let(::normalizeAodMetadataLayout) ?: return null
+            } else {
+                BODY_V1_V9_DEFAULT_METADATA_LAYOUT
             }
             if (input.available() != 0) return null
             AodStateWireSnapshot(
@@ -648,6 +700,7 @@ internal object AodStateWireCodec {
                 alignmentMode = alignmentMode,
                 metadataVisible = metadataVisible,
                 metadataAnchor = metadataAnchor,
+                metadataLayout = metadataLayout,
                 adaptiveSectioning = adaptiveSectioning,
                 aodCanvasAnchor = aodCanvasAnchor,
                 aodRotationSettleMs = aodRotationSettleMs,
@@ -819,7 +872,8 @@ internal object AodStateWireCodec {
             snapshot.transitionMode != normalizeAodTransition(snapshot.transitionMode) ||
             snapshot.fontFamily != normalizeAodFontFamily(snapshot.fontFamily) ||
             snapshot.alignmentMode != normalizeAodAlignment(snapshot.alignmentMode) ||
-            snapshot.metadataAnchor != normalizeAodMetadataAnchor(snapshot.metadataAnchor)
+            snapshot.metadataAnchor != normalizeAodMetadataAnchor(snapshot.metadataAnchor) ||
+            snapshot.metadataLayout != normalizeAodMetadataLayout(snapshot.metadataLayout)
         ) return false
         val budget = Utf8Budget()
         if (!budget.accept(snapshot.original, AodStateWireLimits.MAX_LYRIC_CHARS, false) ||
@@ -840,7 +894,8 @@ internal object AodStateWireCodec {
             snapshot.transitionMode,
             snapshot.fontFamily,
             snapshot.alignmentMode,
-            snapshot.metadataAnchor
+            snapshot.metadataAnchor,
+            snapshot.metadataLayout
         )
         if (styles.any { !budget.accept(it, AodStateWireLimits.MAX_STYLE_CHARS, false) }) return false
         for (word in snapshot.words) {
@@ -945,7 +1000,9 @@ internal object AodStateWireCodec {
     private const val BODY_VERSION_V6 = 6
     private const val BODY_VERSION_V7 = 7
     private const val BODY_VERSION_V8 = 8
-    private const val BODY_VERSION = 9
+    private const val BODY_VERSION_V9 = 9
+    private const val BODY_VERSION = 10
+    private const val BODY_V1_V9_DEFAULT_METADATA_LAYOUT = "stacked"
     private const val BODY_V1_V2_DEFAULT_ANCHOR = 0.5f
     private const val BODY_V1_V3_DEFAULT_SETTLE_MS = 1_000L
     private const val BODY_V1_V4_DEFAULT_ANCHOR = 0.5f
@@ -1005,7 +1062,14 @@ internal object AodStateWireBundleCodec {
         envelope.body?.let { putByteArray(KEY_BODY, it) }
     }
 
-    fun snapshotFromBundle(bundle: Bundle): AodStateWireMessage? {
+    fun snapshotFromBundle(bundle: Bundle): AodStateWireMessage? =
+        AodStateWireCodec.decode(envelopeFromBundle(bundle))
+
+    /**
+     * The extracted envelope, kept separate from decoding so a rejection can name its gate. The
+     * Bundle is still decoded into owned scalars and bytes here, while Binder owns it.
+     */
+    fun envelopeFromBundle(bundle: Bundle): AodStateWireEnvelope {
         val kind = bundle.getInt(KEY_KIND, 0)
         val envelope = AodStateWireEnvelope(
             protocol = bundle.getInt(KEY_PROTOCOL, 0),
@@ -1023,7 +1087,7 @@ internal object AodStateWireBundleCodec {
             playbackActive = bundle.getBoolean(KEY_PLAYBACK_ACTIVE, false),
             pauseRetentionEligible = bundle.getBoolean(KEY_PAUSE_RETENTION_ELIGIBLE, false)
         )
-        return AodStateWireCodec.decode(envelope)
+        return envelope
     }
 
     private const val KEY_PROTOCOL = "stateProtocol"

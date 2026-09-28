@@ -49,10 +49,16 @@ internal fun projectToDisplay(
     val hasTimedLyrics = !noLyrics &&
         timedDocument?.let(AodProjectionEngine::hasActualLyricTiming) == true
     val row = timedDocument?.primaryRowAt(position).takeUnless { noLyrics }
-    val metadata = listOf(state.title, state.artist)
-        .filter { it.isNotBlank() }
-        .joinToString("\n")
-        .replace('·', '\n')
+    val metadata = if (prefs.metadataLayout == "single") {
+        listOf(state.title, state.artist)
+            .filter { it.isNotBlank() }
+            .joinToString(" · ")
+    } else {
+        listOf(state.title, state.artist)
+            .filter { it.isNotBlank() }
+            .joinToString("\n")
+            .replace('·', '\n')
+    }
     val fallbackLine = state.line.takeIf {
         !unsynced && !noLyrics && document == null && state.status == "ready" && it.isNotBlank()
     }
@@ -236,6 +242,7 @@ internal fun projectToDisplay(
         alignmentMode = prefs.alignment,
         metadataVisible = context.metadataVisible,
         metadataAnchor = prefs.metadataAnchor,
+        metadataLayout = prefs.metadataLayout,
         adaptiveSectioning = prefs.adaptiveSectioning
     )
 }

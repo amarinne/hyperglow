@@ -98,6 +98,8 @@ internal fun LyricSnapshot.toAodCanvasContent(
     },
     metadataVisible = profile?.metadataVisible ?: metadataVisible,
     metadataAnchor = if ((profile?.metadataAnchor ?: metadataAnchor) == "bottom") "bottom" else "top",
+    metadataLayout = (profile?.metadataLayout ?: metadataLayout).takeIf { it == "single" }
+        ?: "stacked",
     metadataSizePercent = profile?.metadataSizePercent ?: 100,
     adaptiveSectioning = profile?.adaptiveSectioning ?: adaptiveSectioning,
     palette = profile?.palette.orEmpty()

@@ -79,6 +79,7 @@ class AodProjectionLifecycleTest {
     @Test
     fun keepAliveTimingRequiresTimedTypeAndPositiveRowDuration() {
         assertTrue(AodProjectionEngine.hasActualLyricTiming(document("Line", 100L, 200L)))
+        assertTrue(AodProjectionEngine.hasActualLyricTiming(document("Word", 100L, 200L)))
         assertTrue(AodProjectionEngine.hasActualLyricTiming(document("Syllable", 100L, 200L)))
         assertFalse(AodProjectionEngine.hasActualLyricTiming(document("Static", 100L, 200L)))
         assertFalse(AodProjectionEngine.hasActualLyricTiming(document("Line", 100L, 100L)))

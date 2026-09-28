@@ -4,13 +4,40 @@ import java.io.IOException
 import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
+/**
+ * Runs the command with the first `su` that can be spawned, because a root manager does not always
+ * leave one where an app's `PATH` can find it and a spawn failure is indistinguishable from a
+ * refusal once it reaches the report: both arrive as `error`, and an `error` suppresses the whole
+ * capture, so the report carries no evidence. `su` on `PATH` stays first because that is where the
+ * common managers bind it; the absolute paths cover the ones that install elsewhere.
+ *
+ * [run] answers `null` only when the binary could not be spawned at all, which is the single
+ * outcome that justifies trying the next candidate. A command that ran and was refused, and a
+ * command that ran too long, both answer the question and end the search.
+ */
+internal fun runFirstRootBinary(
+    binaries: List<String>,
+    run: (String) -> DiagnosticRootCommandResult?
+): DiagnosticRootCommandResult = binaries.firstNotNullOfOrNull(run)
+    ?: DiagnosticRootCommandResult(exitCode = -1, output = "")
+
 internal object DiagnosticRootProcessRunner : DiagnosticRootCommandRunner {
-    override fun run(command: String, timeoutMs: Long): DiagnosticRootCommandResult {
+    override fun run(command: String, timeoutMs: Long): DiagnosticRootCommandResult =
+        runFirstRootBinary(ROOT_BINARIES) { binary ->
+            runAs(binary, command, timeoutMs)
+        }
+
+    /** `null` when the binary could not be spawned, which is the only answer that continues the search. */
+    private fun runAs(
+        binary: String,
+        command: String,
+        timeoutMs: Long
+    ): DiagnosticRootCommandResult? {
         var process: Process? = null
         var reader: Thread? = null
         val capture = RollingCommandOutput()
         return try {
-            process = ProcessBuilder("su", "-c", command)
+            process = ProcessBuilder(binary, "-c", command)
                 .redirectErrorStream(true)
                 .start()
             val runningProcess = process
@@ -35,7 +62,7 @@ internal object DiagnosticRootProcessRunner : DiagnosticRootCommandRunner {
                 outputTruncated = capture.truncated
             )
         } catch (_: Exception) {
-            DiagnosticRootCommandResult(exitCode = -1, output = "")
+            null
         } finally {
             process?.destroy()
             reader?.interrupt()
@@ -92,6 +119,16 @@ internal object DiagnosticRootProcessRunner : DiagnosticRootCommandRunner {
                 tailBytes.toString(Charsets.UTF_8)
         }
     }
+
+    private val ROOT_BINARIES = listOf(
+        "su",
+        "/system/bin/su",
+        "/system/xbin/su",
+        "/sbin/su",
+        "/debug_ramdisk/su",
+        "/data/adb/ksu/bin/su",
+        "/data/adb/ap/bin/su"
+    )
 
     private const val PREFIX_BYTES = 128 * 1024
     private const val TAIL_BYTES = 1024 * 1024

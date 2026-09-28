@@ -11,7 +11,7 @@ import org.junit.Test
 class AodKeepaliveRegressionTest {
     @Test
     fun timedLyricsRemainAliveAfterTheSongChangeLeaseExpires() {
-        for (type in listOf("Line", "Syllable")) {
+        for (type in listOf("Line", "Word", "Syllable")) {
             val policy = AodPowerSessionPolicy()
             project(document = document(type), nowElapsedMs = 1_000L, policy = policy)
 

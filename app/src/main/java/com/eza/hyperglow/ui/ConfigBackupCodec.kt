@@ -5,11 +5,13 @@ import com.eza.hyperglow.aod.AodRenderConfig.Companion.DEFAULTS
 import com.eza.hyperglow.aod.AodRenderPreferences
 import com.eza.hyperglow.aod.AOD_ROTATION_MODE_AUTO
 import com.eza.hyperglow.aod.normalizeAodCanvasAnchor
+import com.eza.hyperglow.aod.normalizeAodMetadataLayout
 import com.eza.hyperglow.aod.legacyPaddingDpToPercent
 import com.eza.hyperglow.aod.normalizeAodCanvasPaddingPercent
 import com.eza.hyperglow.aod.normalizeAodLandscapeTextScale
 import com.eza.hyperglow.aod.normalizeAodRotationMode
 import com.eza.hyperglow.aod.normalizeAodRotationSettleMs
+import com.eza.hyperglow.aod.normalizeSongIntroDurationMs
 import com.eza.hyperglow.customization.CustomizationDocument
 import com.eza.hyperglow.customization.SceneCompiler
 import kotlinx.serialization.json.JsonObject
@@ -126,6 +128,7 @@ internal object ConfigBackupCodec {
         BackupLongField(AodRenderPreferences.KEEP_AWAKE_DURATION_MS) { it.keepAwakeDurationMs },
         BackupLongField(AodRenderPreferences.BURN_IN_INTERVAL_MS) { it.burnInIntervalMs },
         BackupLongField(AodRenderPreferences.PAUSE_LINGER_MS) { it.pauseLingerMs },
+        BackupLongField(AodRenderPreferences.SONG_INTRO_DURATION_MS) { it.songIntroDurationMs },
         BackupLongField(AodRenderPreferences.AOD_ROTATION_SETTLE_MS) { it.aodRotationSettleMs }
     )
 
@@ -135,6 +138,7 @@ internal object ConfigBackupCodec {
         BackupStringField(AodRenderPreferences.OVERFLOW) { it.overflowMode },
         BackupStringField(AodRenderPreferences.METADATA_VISIBLE) { it.metadataVisible },
         BackupStringField(AodRenderPreferences.METADATA_ANCHOR) { it.metadataAnchor },
+        BackupStringField(AodRenderPreferences.METADATA_LAYOUT) { it.metadataLayout },
         BackupStringField(AodRenderPreferences.WEIGHT) { it.weight },
         BackupStringField(AodRenderPreferences.TEXT_SIZE) { it.textSize },
         BackupStringField(AodRenderPreferences.FONT_FAMILY) { it.fontFamily },
@@ -206,6 +210,8 @@ internal object ConfigBackupCodec {
                 ?: DEFAULTS.metadataVisible,
             metadataAnchor = stored.string(AodRenderPreferences.METADATA_ANCHOR)
                 ?: DEFAULTS.metadataAnchor,
+            metadataLayout = stored.string(AodRenderPreferences.METADATA_LAYOUT)
+                ?.let(::normalizeAodMetadataLayout) ?: DEFAULTS.metadataLayout,
             weight = stored.string(AodRenderPreferences.WEIGHT) ?: DEFAULTS.weight,
             textSize = stored.string(AodRenderPreferences.TEXT_SIZE) ?: DEFAULTS.textSize,
             textSizeCustom = (stored.int(AodRenderPreferences.TEXT_SIZE_CUSTOM)
@@ -229,6 +235,8 @@ internal object ConfigBackupCodec {
                 ?: DEFAULTS.burnInIntervalMs,
             pauseLingerMs = stored.long(AodRenderPreferences.PAUSE_LINGER_MS)
                 ?: DEFAULTS.pauseLingerMs,
+            songIntroDurationMs = stored.long(AodRenderPreferences.SONG_INTRO_DURATION_MS)
+                ?.let(::normalizeSongIntroDurationMs) ?: DEFAULTS.songIntroDurationMs,
             aodRotationSettleMs = stored.long(AodRenderPreferences.AOD_ROTATION_SETTLE_MS)
                 ?.let(::normalizeAodRotationSettleMs) ?: DEFAULTS.aodRotationSettleMs,
             lockscreenKeepAwake = stored.boolean(AodRenderPreferences.LOCKSCREEN_KEEP_AWAKE)

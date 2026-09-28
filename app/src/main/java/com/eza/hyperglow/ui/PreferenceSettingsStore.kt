@@ -135,6 +135,7 @@ internal class PreferenceSettingsStore(
                 if (aod.metadataVisible) "show" else "hide"
             )
             .putString(AodRenderPreferences.METADATA_ANCHOR, aod.metadataAnchor)
+            .putString(AodRenderPreferences.METADATA_LAYOUT, aod.metadataLayout)
             .putString(AodRenderPreferences.WEIGHT, aod.weight)
             .putString(AodRenderPreferences.TEXT_SIZE, aod.textSize)
             .putInt(AodRenderPreferences.TEXT_SIZE_CUSTOM, aod.textSizeCustom)

@@ -108,6 +108,26 @@ class AodRenderPreferencesTest {
     }
 
     @Test
+    fun songInfoLayoutAllowsOnlyStackedOrSingle() {
+        assertEquals("stacked", normalizeAodMetadataLayout("stacked"))
+        assertEquals("single", normalizeAodMetadataLayout("single"))
+        assertEquals("stacked", normalizeAodMetadataLayout(null))
+        assertEquals("stacked", normalizeAodMetadataLayout("two_line"))
+    }
+
+    @Test
+    fun songIntroDurationAllowsTwoToThirtySecondsOrNoLimit() {
+        assertEquals(-1L, normalizeSongIntroDurationMs(-1L))
+        assertEquals(-1L, normalizeSongIntroDurationMs(-100L))
+        assertEquals(2_000L, normalizeSongIntroDurationMs(2_000L))
+        assertEquals(12_000L, normalizeSongIntroDurationMs(12_000L))
+        assertEquals(30_000L, normalizeSongIntroDurationMs(30_000L))
+        assertEquals(5_000L, normalizeSongIntroDurationMs(0L))
+        assertEquals(5_000L, normalizeSongIntroDurationMs(1_000L))
+        assertEquals(5_000L, normalizeSongIntroDurationMs(31_000L))
+    }
+
+    @Test
     fun configDefaultsAreConcreteExceptAlignment() {
         val config = AodRenderConfig()
 
@@ -119,6 +139,8 @@ class AodRenderPreferencesTest {
         assertEquals("Wrap", config.overflowMode)
         assertEquals("hide", config.metadataVisible)
         assertEquals("top", config.metadataAnchor)
+        assertEquals("stacked", config.metadataLayout)
+        assertEquals(5_000L, config.songIntroDurationMs)
         assertEquals("Medium", config.weight)
         assertEquals("normal", config.textSize)
         assertEquals("spotify", config.fontFamily)

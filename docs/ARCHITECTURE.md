@@ -102,9 +102,11 @@ ends.
 Bridge document version 1 accepts optional row-level `layoutGroups`. Each group carries UTF-16
 source range, lexical kind, keep-together intent, and confidence. AOD projects these fields through
 Binder without changing timed words. The module-local persisted `Adaptive sectioning` preference
-defaults on: lexical chunks and secondary-row tokens are balanced across the required line count;
-Japanese particles stay with preceding phrases, Chinese dictionary phrases stay together, and Korean
-authored spaces remain break points. Groups wider than the canvas may emergency-break. With the
+ defaults on: lexical chunks and secondary-row tokens are balanced across the required line count;
+ Japanese particles stay with preceding phrases, Chinese dictionary phrases stay together, and Korean
+ authored spaces remain break points. Within the minimal line count, a break after clause punctuation
+ costs less than an arbitrary split, so phrases break at commas and sentence ends when that needs no
+ extra line. Groups wider than the canvas may emergency-break. With the
 preference off, AOD ignores layout groups and restores upstream behavior: timed words wrap greedily
 in source order without balancing, but transported fragments marked as parts of the same lexical word
 remain indivisible. Untimed text uses `Paint.breakText`, and each secondary row stays a single clipped
@@ -140,8 +142,12 @@ visible lyric row, mirrored for RTL lyrics. Word/syllable timing remains unchang
   preserved, known legacy aliases are canonicalized, unknown values use producer-safe defaults, and
   custom text size is clamped before state enters projection/rendering.
 - The producer retains at most one bounded immutable state and one compressed document for the
-  current session. Each Binder connection receives state first, then document, once; normal service
-  process death uses Android's existing automatic reconnect without creating a duplicate bind.
+  current session. Each Binder connection receives state first, then document, once. Android has no
+  automatic reconnect for a bound-service client: after the app process dies the client receives
+  `onServiceDisconnected` and no later `onServiceConnected`, so rebinding after service process death
+  is the producer client's responsibility. HyperGlow cannot recover that binding from its own side and
+  must not be specified as if it could. The provider transport is the exception, because every
+  `ContentResolver.call` re-acquires the provider and therefore survives app process death.
   Explicit clear, generation retirement, and disable discard both retained payloads. A null
   state edge may retain the current document in app memory for one bounded 30-second transport
   grace; only the exact returning producer/generation/track/duration identity may reuse it.

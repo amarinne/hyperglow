@@ -443,6 +443,7 @@ internal fun AodRenderConfig.withSurfacePreferences(document: CustomizationDocum
         overflowMode = aod.overflow,
         metadataVisible = if (aod.metadataVisible) "show" else "hide",
         metadataAnchor = aod.metadataAnchor,
+        metadataLayout = aod.metadataLayout,
         weight = aod.weight,
         textSize = aod.textSize,
         textSizeCustom = aod.textSizeCustom,

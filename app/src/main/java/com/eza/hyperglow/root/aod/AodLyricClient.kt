@@ -11,6 +11,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.os.UserHandle
 import com.eza.hyperglow.aod.AodStateWireBundleCodec
+import com.eza.hyperglow.aod.AodStateWireCodec
 import com.eza.hyperglow.aod.AodStateWireMessage
 import com.eza.hyperglow.aod.IAodLyricBridge
 import com.eza.hyperglow.aod.IAodLyricCallback
@@ -189,14 +190,19 @@ internal class AodLyricClient(
                 if (stopped || generation != bindingGeneration) return
             }
             // Decode while Binder owns the Bundle; only the immutable message crosses callback return.
-            val ownedMessage = try {
-                AodStateWireBundleCodec.snapshotFromBundle(state)
+            val ownedEnvelope = try {
+                AodStateWireBundleCodec.envelopeFromBundle(state)
             } catch (error: Exception) {
                 HookLogger.w(TAG, "Rejected malformed state payload", error)
                 return
             }
+            val ownedMessage = AodStateWireCodec.decode(ownedEnvelope)
             if (ownedMessage == null) {
-                HookLogger.w(TAG, "Rejected invalid state payload")
+                HookLogger.w(
+                    TAG,
+                    "Rejected invalid state payload reason=" +
+                        AodStateWireCodec.decodeRejectReason(ownedEnvelope)
+                )
                 return
             }
             synchronized(this@AodLyricClient) {

@@ -129,6 +129,7 @@ internal object SystemUiCustomizationValidator {
             lyricLineLimit = normalizeLyricLineLimit(profile.lyricLineLimit),
             metadataVisible = profile.metadataVisible && widgets.any { it.type == "metadata" },
             metadataAnchor = if (profile.metadataAnchor == "bottom") "bottom" else "top",
+            metadataLayout = if (profile.metadataLayout == "single") "single" else "stacked",
             metadataSizePercent = profile.metadataSizePercent.coerceIn(50, 200),
             weight = profile.weight.takeIf { it in WEIGHTS } ?: "Medium",
             textSize = profile.textSize.takeIf { it in TEXT_SIZES } ?: "normal",
