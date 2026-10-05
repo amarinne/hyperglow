@@ -155,6 +155,9 @@ object SceneCompiler {
             metadataAnchor = if (profile.metadataAnchor == "bottom") "bottom" else "top",
             metadataLayout = if (profile.metadataLayout == "single") "single" else "stacked",
             metadataSizePercent = profile.metadataSizePercent.coerceIn(50, 200),
+            metadataArtistSizePercent = normalizeSongInfoArtistSizePercent(
+                profile.metadataArtistSizePercent
+            ),
             rubyVisible = profile.rubyVisible,
             weight = profile.weight.takeIf { it in WEIGHTS } ?: "Medium",
             textSize = profile.textSize.takeIf { it in TEXT_SIZES } ?: "normal",

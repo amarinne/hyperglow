@@ -12,6 +12,7 @@ internal object AodStateWireLimits {
     const val MAX_LYRIC_CHARS = 500
     const val MAX_METADATA_CHARS = 200
     const val MAX_STYLE_CHARS = 200
+    const val MAX_SOURCE_ROWS = 5000
     const val MAX_WORDS = 128
     const val MAX_RUBY = 128
     const val MAX_LAYOUT_GROUPS = 256
@@ -65,7 +66,8 @@ internal data class AodStateWireSecondLine(
     val lineEndMs: Long,
     val words: List<AodStateWireWord>,
     val ruby: List<AodStateWireRuby>,
-    val layoutGroups: List<AodStateWireLayoutGroup>
+    val layoutGroups: List<AodStateWireLayoutGroup>,
+    val sourceRowOrdinal: Int = -1
 )
 
 internal data class AodStateWireSnapshot(
@@ -121,7 +123,8 @@ internal data class AodStateWireSnapshot(
     val metadataVisible: Boolean,
     val metadataAnchor: String,
     val metadataLayout: String = "stacked",
-    val adaptiveSectioning: Boolean
+    val adaptiveSectioning: Boolean,
+    val sourceRowOrdinal: Int = -1
 )
 
 internal sealed interface AodStateWireMessage {
@@ -427,6 +430,8 @@ internal object AodStateWireCodec {
                 }
             }
             output.writeBoundedString(snapshot.metadataLayout)
+            output.writeInt(snapshot.sourceRowOrdinal)
+            output.writeInt(snapshot.secondLine?.sourceRowOrdinal ?: -1)
             }
             bytes.toByteArray().takeIf {
                 it.isNotEmpty() && it.size <= AodStateWireLimits.MAX_ENCODED_BODY_BYTES
@@ -459,7 +464,8 @@ internal object AodStateWireCodec {
                 bodyVersion != BODY_VERSION_V3 && bodyVersion != BODY_VERSION_V4 &&
                 bodyVersion != BODY_VERSION_V5 && bodyVersion != BODY_VERSION_V6 &&
                 bodyVersion != BODY_VERSION_V7 && bodyVersion != BODY_VERSION_V8 &&
-                bodyVersion != BODY_VERSION_V9 && bodyVersion != BODY_VERSION
+                bodyVersion != BODY_VERSION_V9 && bodyVersion != BODY_VERSION_V10 &&
+                bodyVersion != BODY_VERSION
             ) return null
             val wordCount = input.readBoundedCount(AodStateWireLimits.MAX_WORDS) ?: return null
             val rubyCount = input.readBoundedCount(AodStateWireLimits.MAX_RUBY) ?: return null
@@ -649,16 +655,20 @@ internal object AodStateWireCodec {
             } else {
                 false
             }
-            val secondLine = if (hasSecondLine) {
+            val decodedSecondLine = if (hasSecondLine) {
                 decodeSecondLine(input, budget) ?: return null
             } else {
                 null
             }
-            val metadataLayout = if (bodyVersion >= BODY_VERSION) {
+            val metadataLayout = if (bodyVersion >= BODY_VERSION_V10) {
                 input.readStyleString(budget)?.let(::normalizeAodMetadataLayout) ?: return null
             } else {
                 BODY_V1_V9_DEFAULT_METADATA_LAYOUT
             }
+            val sourceRowOrdinal = if (bodyVersion >= BODY_VERSION) input.readInt() else -1
+            val secondOrdinal = if (bodyVersion >= BODY_VERSION) input.readInt() else -1
+            if (decodedSecondLine == null && secondOrdinal != -1) return null
+            val secondLine = decodedSecondLine?.copy(sourceRowOrdinal = secondOrdinal)
             if (input.available() != 0) return null
             AodStateWireSnapshot(
                 trackGeneration = trackGeneration,
@@ -700,6 +710,7 @@ internal object AodStateWireCodec {
                 alignmentMode = alignmentMode,
                 metadataVisible = metadataVisible,
                 metadataAnchor = metadataAnchor,
+                sourceRowOrdinal = sourceRowOrdinal,
                 metadataLayout = metadataLayout,
                 adaptiveSectioning = adaptiveSectioning,
                 aodCanvasAnchor = aodCanvasAnchor,
@@ -809,13 +820,16 @@ internal object AodStateWireCodec {
             snapshot.layoutGroups.size + secondGroups.size > AodStateWireLimits.MAX_LAYOUT_GROUPS
         ) return false
         snapshot.secondLine?.let { second ->
-            if (second.text.isBlank() || second.text.length > AodStateWireLimits.MAX_LYRIC_CHARS ||
+            if (second.sourceRowOrdinal !in -1 until AodStateWireLimits.MAX_SOURCE_ROWS ||
+                (snapshot.sourceRowOrdinal >= 0 && snapshot.sourceRowOrdinal == second.sourceRowOrdinal) ||
+                second.text.isBlank() || second.text.length > AodStateWireLimits.MAX_LYRIC_CHARS ||
                 second.lineStartMs < 0L || second.lineEndMs < second.lineStartMs ||
                 second.lineEndMs > snapshot.durationMs ||
                 secondWords.any { it.startMs < 0L || it.endMs < it.startMs }
             ) return false
         }
-        if (snapshot.trackGeneration < 0L || snapshot.lineStartMs < 0L ||
+        if (snapshot.sourceRowOrdinal !in -1 until AodStateWireLimits.MAX_SOURCE_ROWS ||
+            snapshot.trackGeneration < 0L || snapshot.lineStartMs < 0L ||
             snapshot.lineEndMs < snapshot.lineStartMs ||
             snapshot.durationMs !in 1L..AodStateWireLimits.MAX_MEDIA_DURATION_MS ||
             snapshot.lineEndMs > snapshot.durationMs ||
@@ -1001,7 +1015,8 @@ internal object AodStateWireCodec {
     private const val BODY_VERSION_V7 = 7
     private const val BODY_VERSION_V8 = 8
     private const val BODY_VERSION_V9 = 9
-    private const val BODY_VERSION = 10
+    private const val BODY_VERSION_V10 = 10
+    private const val BODY_VERSION = 11
     private const val BODY_V1_V9_DEFAULT_METADATA_LAYOUT = "stacked"
     private const val BODY_V1_V2_DEFAULT_ANCHOR = 0.5f
     private const val BODY_V1_V3_DEFAULT_SETTLE_MS = 1_000L

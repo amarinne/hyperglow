@@ -65,7 +65,8 @@ data class AodDisplayState(
     val metadataVisible: Boolean = true,
     val metadataAnchor: String = "top",
     val metadataLayout: String = "stacked",
-    val adaptiveSectioning: Boolean = true
+    val adaptiveSectioning: Boolean = true,
+    val sourceRowOrdinal: Int = -1
 )
 
 data class AodDisplayWord(
@@ -91,7 +92,8 @@ data class AodDisplaySecondLine(
     val lineEndMs: Long = 0L,
     val words: List<AodDisplayWord> = emptyList(),
     val ruby: List<AodDisplayRuby> = emptyList(),
-    val layoutGroups: List<AodDisplayLayoutGroup> = emptyList()
+    val layoutGroups: List<AodDisplayLayoutGroup> = emptyList(),
+    val sourceRowOrdinal: Int = -1
 )
 
 data class AodDisplayRuby(val start: Int, val end: Int, val reading: String)
@@ -521,6 +523,7 @@ private fun AodDisplayState.toWireMessage(
             aodCanvasPaddingLandscapeYPercent = aodCanvasPaddingLandscapeYPercent,
             secondLine = secondLine?.let { second ->
                 AodStateWireSecondLine(
+                    sourceRowOrdinal = second.sourceRowOrdinal,
                     text = second.text,
                     romanized = second.romanized,
                     translated = second.translated,
@@ -593,6 +596,7 @@ private fun AodDisplayState.toWireMessage(
             alignmentMode = alignmentMode,
             metadataVisible = metadataVisible,
             metadataAnchor = metadataAnchor,
+            sourceRowOrdinal = sourceRowOrdinal,
             metadataLayout = metadataLayout,
             adaptiveSectioning = adaptiveSectioning
         )

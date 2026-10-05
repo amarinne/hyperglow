@@ -127,6 +127,8 @@ visible lyric row, mirrored for RTL lyrics. Word/syllable timing remains unchang
 ## Security And Lifecycle
 
 - Producer endpoints accept only UIDs containing `com.spotify.music`.
+- The app declares `forceQueryable` so Spotify can discover its bridge service and provider without
+  changing Spotify's manifest. Package visibility does not grant access; both endpoints validate caller UID.
 - AOD callback accepts only system UID containing `com.android.systemui`.
 - The app process promotes `AodLyricBridgeService` to a `specialUse` foreground service through
   explicit start attempts at application creation, activity creation, and SystemUI binding, because
@@ -152,6 +154,9 @@ visible lyric row, mirrored for RTL lyrics. Word/syllable timing remains unchang
   state edge may retain the current document in app memory for one bounded 30-second transport
   grace; only the exact returning producer/generation/track/duration identity may reuse it.
 - App-to-SystemUI lyric state keeps the `onState(Bundle)` ABI but carries a versioned scalar envelope; full snapshots use one encoded body bounded to 48 KiB aggregate UTF-8 text and 64 KiB encoded bytes. Hidden and keepalive messages remain scalar-only.
+- Snapshot body v11 carries the validated source row ordinals for both lyric sections. The app derives
+  them from document order so co-timed lines keep separate renderer identities without changing the
+  producer document protocol. Older bodies retain their timing-based identities.
 - The scalar envelope carries Spotify `playbackActive` explicitly. Power policy never infers pause
   from lyric visibility, media rows, another media player, or renderer state.
 - A SystemUI user switch clears cached state, rejects old-user payloads, and rebinds the app service

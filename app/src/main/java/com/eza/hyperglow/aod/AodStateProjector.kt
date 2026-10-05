@@ -170,6 +170,7 @@ internal fun projectToDisplay(
         alignedRight = presentedRow?.alignedRight == true,
         lineLevelSync = document != null && presentedRow != null &&
             AodProjectionEngine.isEffectiveLineLevelSync(document.type, presentedRow.words.size),
+        sourceRowOrdinal = timedDocument?.rows?.indexOfFirst { it === presentedRow } ?: -1,
         lineStartMs = presentedRow?.startMs ?: 0L,
         lineEndMs = presentedRow?.let { minOf(it.fillEndMs, it.endMs) } ?: 0L,
         durationMs = state.durationMs,
@@ -198,6 +199,7 @@ internal fun projectToDisplay(
                 concurrent.words
             }
             AodDisplaySecondLine(
+                sourceRowOrdinal = timedDocument?.rows?.indexOfFirst { it === concurrent } ?: -1,
                 text = concurrent.text,
                 romanized = if (rejectConcurrentJapaneseReading) "" else concurrent.romanized,
                 translated = concurrent.translated,

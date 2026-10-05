@@ -30,7 +30,10 @@ contract. This spec defines surface visibility, privacy, continuity, customizati
   otherwise valid timed document or release keepalive.
 - Overlapping sung lines (duet/layered rows whose timings overlap the playhead) render together on
   AOD: the primary plus the latest-started overlap, at most two lines, each with its own word
-  timing, readings, and secondary rows, stacked as same-size sections of the canvas. A line stays
+  timing and source row ordinal. Co-timed rows keep separate section identities, including when
+  the primary and companion exchange roles or their text is corrected. Source ordinals come from
+  the validated document row order; a source without vocal lanes stays in its authored layout.
+  Readings and secondary rows stack as same-size sections of the canvas. A line stays
   visible until its own end instead of being cut off when the next line starts. Sections form one
   connected stack in positional slots: a continuing line keeps its slot and never moves between
   sections, a newcomer inherits the vacated slot instead of appending, and a full swap keeps
@@ -483,7 +486,16 @@ This guarantee is enforced by both compilation and SystemUI validation.
    shown by default and, when disabled, reserves no drawing or layout height.
  - Each surface profile stores the song-info layout: `stacked` (title over artist, default) or
    `single` (one middle-dot line, wrapped when too wide). A stacked piece or single line too wide
-   for the frame wraps onto further lines instead of shrinking the block to fit.
+   for the frame wraps onto further lines instead of shrinking the block to fit. Stacked mode
+   renders the artist piece(s) smaller than the title, in both the song-change intro and the
+   persistent metadata row; the artist size is a per-surface percentage of the title line, 40 to
+   100, defaulting to 80. Single-line mode joins every piece into one title-sized line, so the
+   setting has no effect there.
+- A stacked song-info stack with two sizes is laid out the way a document lays out mixed text:
+   each line advances by its own descent plus the next line's own ascent. Stepping every line by
+   one box sized to the largest line leaves the smaller line sitting a full title leading below
+   the title, which reads as two separate blocks instead of one song-info pair. A stack whose
+   lines all share one size keeps the single line box exactly.
 - During the generation-bound song intro, matching one-line title/artist text suppresses the duplicate
   metadata row and morphs into the persistent metadata position and size when the intro ends.
   Incompatible or wrapped geometry uses bounded crossfade. Neither path changes whole-surface alpha,

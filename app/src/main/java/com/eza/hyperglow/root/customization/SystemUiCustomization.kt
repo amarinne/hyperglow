@@ -12,6 +12,7 @@ import com.eza.hyperglow.customization.normalizePaletteValue
 import com.eza.hyperglow.customization.MAX_AOD_BRIGHTNESS
 import com.eza.hyperglow.customization.MIN_AOD_BRIGHTNESS
 import com.eza.hyperglow.customization.normalizeLyricLineLimit
+import com.eza.hyperglow.customization.normalizeSongInfoArtistSizePercent
 import com.eza.hyperglow.aod.normalizePauseLingerMs
 import com.eza.hyperglow.root.projection.LyricSurfaceKind
 import com.eza.hyperglow.root.surface.SurfacePolicyResolver
@@ -131,6 +132,9 @@ internal object SystemUiCustomizationValidator {
             metadataAnchor = if (profile.metadataAnchor == "bottom") "bottom" else "top",
             metadataLayout = if (profile.metadataLayout == "single") "single" else "stacked",
             metadataSizePercent = profile.metadataSizePercent.coerceIn(50, 200),
+            metadataArtistSizePercent = normalizeSongInfoArtistSizePercent(
+                profile.metadataArtistSizePercent
+            ),
             weight = profile.weight.takeIf { it in WEIGHTS } ?: "Medium",
             textSize = profile.textSize.takeIf { it in TEXT_SIZES } ?: "normal",
             textSizeCustom = profile.textSizeCustom.coerceIn(50, MAX_LYRIC_TEXT_SIZE_PERCENT),

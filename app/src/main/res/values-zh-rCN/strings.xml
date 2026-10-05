@@ -168,6 +168,7 @@
     <string name="option_song_info_single">歌曲标题 · 歌手</string>
     <string name="choice_song_info_duration">开场时长</string>
     <string name="setting_song_info_size">歌曲信息大小</string>
+    <string name="setting_song_info_artist_size">歌手大小</string>
     <string name="choice_text_weight">文字粗细</string>
     <string name="setting_lyric_size">歌词大小</string>
     <string name="choice_font">字体</string>

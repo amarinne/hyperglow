@@ -29,6 +29,7 @@ data class SurfaceProfile(
     val metadataAnchor: String = "top",
     val metadataLayout: String = "stacked",
     val metadataSizePercent: Int = 100,
+    val metadataArtistSizePercent: Int = DEFAULT_SONG_INFO_ARTIST_SIZE_PERCENT,
     val rubyVisible: Boolean = true,
     val weight: String = "Medium",
     val textSize: String = "normal",
@@ -107,6 +108,7 @@ data class CompiledSurfaceProfile(
     val palette: Map<String, String>,
     val backgroundStyle: String = "none",
     val metadataSizePercent: Int = 100,
+    val metadataArtistSizePercent: Int = DEFAULT_SONG_INFO_ARTIST_SIZE_PERCENT,
     val rubyVisible: Boolean = true,
     val secondaryTextBright: Boolean = true,
     val lyricLineLimit: Int = DEFAULT_LYRIC_LINE_LIMIT,
@@ -125,6 +127,14 @@ const val DEFAULT_LYRIC_LINE_LIMIT = 3
 const val NO_LYRIC_LINE_LIMIT = 0
 /** Upper bound exposed by the appearance editor for custom lyric text size. */
 const val MAX_LYRIC_TEXT_SIZE_PERCENT = 300
+/**
+ * Stacked song-info artist size, as a percentage of the title line. Default 80
+ * reproduces the shipped smaller artist line; the editor bounds it at 40..100 so
+ * the artist credit never grows past the title it sits under.
+ */
+const val DEFAULT_SONG_INFO_ARTIST_SIZE_PERCENT = 80
+const val MIN_SONG_INFO_ARTIST_SIZE_PERCENT = 40
+const val MAX_SONG_INFO_ARTIST_SIZE_PERCENT = 100
 const val MIN_AOD_BRIGHTNESS = 10
 const val MAX_AOD_BRIGHTNESS = 255
 
@@ -174,3 +184,15 @@ internal fun normalizeLyricLineLimit(value: Int): Int = when (value) {
     in 1..5 -> value
     else -> DEFAULT_LYRIC_LINE_LIMIT
 }
+
+/**
+ * Stacked artist-line size as a percentage of the title line. Out-of-range and
+ * zero values fall back to the shipped default rather than clamping, so a
+ * corrupt document renders the default hierarchy instead of a zero-height line.
+ */
+internal fun normalizeSongInfoArtistSizePercent(value: Int): Int =
+    if (value in MIN_SONG_INFO_ARTIST_SIZE_PERCENT..MAX_SONG_INFO_ARTIST_SIZE_PERCENT) {
+        value
+    } else {
+        DEFAULT_SONG_INFO_ARTIST_SIZE_PERCENT
+    }

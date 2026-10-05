@@ -16,6 +16,46 @@ import org.junit.Test
 
 class AodCanvasLayoutTest {
     @Test
+    fun sourceRowOrdinalsReachRenderContentAndBothCanvasSections() {
+        val snapshot = LyricSnapshot(
+            sourceRowOrdinal = 4,
+            original = "lead",
+            secondLine = LyricSecondLine(text = "other", sourceRowOrdinal = 5)
+        )
+        assertEquals(4, snapshot.renderContent().sourceRowOrdinal)
+        val mapped = snapshot.toAodCanvasContent()
+        assertEquals(4, mapped.sourceRowOrdinal)
+        assertEquals(5, mapped.secondLine?.sourceRowOrdinal)
+        assertFalse(layoutEquivalent(mapped, mapped.copy(sourceRowOrdinal = 6)))
+        assertFalse(layoutEquivalent(mapped, mapped.copy(secondLine = mapped.secondLine?.copy(sourceRowOrdinal = 6))))
+        assertFalse(aodLineTransitionKey(mapped) == aodLineTransitionKey(mapped.copy(secondLine = mapped.secondLine?.copy(sourceRowOrdinal = 6))))
+    }
+
+    @Test
+    fun coTimedSectionsKeepDistinctPlacementAndSlotsAfterRoleReversalAndTextCorrection() {
+        val first = DuetSectionId(7L, 1000L, 5000L, 0)
+        val second = DuetSectionId(7L, 1000L, 5000L, 1)
+        val firstContent = LyricSnapshot(
+            trackGeneration = 7L, original = "lead", lineStartMs = 1000L,
+            lineEndMs = 5000L, sourceRowOrdinal = 0,
+            secondLine = LyricSecondLine(text = "other", lineStartMs = 1000L,
+                lineEndMs = 5000L, sourceRowOrdinal = 1)
+        ).toAodCanvasContent()
+        val corrected = firstContent.copy(original = "corrected", translated = "new translation")
+        assertEquals(first, DuetSectionId(corrected.trackGeneration, corrected.lineStartMs,
+            corrected.lineEndMs, corrected.sourceRowOrdinal))
+        val order = assignDuetSlots(listOf(second, first), listOf(first, second))
+        assertEquals(listOf(first, second), order)
+        val tops = placeDuetSectionTops(order, mapOf(first to 100f, second to 100f),
+            areaCenter = 500f, lastTops = emptyMap(), lastBlockCenter = null)
+        assertEquals(2, tops.size)
+        assertTrue(tops.getValue(first) < tops.getValue(second))
+        val continued = placeDuetSectionTops(order, mapOf(first to 100f, second to 100f),
+            areaCenter = 500f, lastTops = tops, lastBlockCenter = 500f)
+        assertEquals(tops, continued)
+    }
+
+    @Test
     fun metadataSeparatorsProduceTrimmedRowsWithoutEmptyLines() {
         assertEquals(listOf("Song", "Artist"), metadataLineTexts("Song · Artist"))
         assertEquals(listOf("Song", "Mix", "Artist"), metadataLineTexts("Song · Mix · Artist"))
@@ -29,6 +69,81 @@ class AodCanvasLayoutTest {
         assertEquals("Song · Artist", metadataSingleLineText("Song · Artist"))
         assertEquals("Song", metadataSingleLineText("Song"))
         assertEquals("", metadataSingleLineText(""))
+    }
+
+    @Test
+    fun stackedSongInfoStylesEveryPieceAfterTitleAsArtist() {
+        assertEquals(setOf(1), metadataArtistPieceIndexes(2, "stacked"))
+        assertEquals(setOf(1, 2), metadataArtistPieceIndexes(3, "stacked"))
+        assertEquals(emptySet<Int>(), metadataArtistPieceIndexes(1, "stacked"))
+        assertEquals(emptySet<Int>(), metadataArtistPieceIndexes(2, "single"))
+        // Unknown layouts fall through to stacked, matching the canvas branch.
+        assertEquals(setOf(1), metadataArtistPieceIndexes(2, "bogus"))
+    }
+
+    @Test
+    fun uniformLineStackMatchesTheSingleSizeStepExactly() {
+        // A block whose lines all share one size must step by exactly one line box, so
+        // mixed-size support cannot shift ordinary lyric rows.
+        val ascent = -30f
+        val descent = 8f
+        val offsets = mixedSizeLineBaselineOffsets(
+            floatArrayOf(ascent, ascent, ascent),
+            floatArrayOf(descent, descent, descent)
+        )
+        assertEquals(0f, offsets[0], 0.0001f)
+        assertEquals(38f, offsets[1], 0.0001f)
+        assertEquals(76f, offsets[2], 0.0001f)
+        assertEquals(
+            3f * (descent - ascent),
+            mixedSizeLineStackHeight(offsets, floatArrayOf(ascent, ascent, ascent),
+                floatArrayOf(descent, descent, descent)),
+            0.0001f
+        )
+    }
+
+    @Test
+    fun mixedSizeStackPullsSmallLineUpUnderTheLargeOne() {
+        // Title 27sp over artist at 80%: the artist baseline follows the title's own
+        // descent plus the artist's ascent, not a title-sized step, so the gap closes.
+        val titleAscent = -30f
+        val titleDescent = 8f
+        val artistAscent = -24f
+        val artistDescent = 6f
+        val offsets = mixedSizeLineBaselineOffsets(
+            floatArrayOf(titleAscent, artistAscent),
+            floatArrayOf(titleDescent, artistDescent)
+        )
+        // Step = title descent (8) minus artist ascent (-24) = 32, which is the artist's
+        // own leading rather than the title-sized 38 that produced the reported gap.
+        assertEquals(32f, offsets[1], 0.0001f)
+        assertTrue(offsets[1] < titleDescent - titleAscent)
+        // Stack height spans first ascent to last descent, with no trailing slack.
+        assertEquals(
+            offsets[1] + artistDescent - titleAscent,
+            mixedSizeLineStackHeight(offsets, floatArrayOf(titleAscent, artistAscent),
+                floatArrayOf(titleDescent, artistDescent)),
+            0.0001f
+        )
+    }
+
+    @Test
+    fun emptyAndMismatchedMetricArraysDegradeToZero() {
+        val empty = mixedSizeLineBaselineOffsets(FloatArray(0), FloatArray(0))
+        assertEquals(0, empty.size)
+        assertEquals(0f, mixedSizeLineStackHeight(empty, FloatArray(0), FloatArray(0)), 0.0001f)
+        val ragged = mixedSizeLineBaselineOffsets(floatArrayOf(-10f, -10f, -10f), floatArrayOf(2f))
+        assertEquals(1, ragged.size)
+    }
+
+    @Test
+    fun songInfoArtistScaleFollowsSettingWithinEditorBounds() {
+        assertEquals(0.8f, songInfoArtistScale(80), 0.0001f)
+        assertEquals(0.4f, songInfoArtistScale(40), 0.0001f)
+        assertEquals(1f, songInfoArtistScale(100), 0.0001f)
+        // Out-of-range values clamp instead of rendering a zero or oversized line.
+        assertEquals(0.4f, songInfoArtistScale(0), 0.0001f)
+        assertEquals(1f, songInfoArtistScale(400), 0.0001f)
     }
 
     @Test

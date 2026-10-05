@@ -1,6 +1,7 @@
 package com.eza.hyperglow.root.aod
 
 import com.eza.hyperglow.customization.CompiledSurfaceProfile
+import com.eza.hyperglow.customization.DEFAULT_SONG_INFO_ARTIST_SIZE_PERCENT
 import com.eza.hyperglow.root.projection.LyricSnapshot
 
 /**
@@ -13,6 +14,7 @@ internal fun LyricSnapshot.toAodCanvasContent(
     profile: CompiledSurfaceProfile? = null,
     includeSecondLine: Boolean = true
 ): AodCanvasContent = AodCanvasContent(
+    sourceRowOrdinal = sourceRowOrdinal,
     trackGeneration = trackGeneration,
     metadata = metadata,
     original = original,
@@ -69,6 +71,7 @@ internal fun LyricSnapshot.toAodCanvasContent(
         null
     } else secondLine?.let { second ->
         AodCanvasSecondLine(
+            sourceRowOrdinal = second.sourceRowOrdinal,
             text = second.text,
             romanized = second.romanized,
             translated = second.translated,
@@ -101,6 +104,8 @@ internal fun LyricSnapshot.toAodCanvasContent(
     metadataLayout = (profile?.metadataLayout ?: metadataLayout).takeIf { it == "single" }
         ?: "stacked",
     metadataSizePercent = profile?.metadataSizePercent ?: 100,
+    metadataArtistSizePercent = profile?.metadataArtistSizePercent
+        ?: DEFAULT_SONG_INFO_ARTIST_SIZE_PERCENT,
     adaptiveSectioning = profile?.adaptiveSectioning ?: adaptiveSectioning,
     palette = profile?.palette.orEmpty()
 )

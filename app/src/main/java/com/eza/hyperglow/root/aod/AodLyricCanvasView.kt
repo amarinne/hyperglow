@@ -12,6 +12,9 @@ import android.graphics.Typeface
 import android.os.SystemClock
 import android.util.SparseArray
 import android.view.View
+import com.eza.hyperglow.customization.DEFAULT_SONG_INFO_ARTIST_SIZE_PERCENT
+import com.eza.hyperglow.customization.MIN_SONG_INFO_ARTIST_SIZE_PERCENT
+import com.eza.hyperglow.customization.MAX_SONG_INFO_ARTIST_SIZE_PERCENT
 import com.eza.hyperglow.root.HookLogger
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -194,11 +197,14 @@ internal data class AodCanvasContent(
     val metadataAnchor: String,
     val metadataLayout: String = "stacked",
     val metadataSizePercent: Int = 100,
+    /** Stacked song-info artist size as a percentage of the title line. */
+    val metadataArtistSizePercent: Int = DEFAULT_SONG_INFO_ARTIST_SIZE_PERCENT,
     val secondLine: AodCanvasSecondLine? = null,
     val adaptiveSectioning: Boolean,
     val palette: Map<String, String>,
     val secondaryTextBright: Boolean = true,
-    val lyricLineLimit: Int = 3
+    val lyricLineLimit: Int = 3,
+    val sourceRowOrdinal: Int = -1
 )
 
 /**
@@ -214,26 +220,31 @@ internal data class AodCanvasSecondLine(
     val lineEndMs: Long = 0L,
     val words: List<AodCanvasWord> = emptyList(),
     val ruby: List<AodCanvasRuby> = emptyList(),
-    val layoutGroups: List<AodCanvasLayoutGroup> = emptyList()
+    val layoutGroups: List<AodCanvasLayoutGroup> = emptyList(),
+    val sourceRowOrdinal: Int = -1
 )
 
 /**
- * Transition identity: new generation, new primary start, or second-line
- * slot change (join, leave, replacement by start). Lane revisions that only
+ * Transition identity: new generation, new primary row, or second-line
+ * slot change (join, leave, replacement by row). Lane revisions that only
  * refine text, end timings, or words must not restart the dissolve, or
  * settling lanes strobe the canvas while the same line sings.
  */
 internal data class AodLineTransitionKey(
     val trackGeneration: Long,
     val lineStartMs: Long,
-    val secondStartMs: Long?
+    val secondStartMs: Long?,
+    val sourceRowOrdinal: Int = -1,
+    val secondSourceRowOrdinal: Int? = null
 )
 
 internal fun aodLineTransitionKey(content: AodCanvasContent): AodLineTransitionKey =
     AodLineTransitionKey(
         content.trackGeneration,
         content.lineStartMs,
-        content.secondLine?.lineStartMs
+        content.secondLine?.lineStartMs,
+        content.sourceRowOrdinal,
+        content.secondLine?.sourceRowOrdinal
     )
 
 /**
@@ -244,6 +255,7 @@ internal fun aodLineTransitionKey(content: AodCanvasContent): AodLineTransitionK
  */
 internal fun layoutEquivalent(a: AodCanvasContent, b: AodCanvasContent): Boolean {
     if (a.trackGeneration != b.trackGeneration ||
+        a.sourceRowOrdinal != b.sourceRowOrdinal ||
         a.original != b.original ||
         a.romanized != b.romanized ||
         a.translated != b.translated ||
@@ -269,6 +281,7 @@ internal fun layoutEquivalent(a: AodCanvasContent, b: AodCanvasContent): Boolean
         a.metadataAnchor != b.metadataAnchor ||
         a.metadataLayout != b.metadataLayout ||
         a.metadataSizePercent != b.metadataSizePercent ||
+        a.metadataArtistSizePercent != b.metadataArtistSizePercent ||
         a.adaptiveSectioning != b.adaptiveSectioning ||
         a.lyricLineLimit != b.lyricLineLimit ||
         a.palette != b.palette
@@ -291,7 +304,8 @@ internal fun layoutEquivalent(a: AodCanvasContent, b: AodCanvasContent): Boolean
     val sa = a.secondLine
     val sb = b.secondLine
     if (sa == null || sb == null) return sa == null && sb == null
-    if (sa.text != sb.text || sa.romanized != sb.romanized ||
+    if (sa.sourceRowOrdinal != sb.sourceRowOrdinal ||
+        sa.text != sb.text || sa.romanized != sb.romanized ||
         sa.translated != sb.translated || sa.alignedRight != sb.alignedRight ||
         sa.lineStartMs != sb.lineStartMs || sa.lineEndMs != sb.lineEndMs ||
         sa.words.size != sb.words.size || sa.ruby.size != sb.ruby.size ||
@@ -842,6 +856,58 @@ internal fun metadataLayoutBounds(
 internal fun metadataLineTexts(text: String): List<String> =
     text.split('·', '\n').map { it.trim() }.filter { it.isNotEmpty() }
 
+/** Shipped default for the stacked song-info artist line, relative to the title. */
+internal const val SONG_INFO_ARTIST_SCALE = DEFAULT_SONG_INFO_ARTIST_SIZE_PERCENT / 100f
+
+/** Stacked artist size as a multiplier of the title line, bounded by the editor's range. */
+internal fun songInfoArtistScale(percent: Int): Float =
+    (percent.coerceIn(MIN_SONG_INFO_ARTIST_SIZE_PERCENT, MAX_SONG_INFO_ARTIST_SIZE_PERCENT) /
+        100f)
+
+/**
+ * Baseline offsets for a stack of lines that may carry different font sizes, the way document
+ * layout builds a line box from the runs it actually holds: every line advances by its own
+ * descent plus the next line's ascent. Stepping by one uniform box sized by the largest line —
+ * what a single-size stack does — instead pushes a small line down by the big line's leading
+ * and leaves a gap that reads as two separate blocks.
+ *
+ * Offsets are relative to the first line's baseline. A uniform stack reproduces the single-size
+ * result exactly, so mixed-size support costs nothing when every line shares one size.
+ */
+internal fun mixedSizeLineBaselineOffsets(
+    ascents: FloatArray,
+    descents: FloatArray,
+    gap: Float = 0f
+): FloatArray {
+    val count = minOf(ascents.size, descents.size)
+    val offsets = FloatArray(count)
+    for (index in 1 until count) {
+        // Ascents are negative (distance above the baseline), so the step is the previous
+        // line's descent minus the next line's ascent.
+        offsets[index] = offsets[index - 1] + descents[index - 1] + gap - ascents[index]
+    }
+    return offsets
+}
+
+/** Total stack height for [offsets]: from the first line's ascent to the last line's descent. */
+internal fun mixedSizeLineStackHeight(
+    offsets: FloatArray,
+    ascents: FloatArray,
+    descents: FloatArray
+): Float {
+    val count = minOf(offsets.size, ascents.size, descents.size)
+    if (count == 0) return 0f
+    return offsets[count - 1] + descents[count - 1] - ascents[0]
+}
+
+/**
+ * Zero-based indexes of the stacked pieces rendered as the smaller artist line.
+ * The first piece is the title; everything after it is artist credit. Single-line
+ * mode joins all pieces into one title-sized line, so nothing is artist-styled.
+ */
+internal fun metadataArtistPieceIndexes(pieceCount: Int, layout: String): Set<Int> =
+    if (layout == "single" || pieceCount <= 1) emptySet() else (1 until pieceCount).toSet()
+
 /** Single-line song-info form: stacked pieces joined with a middle dot. */
 internal fun metadataSingleLineText(text: String): String =
     metadataLineTexts(text).joinToString(" · ")
@@ -1264,6 +1330,8 @@ internal class AodLyricCanvasView(
         context.createPackageContext("com.eza.hyperglow", Context.CONTEXT_IGNORE_SECURITY)
     }.getOrNull()
     private val metadataPaint = paint(14f, 0xB3FFFFFF.toInt(), Typeface.NORMAL)
+    private val metadataArtistPaint = paint(14f * SONG_INFO_ARTIST_SCALE, 0xB3FFFFFF.toInt(), Typeface.NORMAL)
+    private val introArtistPaint = paint(27f * SONG_INFO_ARTIST_SCALE, Color.WHITE, Typeface.NORMAL)
     private val originalPaint = paint(27f, Color.WHITE, Typeface.NORMAL)
     private val romanizedPaint = paint(17f, Color.WHITE, Typeface.NORMAL)
     private val translatedPaint = paint(17f, Color.WHITE, Typeface.ITALIC)
@@ -1379,14 +1447,17 @@ internal class AodLyricCanvasView(
         val baseSp = baseTextSizeForMode(nextContent.original, nextContent.overflowMode) * sizeScale
         val typeface = resolveTypeface(nextContent.fontFamily, nextContent.weight)
         originalPaint.typeface = typeface
+        introArtistPaint.typeface = typeface
         if (nextContent.fontFamily != "auto") {
             val regularTypeface = resolveTypeface(nextContent.fontFamily, "Regular")
             metadataPaint.typeface = regularTypeface
+            metadataArtistPaint.typeface = regularTypeface
             romanizedPaint.typeface = regularTypeface
             translatedPaint.typeface = Typeface.create(regularTypeface, Typeface.ITALIC)
             rubyPaint.typeface = regularTypeface
         } else {
             metadataPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+            metadataArtistPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
             romanizedPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
             translatedPaint.typeface = Typeface.create("sans-serif", Typeface.ITALIC)
             rubyPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
@@ -1424,9 +1495,15 @@ internal class AodLyricCanvasView(
             effectiveTextScale()
         val baseSp = baseTextSizeForMode(content.original, content.overflowMode) * sizeScale
         originalPaint.textSize = baseSp * scaledDensity
+        introArtistPaint.textSize = originalPaint.textSize * songInfoArtistScale(
+            content.metadataArtistSizePercent
+        )
         metadataPaint.textSize = 14f * metadataTextSizeMultiplier(
             content.metadataSizePercent
         ) * effectiveTextScale() * scaledDensity
+        metadataArtistPaint.textSize = metadataPaint.textSize * songInfoArtistScale(
+            content.metadataArtistSizePercent
+        )
         romanizedPaint.textSize = max(14f, kotlin.math.round(baseSp * 0.48f)) * scaledDensity
         translatedPaint.textSize = max(13f, kotlin.math.round(baseSp * 0.48f) - 1f) * scaledDensity
         rubyPaint.textSize = originalPaint.textSize * 0.46f
@@ -1903,7 +1980,7 @@ internal class AodLyricCanvasView(
                     canvas,
                     line.text,
                     line.startX,
-                    positioned.baseline + lineIndex * positioned.row.lineHeight,
+                    positioned.baseline + positioned.row.lineBaselineOffset(lineIndex),
                     positioned.row.paint,
                     resolvedAodTextDirection(line.text)
                 )
@@ -1922,13 +1999,12 @@ internal class AodLyricCanvasView(
         val originalLayout = block.originalLayout
         var precedingRuby = 0f
         originalLayout.lines.forEachIndexed { lineIndex, line ->
-            val lineBaseline = originalLineBaseline(
+            val lineBaseline = blockLineBaseline(
+                originalLayout,
                 baseline,
                 lineIndex,
-                originalLayout.lineHeight,
                 precedingRuby,
-                line.rubyHeight,
-                originalLayout.lineGap
+                line.rubyHeight
             )
             if (line.ruby.isNotEmpty()) drawRuby(canvas, line, lineBaseline, bright)
             precedingRuby += line.rubyHeight
@@ -1937,7 +2013,9 @@ internal class AodLyricCanvasView(
 
     private fun captureRenderStyle(): RenderStyleSnapshot = RenderStyleSnapshot(
         metadataPaint = Paint(metadataPaint),
+        metadataArtistPaint = Paint(metadataArtistPaint),
         originalPaint = Paint(originalPaint),
+        introArtistPaint = Paint(introArtistPaint),
         romanizedPaint = Paint(romanizedPaint),
         translatedPaint = Paint(translatedPaint),
         rubyPaint = Paint(rubyPaint),
@@ -1948,7 +2026,9 @@ internal class AodLyricCanvasView(
 
     private fun applyRenderStyle(style: RenderStyleSnapshot) {
         metadataPaint.set(style.metadataPaint)
+        metadataArtistPaint.set(style.metadataArtistPaint)
         originalPaint.set(style.originalPaint)
+        introArtistPaint.set(style.introArtistPaint)
         romanizedPaint.set(style.romanizedPaint)
         translatedPaint.set(style.translatedPaint)
         rubyPaint.set(style.rubyPaint)
@@ -1968,14 +2048,15 @@ internal class AodLyricCanvasView(
         if (renderStyle != null) applyRenderStyle(renderStyle)
         canvas.save()
         canvas.clipRect(logicalPadLeft, logicalPadTop, layoutFrameWidth() - logicalPadRight, layoutFrameHeight() - logicalPadBottom)
-        metadata.row.paint.color = resolvedPalette.metadataText
-        metadata.row.paint.alpha = (255f * alpha.coerceIn(0f, 1f)).roundToInt()
         metadata.row.lines.forEachIndexed { index, line ->
+            val paint = line.paint ?: metadata.row.paint
+            paint.color = resolvedPalette.metadataText
+            paint.alpha = (255f * alpha.coerceIn(0f, 1f)).roundToInt()
             canvas.drawText(
                 line.text,
                 line.startX,
-                metadata.baseline + index * metadata.row.lineHeight,
-                metadata.row.paint
+                metadata.baseline + metadata.row.lineBaselineOffset(index),
+                paint
             )
         }
         canvas.restore()
@@ -2002,12 +2083,15 @@ internal class AodLyricCanvasView(
         } ?: return
         val destinationLine = destinationRow.row.lines.singleOrNull() ?: return
         val value = progress.coerceIn(0f, 1f)
+        // A title-less stacked row morphs from a lone artist line, so the landing
+        // size follows that line's smaller paint rather than the title paint.
+        val destinationPaint = destinationLine.paint ?: currentRenderStyle.metadataPaint
         val paint = Paint(
             if (value < 0.5f) snapshot.renderStyle.originalPaint
-            else currentRenderStyle.metadataPaint
+            else destinationPaint
         ).apply {
             textSize = snapshot.renderStyle.originalPaint.textSize +
-                (currentRenderStyle.metadataPaint.textSize -
+                (destinationPaint.textSize -
                     snapshot.renderStyle.originalPaint.textSize) * value
             color = interpolateAodColor(
                 snapshot.renderStyle.palette.primaryText,
@@ -2060,17 +2144,26 @@ internal class AodLyricCanvasView(
         val frameHeight = layoutFrameHeight().toFloat()
         if (!hasMetadata) return logicalPadTop to (frameHeight - logicalPadBottom)
         val anchor = if (content.metadataAnchor == "bottom") "bottom" else "top"
+        // Reserve what the song-info stack actually occupies: stacked mode mixes a full-size
+        // title with smaller artist lines, so one title-sized step would over-reserve the block.
+        val lines = metadataTextLines()
+        val ascents = FloatArray(lines.size) { index ->
+            (lines[index].paint ?: metadataPaint).fontMetrics.ascent
+        }
+        val descents = FloatArray(lines.size) { index ->
+            val metrics = (lines[index].paint ?: metadataPaint).fontMetrics
+            metrics.descent + max(0f, metrics.bottom - metrics.descent)
+        }
+        val offsets = mixedSizeLineBaselineOffsets(ascents, descents)
         val bounds = metadataLayoutBounds(
             anchor,
             frameHeight,
             logicalPadTop,
             logicalPadBottom,
-            metadataPaint.fontMetrics.ascent,
-            metadataPaint.fontMetrics.descent,
+            ascents.firstOrNull() ?: metadataPaint.fontMetrics.ascent,
+            descents.lastOrNull() ?: metadataPaint.fontMetrics.descent,
             10f * density,
-            (metadataTextLines().size - 1).coerceAtLeast(0) *
-                safeSecondaryLineHeight(metadataPaint.fontMetrics.ascent,
-                    metadataPaint.fontMetrics.descent, metadataPaint.fontMetrics.bottom)
+            offsets.lastOrNull() ?: 0f
         )
         return bounds.lyricStart to bounds.lyricEnd
     }
@@ -2084,6 +2177,8 @@ internal class AodLyricCanvasView(
             content.lineEndMs,
             content.words.any { it.endMs > it.startMs }
         )
+        // The intro placeholder presents the same song-info stack in the lyric row, so it
+        // suppresses the separate metadata row to avoid drawing the block twice.
         if (content.metadataVisible && content.metadata.isNotBlank() && !metadataPlaceholder) {
             metadataRows += row(RowKind.METADATA, content.metadata, metadataPaint, 0f, true)
                 .copy(blockIndex = -1)
@@ -2101,14 +2196,16 @@ internal class AodLyricCanvasView(
         // as a fresh solo so the configured vertical bias (50% by default)
         // is applied again instead of retaining the duet's lower slot.
         val wasDuet = lastOrderedIds.size > 1
-        val primaryId =
-            DuetSectionId(content.trackGeneration, content.lineStartMs, content.lineEndMs)
+        val primaryId = DuetSectionId(
+            content.trackGeneration, content.lineStartMs, content.lineEndMs, content.sourceRowOrdinal
+        )
         val ordered: List<Pair<DuetSectionId, MainLineData>>
         if (second == null) {
             ordered = listOf(primaryId to primary)
         } else {
-            val secondId =
-                DuetSectionId(content.trackGeneration, second.lineStartMs, second.lineEndMs)
+            val secondId = DuetSectionId(
+                content.trackGeneration, second.lineStartMs, second.lineEndMs, second.sourceRowOrdinal
+            )
             val byId = mapOf(primaryId to primary, secondId to second)
             ordered = if (primaryId == secondId) {
                 listOf(primaryId to primary, secondId to second)
@@ -2151,11 +2248,8 @@ internal class AodLyricCanvasView(
         val freshSolo = orderedIds.size == 1
         val secondaryCap = duetSecondaryLineCap(!freshSolo, isSideStep())
         var primaryVisualIndex = 0
-        val built = ordered.mapIndexed { index, (_, data) ->
-            if (data.lineStartMs == content.lineStartMs &&
-                data.lineEndMs == content.lineEndMs &&
-                data.text == content.original
-            ) {
+        val built = ordered.mapIndexed { index, (id, data) ->
+            if (id == primaryId) {
                 primaryVisualIndex = index
             }
             buildLyricBlock(data, index, secondaryCap)
@@ -2171,6 +2265,13 @@ internal class AodLyricCanvasView(
         fun sectionStackHeight(triple: Triple<OriginalLayout, List<Row>, BlockDrawData>): Float {
             var total = 0f
             for (row in triple.second) total += row.height + row.gapBefore
+            // The primary row is built from the uniform lyric line box, but a mixed-size
+            // block (stacked song-info intro) owns its real text height. Scaling and
+            // centering both measure this total, so it has to be the drawn height.
+            val primaryRow = triple.second.firstOrNull { it.kind == RowKind.ORIGINAL }
+            if (triple.first.mixedSize && primaryRow != null) {
+                total += triple.first.stackedHeight - primaryRow.height
+            }
             return total
         }
         val sectionTotals = built.map(::sectionStackHeight)
@@ -2551,6 +2652,7 @@ internal class AodLyricCanvasView(
         val savedAlignment = alignment
         val savedDirection = textDirection
         content = content.copy(
+            sourceRowOrdinal = line.sourceRowOrdinal,
             original = line.text,
             romanized = line.romanized,
             translated = line.translated,
@@ -2575,7 +2677,8 @@ internal class AodLyricCanvasView(
             val lineId = DuetSectionId(
                 content.trackGeneration,
                 content.lineStartMs,
-                content.lineEndMs
+                content.lineEndMs,
+                content.sourceRowOrdinal
             )
             val originalLayout = buildOriginalLayout(lineId, forceSingleLine)
             val rows = ArrayList<Row>(3)
@@ -2737,13 +2840,75 @@ internal class AodLyricCanvasView(
      * lines instead of shrinking the whole block down to fit one line.
      */
     private fun metadataTextLines(): List<TextLine> {
-        val logical = if (content.metadataLayout == "single") {
-            listOf(metadataSingleLineText(content.metadata)).filter { it.isNotEmpty() }
-        } else {
-            metadataLineTexts(content.metadata)
+        if (content.metadataLayout == "single") {
+            val single = metadataSingleLineText(content.metadata)
+            if (single.isEmpty()) return emptyList()
+            return wrapSecondaryText(single, metadataPaint, 1)
         }
-        return logical.flatMap { wrapSecondaryText(it, metadataPaint, 1) }
+        val pieces = metadataLineTexts(content.metadata)
+        val artistIndexes = metadataArtistPieceIndexes(pieces.size, content.metadataLayout)
+        return pieces.flatMapIndexed { index, piece ->
+            // Stacked mode keeps the title at song-info size and drops the artist
+            // credit(s) to a smaller line, matching the Now Playing hierarchy.
+            val artist = index in artistIndexes
+            val paint = if (artist) metadataArtistPaint else metadataPaint
+            wrapSecondaryText(piece, paint, 1, linePaint = paint.takeIf { artist })
+        }
     }
+
+    /** Paint a line renders with: stacked song-info carries a smaller artist paint per line. */
+    private fun Row.paintAt(index: Int): Paint =
+        lines.getOrNull(index)?.paint ?: paint
+
+    private fun Row.ascentAt(index: Int): Float = paintAt(index).fontMetrics.ascent
+
+    /** Descent including the font's below-baseline overshoot, matching the line box step. */
+    private fun Row.descentAt(index: Int): Float {
+        val metrics = paintAt(index).fontMetrics
+        return metrics.descent + max(0f, metrics.bottom - metrics.descent)
+    }
+
+    private fun Row.baselineOffsets(): FloatArray =
+        mixedSizeLineBaselineOffsets(
+            FloatArray(lines.size) { ascentAt(it) },
+            FloatArray(lines.size) { descentAt(it) }
+        )
+
+    /** Baseline of [index] relative to the row's first baseline. */
+    private fun Row.lineBaselineOffset(index: Int): Float {
+        if (index <= 0) return 0f
+        var offset = 0f
+        for (line in 0 until index) offset += descentAt(line) - ascentAt(line + 1)
+        return offset
+    }
+
+    private fun Row.stackHeight(): Float = mixedSizeLineStackHeight(
+        baselineOffsets(),
+        FloatArray(lines.size) { ascentAt(it) },
+        FloatArray(lines.size) { descentAt(it) }
+    )
+
+    /** Largest single-line box in the row; the step a uniform-size stack would use. */
+    private fun Row.uniformLineHeight(): Float {
+        var tallest = 0f
+        for (index in lines.indices) {
+            tallest = max(tallest, descentAt(index) - ascentAt(index))
+        }
+        return tallest
+    }
+
+    /**
+ * Baseline for one line of a lyric block. A block that mixes sizes — the stacked
+ * song-info intro — advances by its own per-line metrics; every other block keeps
+ * the single uniform step, which is the same arithmetic with one shared size.
+ */
+    private fun blockLineBaseline(
+        layout: OriginalLayout,
+        baseline: Float,
+        lineIndex: Int,
+        precedingRuby: Float,
+        rubyHeight: Float
+    ): Float = baseline + layout.baselineOffset(lineIndex) + precedingRuby + rubyHeight
 
     private fun rowWithLines(
         kind: RowKind,
@@ -2753,9 +2918,11 @@ internal class AodLyricCanvasView(
         lines: List<TextLine>,
         blockIndex: Int = 0
     ): Row {
-        val metrics = paint.fontMetrics
-        val lineHeight = safeSecondaryLineHeight(metrics.ascent, metrics.descent, metrics.bottom)
-        return Row(kind, text, paint, lineHeight * lines.size, gap, lines, lineHeight, blockIndex)
+        val probe = Row(kind, text, paint, 0f, gap, lines, 0f, blockIndex)
+        return probe.copy(
+            height = probe.stackHeight(),
+            lineHeight = probe.uniformLineHeight()
+        )
     }
 
     /**
@@ -2783,10 +2950,10 @@ internal class AodLyricCanvasView(
                 layoutFrameHeight().toFloat(),
                 logicalPadTop,
                 logicalPadBottom.toFloat(),
-                metadata.paint.fontMetrics.ascent,
-                metadata.paint.fontMetrics.descent,
+                metadata.ascentAt(0),
+                metadata.descentAt(metadata.lines.size.coerceAtLeast(1) - 1),
                 10f * density,
-                (metadata.lines.size - 1).coerceAtLeast(0) * metadata.lineHeight
+                metadata.lineBaselineOffset(metadata.lines.size - 1)
             )
             val metadataBaseline = metadataBounds.metadataBaseline
             positioned += PositionedRow(metadata, metadataBaseline, false)
@@ -2918,13 +3085,12 @@ internal class AodLyricCanvasView(
                 var lineIndex = 0
                 while (lineIndex < lines.size) {
                     val line = lines[lineIndex]
-                    val lineBaseline = originalLineBaseline(
+                    val lineBaseline = blockLineBaseline(
+                        originalLayout,
                         baseline,
                         lineIndex,
-                        originalLayout.lineHeight,
                         precedingRuby,
-                        line.rubyHeight,
-                        originalLayout.lineGap
+                        line.rubyHeight
                     )
                     val clipSave = clipOriginalLine(canvas, lineBaseline, line.rubyHeight)
                     if (line.ruby.isNotEmpty()) {
@@ -2973,13 +3139,12 @@ internal class AodLyricCanvasView(
         var lineIndex = 0
         while (lineIndex < lines.size) {
             val line = lines[lineIndex]
-            val lineBaseline = originalLineBaseline(
+            val lineBaseline = blockLineBaseline(
+                originalLayout,
                 baseline,
                 lineIndex,
-                originalLayout.lineHeight,
                 precedingRuby,
-                line.rubyHeight,
-                originalLayout.lineGap
+                line.rubyHeight
             )
             val lineClipSave = clipOriginalLine(canvas, lineBaseline, line.rubyHeight)
             if (line.ruby.isNotEmpty()) {
@@ -3069,13 +3234,12 @@ internal class AodLyricCanvasView(
         val lines = originalLayout.lines
         val firstLine = lines.firstOrNull()
         val firstLineBaseline = firstLine?.let {
-            originalLineBaseline(
+            blockLineBaseline(
+                originalLayout,
                 baseline,
                 0,
-                originalLayout.lineHeight,
                 0f,
-                it.rubyHeight,
-                originalLayout.lineGap
+                it.rubyHeight
             )
         } ?: baseline
         val blockTop = max(
@@ -3112,13 +3276,12 @@ internal class AodLyricCanvasView(
         var lineIndex = 0
         while (lineIndex < originalLayout.lines.size) {
             val line = originalLayout.lines[lineIndex]
-            val lineBaseline = originalLineBaseline(
+            val lineBaseline = blockLineBaseline(
+                originalLayout,
                 baseline,
                 lineIndex,
-                originalLayout.lineHeight,
                 precedingRuby,
-                line.rubyHeight,
-                originalLayout.lineGap
+                line.rubyHeight
             )
             val clipSave = clipOriginalLine(canvas, lineBaseline, line.rubyHeight)
             drawLineFill(
@@ -3147,27 +3310,27 @@ internal class AodLyricCanvasView(
         var lineIndex = 0
         while (lineIndex < originalLayout.lines.size) {
             val line = originalLayout.lines[lineIndex]
-            val lineBaseline = originalLineBaseline(
+            val lineBaseline = blockLineBaseline(
+                originalLayout,
                 baseline,
                 lineIndex,
-                originalLayout.lineHeight,
                 precedingRuby,
-                line.rubyHeight,
-                originalLayout.lineGap
+                line.rubyHeight
             )
             val clipSave = clipOriginalLine(canvas, lineBaseline, line.rubyHeight)
             val glow = if (content.animationMode != "Minimal" && content.glowMode != "Off" && !bright) {
                 0.55f * glowSpline(progress)
             } else 0f
-            applyGlow(originalPaint, glow)
+            val paint = line.paint ?: originalPaint
+            applyGlow(paint, glow)
             setTextAlpha(
-                originalPaint,
+                paint,
                 if (bright) 1f else 0.35f,
                 1f,
                 if (bright) resolvedPalette.sungText else resolvedPalette.unsungText
             )
             drawOriginalText(canvas, line, lineBaseline, block.textDirection)
-            originalPaint.clearShadowLayer()
+            paint.clearShadowLayer()
             if (clipSave != -1) canvas.restoreToCount(clipSave)
             precedingRuby += line.rubyHeight
             lineIndex++
@@ -3303,10 +3466,32 @@ internal class AodLyricCanvasView(
             } else {
                 metadataLineTexts(content.metadata)
             }
-            val lines = pieces.flatMap { wrapMetadataOriginalLine(it, available) }
+            // Stacked intros keep the title at lyric size and drop the artist
+            // credit(s) to a smaller line, matching the Now Playing hierarchy.
+            val artistIndexes = metadataArtistPieceIndexes(pieces.size, content.metadataLayout)
+            val painted = pieces.flatMapIndexed { index, piece ->
+                val paint = if (index in artistIndexes) introArtistPaint else originalPaint
+                wrapMetadataOriginalLine(piece, available, paint).map { it to paint }
+            }
+            val lines = painted.map { it.first }
+            // Each line carries its own ascent/descent so the artist line sits under the title
+            // instead of dropping by a title-sized step. Single-line mode is one size, so it
+            // keeps the ordinary uniform block.
             val metrics = originalPaint.fontMetrics
-            return OriginalLayout(lines, metrics.descent - metrics.ascent + 2f * density,
-                ORIGINAL_LINE_GAP_DP * density, false)
+            val lineHeight = metrics.descent - metrics.ascent + 2f * density
+            val mixed = artistIndexes.isNotEmpty()
+            return OriginalLayout(
+                lines,
+                lineHeight,
+                ORIGINAL_LINE_GAP_DP * density,
+                false,
+                if (mixed) FloatArray(painted.size) { painted[it].second.fontMetrics.ascent }
+                else FloatArray(0),
+                if (mixed) FloatArray(painted.size) { line ->
+                    val fm = painted[line].second.fontMetrics
+                    fm.descent + max(0f, fm.bottom - fm.descent)
+                } else FloatArray(0)
+            )
         }
         val words = coalesceRubyWords(
             content.original,
@@ -3562,15 +3747,19 @@ internal class AodLyricCanvasView(
      * configured lyric line limit, so a long title flows onto further lines
      * instead of shrinking the whole intro.
      */
-    private fun wrapMetadataOriginalLine(piece: String, available: Float): List<OriginalLine> {
+    private fun wrapMetadataOriginalLine(
+        piece: String,
+        available: Float,
+        paint: Paint
+    ): List<OriginalLine> {
         val tokens = secondaryTokens(piece).flatMap { token ->
-            if (originalPaint.measureText(token) <= available) {
+            if (paint.measureText(token) <= available) {
                 listOf(token)
             } else {
                 val parts = ArrayList<String>()
                 var remaining = token
                 while (remaining.isNotEmpty()) {
-                    val count = originalPaint.breakText(remaining, true, available, null)
+                    val count = paint.breakText(remaining, true, available, null)
                         .coerceAtLeast(1)
                     parts += remaining.take(count)
                     remaining = remaining.drop(count)
@@ -3581,11 +3770,19 @@ internal class AodLyricCanvasView(
         if (tokens.isEmpty()) return emptyList()
         return balancedTokenLineTexts(
             tokens,
-            tokens.map(originalPaint::measureText),
-            originalPaint.measureText(" "),
+            tokens.map(paint::measureText),
+            paint.measureText(" "),
             available,
             lyricLayoutLineLimit(0)
-        ).map { line -> originalLine(line, originalPaint.measureText(line), null, null) }
+        ).map { line ->
+            originalLine(
+                line,
+                paint.measureText(line),
+                null,
+                null,
+                linePaint = paint.takeUnless { it === originalPaint }
+            )
+        }
     }
 
     private fun transliterationLines(
@@ -3648,13 +3845,14 @@ internal class AodLyricCanvasView(
         paint: Paint,
         preferredLines: Int,
         maxLines: Int = MAX_SECONDARY_LINES,
-        hardSingleLine: Boolean = false
+        hardSingleLine: Boolean = false,
+        linePaint: Paint? = null
     ): List<TextLine> {
         // Hard single-line mode (unwrap-on-floor) bypasses token wrapping
         // and the two-line escape: one TextLine with the complete text; the
         // section scale handles the width.
         if (!content.adaptiveSectioning || content.overflowMode != "Wrap" || hardSingleLine) {
-            return listOf(textLine(text, paint.measureText(text), paint))
+            return listOf(textLine(text, paint.measureText(text), paint, linePaint = linePaint))
         }
         val available = (layoutFrameWidth() - logicalPadLeft - logicalPadRight).coerceAtLeast(1f)
         val tokens = secondaryTokens(text).flatMap { token ->
@@ -3688,28 +3886,41 @@ internal class AodLyricCanvasView(
             paint.measureText(" "),
             available,
             resolvedMaxLines
-        ).map { line -> textLine(line, paint.measureText(line), paint) }
+        ).map { line -> textLine(line, paint.measureText(line), paint, linePaint = linePaint) }
     }
 
     private fun textLine(
         text: String,
         width: Float,
         paint: Paint,
-        lineAlignment: Alignment = alignment
+        lineAlignment: Alignment = alignment,
+        linePaint: Paint? = null
     ): TextLine {
         val visual = visualExtents(text, paint, width)
-        return TextLine(text, width, alignedStart(width, lineAlignment, visual.first, visual.second))
+        return TextLine(
+            text,
+            width,
+            alignedStart(width, lineAlignment, visual.first, visual.second),
+            paint = linePaint
+        )
     }
 
-    private fun originalLine(text: String, width: Float, charStart: Int?, charEnd: Int?): OriginalLine {
-        val visual = visualExtents(text, originalPaint, width)
+    private fun originalLine(
+        text: String,
+        width: Float,
+        charStart: Int?,
+        charEnd: Int?,
+        linePaint: Paint? = null
+    ): OriginalLine {
+        val visual = visualExtents(text, linePaint ?: originalPaint, width)
         return OriginalLine(
             text,
             emptyList(),
             width,
             alignedStart(width, alignment, visual.first, visual.second),
             charStart,
-            charEnd
+            charEnd,
+            paint = linePaint
         )
     }
 
@@ -3829,16 +4040,17 @@ internal class AodLyricCanvasView(
         val x = line.startX
         val clipSave = if (clipToPaddedWidth) canvas.save() else -1
         if (clipToPaddedWidth) canvas.clipRect(logicalPadLeft, logicalPadTop, layoutFrameWidth() - logicalPadRight, layoutFrameHeight() - logicalPadBottom)
+        val paint = line.paint ?: originalPaint
         val glow = if (content.animationMode != "Minimal" && content.glowMode != "Off") {
             0.55f * glowSpline(progress)
         } else 0f
-        applyGlow(originalPaint, glow)
-        originalPaint.shader = null
-        setTextAlpha(originalPaint, 0.35f, 1f, resolvedPalette.unsungText)
+        applyGlow(paint, glow)
+        paint.shader = null
+        setTextAlpha(paint, 0.35f, 1f, resolvedPalette.unsungText)
         drawOriginalText(canvas, line, baseline, direction)
-        setTextAlpha(originalPaint, 1f, 1f, resolvedPalette.sungText)
+        setTextAlpha(paint, 1f, 1f, resolvedPalette.sungText)
         applySoftSweep(
-            originalPaint,
+            paint,
             resolvedPalette.sungText,
             origin = x,
             progress = progress,
@@ -3847,8 +4059,8 @@ internal class AodLyricCanvasView(
             direction = direction
         )
         drawOriginalText(canvas, line, baseline, direction)
-        originalPaint.shader = null
-        originalPaint.clearShadowLayer()
+        paint.shader = null
+        paint.clearShadowLayer()
         if (clipToPaddedWidth) canvas.restoreToCount(clipSave)
     }
 
@@ -3858,12 +4070,15 @@ internal class AodLyricCanvasView(
         baseline: Float,
         direction: AodTextDirection
     ) {
+        // Stacked song-change intros carry a smaller artist paint on artist
+        // lines; lyric lines fall back to the shared lyric paint untouched.
+        val paint = line.paint ?: originalPaint
         if (line.ruby.isEmpty()) {
-            drawDirectionalText(canvas, line.text, line.startX, baseline, originalPaint, direction)
+            drawDirectionalText(canvas, line.text, line.startX, baseline, paint, direction)
             return
         }
         if (line.textRuns.isEmpty()) {
-            drawDirectionalText(canvas, line.text, line.startX, baseline, originalPaint, direction)
+            drawDirectionalText(canvas, line.text, line.startX, baseline, paint, direction)
             return
         }
         var index = 0
@@ -3876,7 +4091,7 @@ internal class AodLyricCanvasView(
                 run.end,
                 line.startX + run.x,
                 baseline,
-                originalPaint,
+                paint,
                 direction
             )
             index++
@@ -3887,11 +4102,12 @@ internal class AodLyricCanvasView(
         var lineIndex = 0
         while (lineIndex < row.lines.size) {
             val line = row.lines[lineIndex]
-            val lineBaseline = baseline + lineIndex * row.lineHeight
+            val lineBaseline = baseline + row.lineBaselineOffset(lineIndex)
             if (row.kind == RowKind.METADATA) {
-                row.paint.color = resolvedPalette.metadataText
-                row.paint.alpha = 255
-                canvas.drawText(line.text, line.startX, lineBaseline, row.paint)
+                val paint = line.paint ?: row.paint
+                paint.color = resolvedPalette.metadataText
+                paint.alpha = 255
+                canvas.drawText(line.text, line.startX, lineBaseline, paint)
             } else {
                 drawSecondaryLine(canvas, row.paint, line.text, line.startX, lineBaseline)
             }
@@ -4225,13 +4441,17 @@ internal class AodLyricCanvasView(
         val charEnd: Int?,
         val ruby: List<RubyPlacement> = emptyList(),
         val rubyHeight: Float = 0f,
-        val textRuns: List<OriginalTextRun> = emptyList()
+        val textRuns: List<OriginalTextRun> = emptyList(),
+        /** Smaller artist paint for stacked song-change intros; null draws with the lyric paint. */
+        val paint: Paint? = null
     )
     private data class TextLine(
         val text: String,
         val width: Float,
         val startX: Float,
-        val timedSegments: List<SecondaryTimedSegment> = emptyList()
+        val timedSegments: List<SecondaryTimedSegment> = emptyList(),
+        /** Smaller song-info artist paint in stacked mode; null draws with the row paint. */
+        val paint: Paint? = null
     )
     private data class BaseRun(val x: Float, val width: Float)
     private data class RubyPlacement(
@@ -4253,7 +4473,9 @@ internal class AodLyricCanvasView(
     )
     private data class RenderStyleSnapshot(
         val metadataPaint: Paint,
+        val metadataArtistPaint: Paint,
         val originalPaint: Paint,
+        val introArtistPaint: Paint,
         val romanizedPaint: Paint,
         val translatedPaint: Paint,
         val rubyPaint: Paint,
@@ -4266,7 +4488,14 @@ internal class AodLyricCanvasView(
         val lines: List<OriginalLine>,
         val lineHeight: Float,
         val lineGap: Float,
-        val timed: Boolean
+        val timed: Boolean,
+        /**
+         * Per-line ascent and descent, set only when a block mixes font sizes — the stacked
+         * song-info intro puts a smaller artist line under a full-size title. Empty for every
+         * ordinary lyric block, which keeps the single-size line box.
+         */
+        val lineAscents: FloatArray = FloatArray(0),
+        val lineDescents: FloatArray = FloatArray(0)
     ) {
         val lineCount: Int
             get() = lines.size
@@ -4280,6 +4509,26 @@ internal class AodLyricCanvasView(
                 preceding += line.width.coerceAtLeast(0f)
             }
         }
+        private val mixedOffsets: FloatArray
+            get() = mixedSizeLineBaselineOffsets(lineAscents, lineDescents, lineGap)
+
+        /** True when lines carry different sizes and cannot share one line box. */
+        val mixedSize: Boolean
+            get() = lineAscents.size == lines.size && lineAscents.isNotEmpty()
+
+        /** Baseline of [lineIndex] relative to the block's first baseline. */
+        fun baselineOffset(lineIndex: Int): Float =
+            if (mixedSize) mixedOffsets[lineIndex.coerceIn(0, lines.size - 1)]
+            else lineIndex * (lineHeight + lineGap)
+
+        /** Text height of the whole block, line gaps included. */
+        val stackedHeight: Float
+            get() = if (mixedSize) {
+                mixedSizeLineStackHeight(mixedOffsets, lineAscents, lineDescents) +
+                    lineGap * (lines.size - 1).coerceAtLeast(0)
+            } else {
+                lineHeight * lines.size + lineGap * (lines.size - 1).coerceAtLeast(0)
+            }
 
         fun continuousFill(progress: Float, lineIndex: Int): Float {
             val width = lines[lineIndex].width.coerceAtLeast(0f)
@@ -4325,7 +4574,8 @@ internal class AodLyricCanvasView(
         val lineEndMs: Long,
         val words: List<AodCanvasWord>,
         val ruby: List<AodCanvasRuby>,
-        val layoutGroups: List<AodCanvasLayoutGroup>
+        val layoutGroups: List<AodCanvasLayoutGroup>,
+        val sourceRowOrdinal: Int
     ) {
         constructor(content: AodCanvasContent) : this(
             content.original,
@@ -4336,7 +4586,8 @@ internal class AodLyricCanvasView(
             content.lineEndMs,
             content.words,
             content.ruby,
-            content.layoutGroups
+            content.layoutGroups,
+            content.sourceRowOrdinal
         )
 
         constructor(second: AodCanvasSecondLine) : this(
@@ -4348,7 +4599,8 @@ internal class AodLyricCanvasView(
             second.lineEndMs,
             second.words,
             second.ruby,
-            second.layoutGroups
+            second.layoutGroups,
+            second.sourceRowOrdinal
         )
     }
     private data class TypefaceKey(val family: String, val weight: String)
@@ -4384,13 +4636,15 @@ internal fun resolveVerticalBiasShift(
 }
 
 /**
- * Identity of one sung line for duet slot memory. Timings survive producer
- * text corrections, so a corrected line keeps its canvas slot.
+ * Identity of one sung line for duet slot memory. Source row ordinals distinguish
+ * co-timed lines and survive text corrections and primary/companion role changes.
+ * Unknown ordinals retain the legacy timing identity.
  */
 internal data class DuetSectionId(
     val trackGeneration: Long,
     val lineStartMs: Long,
-    val lineEndMs: Long
+    val lineEndMs: Long,
+    val sourceRowOrdinal: Int = -1
 )
 
 /**

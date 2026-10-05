@@ -97,6 +97,8 @@ import com.eza.hyperglow.customization.CustomizationRepository
 import com.eza.hyperglow.customization.SceneCompiler
 import com.eza.hyperglow.customization.SurfaceProfile
 import com.eza.hyperglow.customization.MAX_LYRIC_TEXT_SIZE_PERCENT
+import com.eza.hyperglow.customization.MIN_SONG_INFO_ARTIST_SIZE_PERCENT
+import com.eza.hyperglow.customization.MAX_SONG_INFO_ARTIST_SIZE_PERCENT
 import com.eza.hyperglow.root.aod.metadataWidgetHeightDp
 import com.eza.hyperglow.root.capability.XiaomiCapability
 import com.eza.hyperglow.root.projection.LyricRuby
@@ -328,6 +330,18 @@ private fun SurfaceAppearanceSettings(session: SettingsSession, surface: String)
         // visible even when persistent song info is off.
         AodChoiceRow(AodChoiceKind.SONG_INFO_LAYOUT, profile.metadataLayout) {
             choose(AodChoiceKind.SONG_INFO_LAYOUT, listOf("stacked", "single"), profile.metadataLayout) { value -> update { it.copy(metadataLayout = value) } }
+        }
+        // Artist size only shapes the stacked layout; single mode joins both pieces
+        // into one title-sized line, so there is nothing for it to scale.
+        if (profile.metadataLayout != "single") {
+            IntSliderPreference(
+                title = stringResource(R.string.setting_song_info_artist_size),
+                value = profile.metadataArtistSizePercent,
+                range = MIN_SONG_INFO_ARTIST_SIZE_PERCENT..MAX_SONG_INFO_ARTIST_SIZE_PERCENT,
+                step = 5,
+                suffix = "%",
+                onValueChange = { value -> update { it.copy(metadataArtistSizePercent = value) } }
+            )
         }
         if (profile.metadataVisible) {
             AodChoiceRow(AodChoiceKind.SONG_INFO_POSITION, profile.metadataAnchor) {
@@ -1869,6 +1883,20 @@ private fun LyricLayoutScreen(
                             listOf("stacked", "single"),
                             selectedProfile.metadataLayout
                         ) { value -> updateSelected { it.copy(metadataLayout = value) } }
+                    }
+                    // Artist size only shapes the stacked layout; single mode joins
+                    // both pieces into one title-sized line.
+                    if (selectedProfile.metadataLayout != "single") {
+                        IntSliderPreference(
+                            title = stringResource(R.string.setting_song_info_artist_size),
+                            value = selectedProfile.metadataArtistSizePercent,
+                            range = MIN_SONG_INFO_ARTIST_SIZE_PERCENT..MAX_SONG_INFO_ARTIST_SIZE_PERCENT,
+                            step = 5,
+                            suffix = "%",
+                            onValueChange = { value ->
+                                updateSelected { it.copy(metadataArtistSizePercent = value) }
+                            }
+                        )
                     }
                     SwitchPreference(
                         songChangeInfo,

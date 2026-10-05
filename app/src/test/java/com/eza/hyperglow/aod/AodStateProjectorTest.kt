@@ -18,6 +18,32 @@ import org.junit.Test
  */
 class AodStateProjectorTest {
     @Test
+    fun equalCoTimedRowsUseReferenceOrdinalRatherThanStructuralEquality() {
+        val source = document("Line")
+        val first = source.rows.single().copy(endMs = 5000L, fillEndMs = 5000L)
+        val duplicate = first.copy()
+        val projected = project(state(), source.copy(rows = listOf(first, duplicate)), positionMs = 500L)
+        assertEquals(1, projected.sourceRowOrdinal)
+        assertEquals(0, projected.secondLine?.sourceRowOrdinal)
+    }
+
+    @Test
+    fun coTimedRowsKeepDistinctSourceOrdinalsThroughCorrectionsAndRoleReversal() {
+        val source = document("Line")
+        val first = source.rows.single().copy(role = "LEAD", endMs = 5000L, fillEndMs = 5000L)
+        val second = first.copy(role = "BACKGROUND", text = "other")
+        val initial = project(state(), source.copy(rows = listOf(first, second)), positionMs = 500L)
+        assertEquals(0, initial.sourceRowOrdinal)
+        assertEquals(1, initial.secondLine?.sourceRowOrdinal)
+        val reversed = project(state(), source.copy(rows = listOf(
+            first.copy(role = "BACKGROUND", text = "corrected"), second.copy(role = "LEAD")
+        )), positionMs = 500L)
+        assertEquals(1, reversed.sourceRowOrdinal)
+        assertEquals(0, reversed.secondLine?.sourceRowOrdinal)
+        assertEquals("corrected", reversed.secondLine?.text)
+    }
+
+    @Test
     fun projectionCarriesTheSuppliedUserRatherThanReadingTheProcess() {
         val projected = project(state(), document("Line"))
 

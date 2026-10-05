@@ -85,7 +85,8 @@ internal data class LyricSnapshot(
     val metadataVisible: Boolean = true,
     val metadataAnchor: String = "top",
     val metadataLayout: String = "stacked",
-    val adaptiveSectioning: Boolean = true
+    val adaptiveSectioning: Boolean = true,
+    val sourceRowOrdinal: Int = -1
 ) {
     fun renderContent(): LyricRenderContent = LyricRenderContent(
         trackGeneration,
@@ -120,7 +121,8 @@ internal data class LyricSnapshot(
         metadataVisible,
         metadataAnchor,
         metadataLayout,
-        adaptiveSectioning
+        adaptiveSectioning,
+        sourceRowOrdinal
     )
 }
 
@@ -133,7 +135,8 @@ internal data class LyricSecondLine(
     val lineEndMs: Long = 0L,
     val words: List<LyricWord> = emptyList(),
     val ruby: List<LyricRuby> = emptyList(),
-    val layoutGroups: List<LyricLayoutGroup> = emptyList()
+    val layoutGroups: List<LyricLayoutGroup> = emptyList(),
+    val sourceRowOrdinal: Int = -1
 )
 
 internal data class LyricRenderContent(
@@ -169,7 +172,8 @@ internal data class LyricRenderContent(
     val metadataVisible: Boolean,
     val metadataAnchor: String,
     val metadataLayout: String,
-    val adaptiveSectioning: Boolean
+    val adaptiveSectioning: Boolean,
+    val sourceRowOrdinal: Int = -1
 )
 
 internal data class LyricKeepAliveSignal(
@@ -401,6 +405,7 @@ internal fun AodStateWireMessage.toLyricProjectionMessage(): LyricProjectionMess
             aodCanvasPaddingLandscapeYPercent = value.aodCanvasPaddingLandscapeYPercent,
             secondLine = value.secondLine?.let { second ->
                 LyricSecondLine(
+                    sourceRowOrdinal = second.sourceRowOrdinal,
                     text = second.text,
                     romanized = second.romanized,
                     translated = second.translated,
@@ -475,6 +480,7 @@ internal fun AodStateWireMessage.toLyricProjectionMessage(): LyricProjectionMess
             metadataVisible = value.metadataVisible,
             metadataAnchor = value.metadataAnchor,
             metadataLayout = value.metadataLayout,
+            sourceRowOrdinal = value.sourceRowOrdinal,
             adaptiveSectioning = value.adaptiveSectioning
         )
     )

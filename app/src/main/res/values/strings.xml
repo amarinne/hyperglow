@@ -182,6 +182,7 @@
     <string name="option_song_info_single">Song Title · Artist</string>
     <string name="choice_song_info_duration">Intro length</string>
     <string name="setting_song_info_size">Song info size</string>
+    <string name="setting_song_info_artist_size">Artist size</string>
     <string name="choice_text_weight">Text weight</string>
     <string name="setting_lyric_size">Lyric size</string>
     <string name="choice_font">Font</string>

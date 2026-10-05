@@ -7,6 +7,19 @@ import org.junit.Test
 
 class AodStateBridgeTest {
     @Test
+    fun normalizedPublicationPreservesBothSourceRowOrdinals() {
+        val incoming = state().copy(sourceRowOrdinal = 0, secondLine = AodDisplaySecondLine(
+            text = "other", lineStartMs = 100L, lineEndMs = 200L, sourceRowOrdinal = 1
+        ))
+        val normalized = normalizeAodDisplayState(incoming)
+        val published = encodeNormalizedAodStatePublication(normalized, 9L, 10L).message
+            as AodStateWireMessage.Snapshot
+        assertEquals(0, published.value.sourceRowOrdinal)
+        assertEquals(1, published.value.secondLine?.sourceRowOrdinal)
+        assertTrue(shouldRepublish(incoming, incoming.copy(sourceRowOrdinal = 2)))
+    }
+
+    @Test
     fun identicalStateIsSuppressed() {
         val state = state()
 
