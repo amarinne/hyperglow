@@ -2,6 +2,8 @@
 
 # HyperGlow
 
+[![Telegram](https://img.shields.io/badge/Telegram-Join%20group-26A5E4?logo=telegram&logoColor=white)](https://t.me/spicyex)
+
 Animated lock screen and always-on display lyrics for HyperOS 3.
 
 Requires root, LSPosed and [Spicy EX](https://github.com/amarinne/spicy-ex).
