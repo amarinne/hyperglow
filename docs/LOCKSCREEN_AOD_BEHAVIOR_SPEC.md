@@ -43,11 +43,12 @@ contract. This spec defines surface visibility, privacy, continuity, customizati
   The block fades out as a unit when the chain ends. Slot
   anchors reset on track, metadata, or frame changes. The anchored block is clamped into the
   lyric area as a whole, so a tall newcomer lands in the freed slot instead of running
-  off-screen; the survivor moves only when clipping is otherwise unavoidable. An overlap with
-  less than a second of singing left never joins, so a dying tail cannot flicker a two-line
-  section into existence. An ended overlap waits for the survivor instead of vanishing mid-duet,
+  off-screen; the survivor moves only when clipping is otherwise unavoidable. An incidental overlap
+  between lead lines with less than one second of shared timing never joins. Explicit backing-vocal
+  rows join for any positive shared window, so short authored responses remain visible. An ended
+  overlap waits for the survivor instead of vanishing mid-duet,
   so both fade out together, and a new overlap takes its slot on arrival. While the primary is
-  solo, its earliest substantial future overlap pre-joins as an invisible placeholder: it
+  solo, its earliest eligible future overlap pre-joins as an invisible placeholder: it
   reserves layout, shrink, and slot space but draws nothing until its window starts, so the
   join itself moves and resizes nothing. Second-line joins, leaves, and replacements dissolve
   like primary changes. Line changes
@@ -587,3 +588,21 @@ missing symbols disable only dependent behavior. Stock UI is never replaced, rep
 remeasured, or restyled. Only the explicit `Hide stock clock and image` setting hides Xiaomi's
 AOD clock-or-image container, and only while lyrics render. Clock translation control is allowed
 only by the verified AOD scene policy above and must fail back to Xiaomi's original target.
+
+## Response credit outro
+
+Spicy EX document v2 may include `responseCredit`. The decoder bounds this optional text to 8,192
+characters. Older documents keep their existing behavior. HyperGlow projects supplied songwriter,
+provider, uploader, and maker credit as static main text on both enabled lyric surfaces.
+
+The credit starts 700 ms after the last lead vocal fill end. One app-owned elapsed clock keeps it
+visible in the projected snapshot for 10 seconds. Heartbeats, document corrections, and transport
+gaps do not renew that episode. Seeking before the outro allows another episode. A new track uses
+a new clock. Untimed documents, missing credit, and disabled surfaces do not start the clock.
+
+The credit uses a fixed 16 sp font and the normal surface placement. Writers, provider, uploader,
+and maker occupy separate rows. Long names wrap within their row at word boundaries. Credit rows
+retain their line breaks and bypass the lyric line cap and font-size overrides. It has no timed words, readings,
+translation, duet row, or additional track metadata. Text beyond the 500-character display limit
+cannot render as a partial credit. After expiry, the ordinary instrumental presentation returns.
+The outro does not change playback, wake policy, or AOD lifetime policy.

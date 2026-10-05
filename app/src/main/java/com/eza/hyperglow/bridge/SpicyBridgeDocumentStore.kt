@@ -57,9 +57,8 @@ data class SpicyBridgeLayoutGroup(
 internal const val MAX_CONCURRENT_LYRIC_LINES = 2
 internal const val SPICY_ROW_ROLE_INTERLUDE = "INTERLUDE"
 /**
- * Minimum shared window for a duet section. A companion whose overlap with
- * the primary is shorter never joins, so a dying tail cannot flicker a
- * two-line section into existence for a fraction of a second.
+ * Minimum shared window for incidental lead-line overlaps. Explicit backing vocals retain
+ * their authored shared window, including short responses below one second.
  */
 internal const val MIN_CONCURRENT_OVERLAP_MS = 1_000L
 
@@ -86,7 +85,8 @@ data class SpicyBridgeDocument(
     val type: String,
     val durationMs: Long,
     val processingVersion: Int,
-    val rows: List<SpicyBridgeRow>
+    val rows: List<SpicyBridgeRow>,
+    val responseCredit: String = ""
 ) {
     fun matches(state: SpicyBridgeState): Boolean =
         producerId == state.producerId && generation == state.generation &&
@@ -114,7 +114,8 @@ data class SpicyBridgeDocument(
 
     /**
      * Other sung lines shown while [primary] shows: duet/layered rows whose
-     * shared window with the primary reaches [MIN_CONCURRENT_OVERLAP_MS].
+     * shared window with the primary is positive for explicit backing vocals, or reaches
+     * [MIN_CONCURRENT_OVERLAP_MS] for incidental lead-line overlaps.
      * Instrumental-gap rows never join a lyric scene. A still-running overlap
      * joins latest-started first, bounded so the canvas splits into at most
      * [MAX_CONCURRENT_LYRIC_LINES] sections. Otherwise the most recently
@@ -130,7 +131,7 @@ data class SpicyBridgeDocument(
             .filter {
                 it !== primary && it.role != SPICY_ROW_ROLE_INTERLUDE &&
                     positionMs >= it.startMs && positionMs < it.endMs &&
-                    overlapWith(primary, it) >= MIN_CONCURRENT_OVERLAP_MS
+                    joinsConcurrentScene(primary, it)
             }
             .sortedByDescending { it.startMs }
             .take((MAX_CONCURRENT_LYRIC_LINES - 1).coerceAtLeast(0))
@@ -139,7 +140,7 @@ data class SpicyBridgeDocument(
         rows.asSequence()
             .filter {
                 it !== primary && it.role != SPICY_ROW_ROLE_INTERLUDE &&
-                    it.endMs <= positionMs && overlapWith(primary, it) >= MIN_CONCURRENT_OVERLAP_MS
+                    it.endMs <= positionMs && joinsConcurrentScene(primary, it)
             }
             .maxByOrNull { it.endMs }
             ?.let { return listOf(it) }
@@ -147,14 +148,17 @@ data class SpicyBridgeDocument(
             .filter {
                 it !== primary && it.role != SPICY_ROW_ROLE_INTERLUDE &&
                     it.startMs > positionMs && it.startMs < primary.endMs &&
-                    overlapWith(primary, it) >= MIN_CONCURRENT_OVERLAP_MS
+                    joinsConcurrentScene(primary, it)
             }
             .minByOrNull { it.startMs }
             ?.let { listOf(it) } ?: emptyList()
     }
 
-    private fun overlapWith(first: SpicyBridgeRow, second: SpicyBridgeRow): Long =
-        minOf(first.endMs, second.endMs) - maxOf(first.startMs, second.startMs)
+    private fun joinsConcurrentScene(first: SpicyBridgeRow, second: SpicyBridgeRow): Boolean {
+        val overlap = minOf(first.endMs, second.endMs) - maxOf(first.startMs, second.startMs)
+        return overlap > 0L && (first.role == "BACKGROUND" || second.role == "BACKGROUND" ||
+            overlap >= MIN_CONCURRENT_OVERLAP_MS)
+    }
 }
 /**
  * Which identity field stops a held document from belonging to the producer state, or null when it
@@ -459,7 +463,8 @@ object SpicyBridgeDocumentStore {
                 root.boundedString("type"),
                 root.requiredLong("durationMs"),
                 root.requiredInt("processingVersion"),
-                rows
+                rows,
+                decodeSpicyResponseCredit(root)
             )
             return commit(metadata, arrivalRevision, document)
         }
@@ -517,3 +522,9 @@ object SpicyBridgeDocumentStore {
     private fun JsonObject.requiredDouble(key: String): Double =
         get(key)?.jsonPrimitive?.double ?: error("missing $key")
 }
+
+/** Optional display text; older documents carry no credit block. */
+internal fun decodeSpicyResponseCredit(root: JsonObject): String =
+    root["responseCredit"]?.jsonPrimitive?.contentOrNull.orEmpty().also {
+        require(it.length <= 8_192) { "oversized responseCredit" }
+    }

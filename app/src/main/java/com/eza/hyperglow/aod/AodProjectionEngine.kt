@@ -120,6 +120,7 @@ object AodProjectionEngine {
     private val releaseGate = ProjectionReleaseGate()
     private val powerSessionPolicy = AodPowerSessionPolicy()
     private val metadataIntroPolicy = SongMetadataIntroPolicy()
+    private val responseCreditOutroPolicy = ResponseCreditOutroPolicy()
 
     @Synchronized
     fun start(context: Context) {
@@ -414,7 +415,8 @@ object AodProjectionEngine {
                 duetEnabled = duetEnabled
             ),
             metadataIntroPolicy = metadataIntroPolicy,
-            powerSessionPolicy = powerSessionPolicy
+            powerSessionPolicy = powerSessionPolicy,
+            responseCreditOutroPolicy = responseCreditOutroPolicy
         )
         if (!publicationGuard.canPublish(
                 token = publicationToken,

@@ -47,13 +47,13 @@ internal fun LyricSnapshot.toAodCanvasContent(
         AodCanvasLayoutGroup(it.start, it.end, it.kind, it.keepTogether, it.confidence)
     },
     weight = profile?.weight ?: weight,
-    textSizeMode = profile?.textSize ?: textSizeMode,
+    textSizeMode = if (textSizeMode == "credit") "credit" else profile?.textSize ?: textSizeMode,
     textSizeCustom = profile?.textSizeCustom ?: textSizeCustom,
     secondaryMode = profile?.secondaryMode ?: secondaryMode,
     secondaryTextBright = profile?.secondaryTextBright ?: true,
     lyricLineLimit = profile?.lyricLineLimit ?: 3,
-    animationMode = profile?.animation ?: animationMode,
-    glowMode = profile?.glow ?: glowMode,
+    animationMode = if (textSizeMode == "credit") "Minimal" else profile?.animation ?: animationMode,
+    glowMode = if (textSizeMode == "credit") "Off" else profile?.glow ?: glowMode,
     motionMode = normalizeAodMotion(motionMode),
     lineSyncFillMode = when (profile?.lineSyncFillMode) {
         "None",
@@ -63,7 +63,7 @@ internal fun LyricSnapshot.toAodCanvasContent(
         "Left to right" -> "Left to right (main only)"
         else -> lineSyncFillMode
     },
-    overflowMode = profile?.overflow ?: overflowMode,
+    overflowMode = if (textSizeMode == "credit") "Wrap" else profile?.overflow ?: overflowMode,
     transitionMode = transitionMode,
     fontFamily = profile?.fontFamily ?: fontFamily,
     alignmentMode = profile?.alignment ?: alignmentMode,
@@ -99,7 +99,7 @@ internal fun LyricSnapshot.toAodCanvasContent(
             }
         )
     },
-    metadataVisible = profile?.metadataVisible ?: metadataVisible,
+    metadataVisible = textSizeMode != "credit" && (profile?.metadataVisible ?: metadataVisible),
     metadataAnchor = if ((profile?.metadataAnchor ?: metadataAnchor) == "bottom") "bottom" else "top",
     metadataLayout = (profile?.metadataLayout ?: metadataLayout).takeIf { it == "single" }
         ?: "stacked",

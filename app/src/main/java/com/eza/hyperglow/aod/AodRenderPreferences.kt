@@ -112,6 +112,7 @@ internal fun normalizeAodTextSize(value: String?): String = when (value) {
     "large" -> "large"
     "xlarge" -> "xlarge"
     "custom" -> "custom"
+    "credit" -> "credit"
     else -> "normal"
 }
 

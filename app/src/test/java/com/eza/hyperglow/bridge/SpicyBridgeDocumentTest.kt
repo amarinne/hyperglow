@@ -56,7 +56,7 @@ class SpicyBridgeDocumentTest {
     @Test
     fun concurrentRowsSkipDyingTailOverlap() {
         val lead = row("LEAD", 1_000, 5_000, "lead")
-        val tail = row("BACKGROUND", 1_500, 2_000, "tail")
+        val tail = row("LEAD", 1_500, 2_000, "tail")
         val document = document(listOf(lead, tail))
 
         assertTrue(document.concurrentRowsAt(1_500, lead).isEmpty())
@@ -99,7 +99,7 @@ class SpicyBridgeDocumentTest {
     @Test
     fun futureTailOverlapNeverPrejoins() {
         val lead = row("LEAD", 1_000, 10_000, "lead")
-        val tail = row("BACKGROUND", 9_500, 12_000, "tail")
+        val tail = row("LEAD", 9_500, 12_000, "tail")
         val distant = row("BACKGROUND", 11_000, 14_000, "distant")
         val document = document(listOf(lead, tail, distant))
 

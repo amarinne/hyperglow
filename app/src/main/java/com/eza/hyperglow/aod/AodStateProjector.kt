@@ -39,7 +39,8 @@ internal fun projectToDisplay(
     document: SpicyBridgeDocument?,
     context: AodProjectionContext,
     metadataIntroPolicy: SongMetadataIntroPolicy,
-    powerSessionPolicy: AodPowerSessionPolicy
+    powerSessionPolicy: AodPowerSessionPolicy,
+    responseCreditOutroPolicy: ResponseCreditOutroPolicy = ResponseCreditOutroPolicy()
 ): AodDisplayState {
     val position = context.positionMs
     val prefs = context.prefs
@@ -92,7 +93,14 @@ internal fun projectToDisplay(
             openingResolved = document != null
         )
     )
-    val presentedRow = row.takeUnless { showLargeMetadata }
+    val showResponseCredit = responseCreditOutroPolicy.shouldShow(
+        session = ProjectionSessionIdentity.from(state),
+        document = document,
+        positionMs = position,
+        nowElapsedMs = context.nowElapsedMs,
+        eligible = hasTimedLyrics && state.playing && (context.aodEnabled || context.lockscreenEnabled)
+    )
+    val presentedRow = row.takeUnless { showLargeMetadata || showResponseCredit }
     // One overlapping sung line stays on screen next to the primary so duet
     // and layered singing render together instead of cutting each other off.
     // The duet toggle withdraws the concurrent row at the source: snapshots
@@ -110,6 +118,7 @@ internal fun projectToDisplay(
         hasLanguageInconsistentKanaRuby(document, it.ruby.map { ruby -> ruby.reading })
     } == true
     val original = when {
+        showResponseCredit -> document?.responseCredit.orEmpty()
         showLargeMetadata -> metadata
         unsynced || noLyrics -> "♪"
         presentedRow != null -> presentedRow.text
@@ -117,9 +126,9 @@ internal fun projectToDisplay(
         fallbackLine != null -> fallbackLine
         else -> "♪"
     }
-    val romanized = if (showLargeMetadata || unsynced || noLyrics || rejectJapaneseReading) "" else
+    val romanized = if (showResponseCredit || showLargeMetadata || unsynced || noLyrics || rejectJapaneseReading) "" else
         presentedRow?.romanized.orEmpty()
-    val translated = if (showLargeMetadata || unsynced || noLyrics) "" else
+    val translated = if (showResponseCredit || showLargeMetadata || unsynced || noLyrics) "" else
         presentedRow?.translated.orEmpty()
     val persistentKeepAlive = AodProjectionEngine.shouldKeepAodAlive(
         playing = state.playing,
@@ -232,17 +241,17 @@ internal fun projectToDisplay(
             AodDisplayLayoutGroup(it.start, it.end, it.kind, it.keepTogether, it.confidence)
         },
         weight = prefs.weight,
-        textSizeMode = prefs.textSize,
+        textSizeMode = if (showResponseCredit) "credit" else prefs.textSize,
         textSizeCustom = prefs.textSizeCustom,
         secondaryMode = prefs.secondaryMode,
-        animationMode = prefs.animation,
-        glowMode = prefs.glow,
+        animationMode = if (showResponseCredit) "Minimal" else prefs.animation,
+        glowMode = if (showResponseCredit) "Off" else prefs.glow,
         lineSyncFillMode = state.liveCardLineSyncFill,
-        overflowMode = prefs.overflowMode,
+        overflowMode = if (showResponseCredit) "Wrap" else prefs.overflowMode,
         transitionMode = if (noLyrics) "None" else state.liveCardTransition,
         fontFamily = prefs.fontFamily,
         alignmentMode = prefs.alignment,
-        metadataVisible = context.metadataVisible,
+        metadataVisible = context.metadataVisible && !showResponseCredit,
         metadataAnchor = prefs.metadataAnchor,
         metadataLayout = prefs.metadataLayout,
         adaptiveSectioning = prefs.adaptiveSectioning

@@ -797,6 +797,38 @@ internal fun baseTextSizeForMode(text: String, overflowMode: String): Float =
     if (overflowMode != "Wrap") baseTextSizeSp(text)
     else WRAP_MODE_TEXT_SP * LIVE_CARD_SIZE_MULTIPLIER
 
+internal fun originalTextSizeSp(text: String, overflow: String, mode: String,
+    custom: Int, landscapeScale: Float): Float =
+    if (mode == "credit") 16f
+    else baseTextSizeForMode(text, overflow) * textSizeModeMultiplier(mode, custom) * landscapeScale
+
+/** Preserve credit paragraphs and wrap only within each row. */
+internal fun responseCreditLineRanges(text: String, fitCharacters: (String) -> Int): List<IntRange> {
+    val lines = ArrayList<IntRange>()
+    var cursor = 0
+    while (cursor < text.length) {
+        val paragraphEnd = text.indexOf('\n', cursor).let { if (it < 0) text.length else it }
+        while (cursor < paragraphEnd) {
+            while (cursor < paragraphEnd && text[cursor].isWhitespace()) cursor++
+            if (cursor == paragraphEnd) break
+            val remaining = text.substring(cursor, paragraphEnd)
+            var count = fitCharacters(remaining).coerceIn(1, remaining.length)
+            if (count < remaining.length) {
+                val space = remaining.lastIndexOf(' ', count)
+                if (space > 0) count = space
+                if (Character.isHighSurrogate(remaining[count - 1]) &&
+                    Character.isLowSurrogate(remaining[count])) count = if (count == 1) 2 else count - 1
+            }
+            var end = cursor + count
+            while (end > cursor && text[end - 1].isWhitespace()) end--
+            if (end > cursor) lines.add(cursor until end)
+            cursor += count
+        }
+        cursor = paragraphEnd + 1
+    }
+    return lines
+}
+
 internal fun textSizeModeMultiplier(mode: String, custom: Int): Float = when (mode) {
     "small" -> 0.9f
     "large" -> 1.2f
@@ -1443,8 +1475,8 @@ internal class AodLyricCanvasView(
             "end" -> Alignment.END
             else -> Alignment.START
         }
-        val sizeScale = textSizeModeMultiplier(nextContent.textSizeMode, nextContent.textSizeCustom)
-        val baseSp = baseTextSizeForMode(nextContent.original, nextContent.overflowMode) * sizeScale
+        val baseSp = originalTextSizeSp(nextContent.original, nextContent.overflowMode,
+            nextContent.textSizeMode, nextContent.textSizeCustom, 1f)
         val typeface = resolveTypeface(nextContent.fontFamily, nextContent.weight)
         originalPaint.typeface = typeface
         introArtistPaint.typeface = typeface
@@ -1491,9 +1523,8 @@ internal class AodLyricCanvasView(
         if (orientationStep == 90 || orientationStep == 270) landscapeTextScale else 1f
 
     private fun sizePaints() {
-        val sizeScale = textSizeModeMultiplier(content.textSizeMode, content.textSizeCustom) *
-            effectiveTextScale()
-        val baseSp = baseTextSizeForMode(content.original, content.overflowMode) * sizeScale
+        val baseSp = originalTextSizeSp(content.original, content.overflowMode,
+            content.textSizeMode, content.textSizeCustom, effectiveTextScale())
         originalPaint.textSize = baseSp * scaledDensity
         introArtistPaint.textSize = originalPaint.textSize * songInfoArtistScale(
             content.metadataArtistSizePercent
@@ -3455,6 +3486,18 @@ internal class AodLyricCanvasView(
         lineId: DuetSectionId?,
         forceSingleLine: Boolean = false
     ): OriginalLayout {
+        if (content.textSizeMode == "credit") {
+            val available = (layoutFrameWidth() - logicalPadLeft - logicalPadRight).coerceAtLeast(1f)
+            val lines = responseCreditLineRanges(content.original) { text ->
+                originalPaint.breakText(text, true, available, null)
+            }.map { range ->
+                val text = content.original.substring(range.first, range.last + 1)
+                originalLine(text, originalPaint.measureText(text), range.first, range.last + 1)
+            }
+            val metrics = originalPaint.fontMetrics
+            return OriginalLayout(lines, metrics.descent - metrics.ascent + 2f * density,
+                ORIGINAL_LINE_GAP_DP * density, false)
+        }
         // Metadata placeholders keep explicit title/artist rows even in Clip or landscape mode.
         // A long title or artist wraps onto further lines at lyric size instead
         // of shrinking the whole intro down to fit one line.
