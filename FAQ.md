@@ -1,10 +1,8 @@
 # HyperGlow FAQ
 
-### It does not work on my phone
+## Compatibility
 
-Submit a compatibility report:
-
-**HyperGlow → Report a problem → Compatibility**
+### Which phones are supported?
 
 Current testing covers one device only:
 
@@ -15,31 +13,47 @@ Current testing covers one device only:
 
 Other Xiaomi models and software versions may behave differently. Compatibility is not guaranteed.
 
-HyperGlow attempts to run anyway. Each capability is enabled by finding the exact code it needs in
-your build, rather than by matching a known version, so a build that was never tested still works if
-it carries the same internals — and a part that is missing disables only itself. The support state in
-settings reports which parts were found. If something does not work, the compatibility report above
-is what makes it fixable.
-Submit the report above so support can be evaluated from the exact SystemUI and AOD versions.
+HyperGlow still attempts to run on untested builds. Each capability looks for the exact code it
+needs, so a build that was never tested may work if it carries the same internals. If one part is
+missing, only that part is disabled. The support state in settings shows which parts were found.
 
-### Requirements
+### When will HyperOS 4 be supported?
+
+When my phone, the Xiaomi 14, gets a Xiaomi.eu HyperOS 4 ROM update. I need a real device to
+inspect and test before I can maintain a new HyperOS generation.
+
+### Can it work on Samsung, OnePlus, Oppo, or another phone?
+
+I only maintain phones that I own and actively use. HyperGlow currently depends on Xiaomi HyperOS
+internals. You are encouraged to fork the project and build the integration for your phone.
+
+### It does not work on my phone
+
+Submit a compatibility report:
+
+**HyperGlow → Report a problem → Compatibility**
+
+Include the exact device, Android version, SystemUI version, and AOD version. That information is
+what makes an unsupported build fixable.
+
+## Requirements and setup
+
+### What do I need?
 
 - Xiaomi HyperOS.
 - Rooted LSPosed.
 - Spicy EX active in Spotify.
-- HyperGlow scoped to System UI.
 - System AOD enabled for AOD lyrics.
 
-### Which LSPosed scope?
+### Do I need Spotify?
 
-System UI only.
-
-Spicy EX uses a separate Spotify-only scope.
+I only maintain integrations that I actually use, so Spotify is the maintained source here. If you
+need Chinese app integration or features, check out the [CN+ fork](https://github.com/aodianjun/com.aodianjun.hyperglow.cnplus).
 
 ### No capability report appears
 
 1. Launch HyperGlow once.
-2. Verify LSPosed scope.
+2. Verify HyperGlow is enabled in LSPosed.
 3. Reload the hooks or restart SystemUI.
 4. Reopen HyperGlow.
 
@@ -49,25 +63,19 @@ Still missing? Submit a compatibility report.
 
 Check:
 
-- Spotify actively playing.
-- Spicy EX enabled.
-- HyperGlow bridge enabled in Spicy EX.
-- HyperGlow profile supported.
-- Spotify and SystemUI bridge connections present.
-- Current track has usable lyrics.
+- Spotify is actively playing.
+- Spicy EX is enabled.
+- **Publish lyrics to HyperGlow** is enabled in Spicy EX.
+- The HyperGlow profile is supported.
+- Spotify and SystemUI bridge connections are present.
+- The current track has usable lyrics.
 
-### Does it support non-Xiaomi devices?
+## Power and privacy
 
-No.
-
-### Does Spicy EX Lite work?
-
-Yes.
-
-### Battery or burn-in risk?
+### Is there a battery or burn-in risk?
 
 Extended AOD use consumes more power and increases display-retention risk. Prefer a finite duration
-and suitable movement mode.
+and a suitable movement mode.
 
 ### Does HyperGlow download lyrics?
 

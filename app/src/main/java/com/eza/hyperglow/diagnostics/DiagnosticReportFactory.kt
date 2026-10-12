@@ -81,7 +81,8 @@ internal object DiagnosticReportFactory {
                     commonMetadata.packageVersions["xiaomi_aod"]?.present == true,
                 spicyExPackagePresent =
                     commonMetadata.packageVersions["spicy_ex"]?.present == true,
-                spotifyPackagePresent = commonMetadata.packageVersions["spotify"]?.present == true
+                spotifyPackagePresent = commonMetadata.packageVersions["spotify"]?.present == true,
+                spicySetup = captured.spicySetup
             )
         )
         return DiagnosticReportEnvelope(

@@ -23,8 +23,10 @@ accepts server-controlled hook configuration.
    `R1-` Crockford Base32 report ID.
 5. A successful receipt shows the report ID and data-policy link. The GitHub action opens a formatted
    public issue draft containing the description, report ID, app version, device model, and
-   compatibility summary only. The submitted JSON remains viewable and may be explicitly exported
-   through Android's system file picker.
+   compatibility summary only. The receipt also explains that this report system does not support
+   replies from the developer or maintainer; follow-up goes through GitHub or the Telegram group.
+   The submitted JSON remains viewable and may be explicitly exported through Android's system file
+   picker.
 
 Pending local report data expires after 30 minutes. Cancellation, timeout, or successful upload
 restores the diagnostic-logging value that existed before capture and deletes temporary report data.
@@ -60,14 +62,20 @@ All accepted report data is retained indefinitely until a maintainer manually de
 - fixed-allowlist Xiaomi properties;
 - HyperGlow, SystemUI, Xiaomi AOD, Spicy EX, and Spotify package versions. Spicy EX is detected by
   the exact installed package `com.eza.spicyex`; the report records presence, `versionName`, and
-  `versionCode`. This proves installation/version only, not LSPosed activation, Spotify scope, or
-  the `Publish lyrics to HyperGlow` setting;
+  `versionCode`. Package presence proves installation only. Guided root capture also records
+  separate Spicy EX module, Spotify scope, and HyperGlow publishing configuration statuses;
 - capability protocol/age, effective profile state, raw symbol probes, resolved capabilities;
 - configured surface flags, callback presence, and privacy-safe Spotify producer status/age;
 - capture outcome, root status, command failures, and truncation flags.
 - bounded setup state and failure keys for root, SystemUI hook/report, profile support, Spotify
   producer bridge, and required package presence/version metadata. Missing Spicy EX is a hard setup
   failure because it is the only shipped lyric producer;
+- Spicy EX configuration statuses are `enabled`, `disabled`, `not_registered`, or `unknown` for
+  LSPosed registration; `selected`, `not_selected`, or `unknown` for the current user's Spotify
+  scope; and `enabled`, `disabled`, `default_disabled`, or `unknown` for publishing. A missing key
+  in a valid preference map records Spicy EX's disabled default. Unreadable or missing files,
+  unsupported schemas, invalid XML, and failed probes remain unknown. These facts describe stored
+  configuration, not whether an already running Spotify process loaded the module;
 - current Spotify track URI, title, artist, album, lyric provider/source, detected language, timing
   type, current line index, and bounded original/transliterated/translated lyric lines when present;
 - user description;
@@ -109,6 +117,28 @@ timeout:
 - crash-buffer blocks whose process is HyperGlow, SystemUI, or Spotify, maximum 64 KiB;
 - lines from the newest LSPosed module log only, after a fixed 512 KiB tail bound, containing
   `HyperGlow` or `com.eza.hyperglow`, maximum 64 KiB.
+- one five-second `app_process` setup probe from HyperGlow's installed APK. The APK path is
+  validated, and the Android user comes from HyperGlow's own UID. The helper opens only
+  `/data/adb/lspd/config/modules_config.db` read-only with automatic corruption recovery disabled.
+  It queries only `com.eza.spicyex` registration/enabled state and `com.spotify.music` scope for
+  that user. It supports the per-user `modules_state` schema and the legacy global enabled state
+  with module-ID scope joins. A missing per-user state or an unsupported schema remains unknown.
+  It reads only the publishing boolean from
+  `/data/user/<user>/com.spotify.music/shared_prefs/SpotifyPlus.xml`, with the fixed
+  `/data_mirror/data_ce/null/<user>/com.spotify.music/shared_prefs/SpotifyPlus.xml` fallback for
+  app data isolation. Preference input is bounded to 512 KiB. External entities and document type
+  declarations are rejected. A pending preference backup or a file that changes while being read
+  remains unknown. Only three validated status tokens return to the app; database rows,
+  other settings, and helper error output never enter the report. The helper never changes settings,
+  copies a database, or repairs corruption. SQLite may create or rebuild its `-shm`/`-wal` side files.
+
+The setup checklist shows each configuration status separately. Unknown status is not a failed
+configuration check. Confirmed configuration failures add `spicy_ex_module_disabled`,
+`spicy_ex_spotify_scope_missing`, or `spicy_ex_publishing_disabled` only when no current producer
+state is present. A working producer remains authoritative for runtime health, including LSPatch
+installations and configuration changes awaiting a Spotify restart. No producer state remains
+`spotify_bridge`; it does not prove that a Binder connection failed. A failed helper command adds
+`spicy_setup` to command failures and preserves all other collected evidence.
 
 Root access is probed first, and that probe is the one command with a longer window: a root manager
 asks the user to approve the app and the command waits for that tap, so a five-second window would

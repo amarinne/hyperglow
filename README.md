@@ -18,7 +18,7 @@ Requires root, LSPosed and [Spicy EX](https://github.com/amarinne/spicy-ex).
 
 - Spicy EX lyrics on the HyperOS lock screen and AOD.
 - Line-, word- and syllable-synchronized karaoke.
-- Transliteration and translation with Spicy EX Full.
+- Transliteration and translation with Spicy EX.
 
 - AOD clock placement and burn-in movement.
 - Keep AOD active while lyrics are visible.
@@ -30,7 +30,7 @@ Requires root, LSPosed and [Spicy EX](https://github.com/amarinne/spicy-ex).
 - Rooted HyperOS 3.
 - [LSPosed](https://github.com/LSPosed/LSPosed).
 - Spotify.
-- Spicy EX Lite or Full with **Publish lyrics to HyperGlow** enabled.
+- Spicy EX with **Publish lyrics to HyperGlow** enabled.
 
 ## Install
 

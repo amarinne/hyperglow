@@ -113,6 +113,11 @@ remain indivisible. Untimed text uses `Paint.breakText`, and each secondary row 
 line. Transported transliteration segments keep their original word timings even on that single line;
 wrapping policy never converts them to row-global progress.
 
+Credit filtering is the producer's responsibility. HyperGlow has no local filter or corresponding
+preference. It presents supplied timed rows and scalar fallback without classifying their text.
+Producer omissions become ordinary gaps; row identity, authored timing, duet selection, and explicit
+response attribution retain their existing projection rules.
+
 Each surface profile independently selects a main-lyric wrap limit of 1 through 5 lines or no user
 limit. The renderer applies that limit before layout; no-limit layout remains bounded by the validated
 500-character/128-word snapshot. Surface safe areas, maximum-height policy, optional-row removal, and
@@ -258,6 +263,13 @@ Root denial degrades to metadata-only reporting. The app process filters/redacts
 exact allowlisted JSON, uploads manually through one bounded `HttpURLConnection` request, and deletes
 the temporary draft after cancellation, timeout, or success. The APK contains no intake credential.
 See `docs/DIAGNOSTIC_REPORTING_SPEC.md`.
+
+One root `app_process` helper reads fixed, bounded Spicy EX setup evidence during guided capture.
+It queries the live LSPosed database read-only for Spicy EX and the current user's Spotify scope,
+and extracts only the HyperGlow publishing boolean from Spotify's preferences. It returns validated
+status tokens and never serializes database rows, other settings, or exception output. The helper
+disables SQLite's automatic corruption recovery. Unknown evidence stays unknown; stored configuration
+does not establish runtime hook activation. SystemUI and the producer transport remain uninvolved.
 
 ## Customization Boundary
 

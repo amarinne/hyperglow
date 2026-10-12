@@ -89,6 +89,7 @@ class ConfigBackupCodecTest {
               "renderPreferences": {
                 "${com.eza.hyperglow.aod.AodRenderPreferences.KEEP_AWAKE}": false,
                 "arbitrary_key": 42,
+                "hide_credit_lines": true,
                 "${com.eza.hyperglow.aod.AodRenderPreferences.PAUSE_LINGER_MS}": "5000"
               }
             }

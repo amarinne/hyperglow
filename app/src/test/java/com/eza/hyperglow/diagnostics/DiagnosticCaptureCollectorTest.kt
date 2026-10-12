@@ -7,6 +7,84 @@ import org.junit.Test
 
 class DiagnosticCaptureCollectorTest {
     @Test
+    fun invalidApkPathNeverInvokesSetupHelper() {
+        val commands = mutableListOf<String>()
+        val collector = DiagnosticCaptureCollector { command, _ ->
+            commands += command
+            DiagnosticRootCommandResult(0, if (command == "id -u") "0\n" else "")
+        }
+
+        val result = collector.collect(0L, "/tmp/base.apk", 0)
+
+        assertEquals(listOf("spicy_setup"), result.commandFailures)
+        assertEquals(SpicySetupEvidence(), result.spicySetup)
+        assertFalse(commands.any { it.startsWith("CLASSPATH=") })
+    }
+
+    @Test
+    fun failedOrTruncatedHelperCannotEstablishConfigurationFromAMarker() {
+        val marker = "spicy_setup_v1 user=0 module=enabled scope=selected publishing=enabled"
+        for (answer in listOf(
+            DiagnosticRootCommandResult(1, marker),
+            DiagnosticRootCommandResult(0, marker, outputTruncated = true)
+        )) {
+            val collector = DiagnosticCaptureCollector { command, _ ->
+                when {
+                    command == "id -u" -> DiagnosticRootCommandResult(0, "0\n")
+                    command.startsWith("CLASSPATH=") -> answer
+                    else -> DiagnosticRootCommandResult(0, "")
+                }
+            }
+
+            val result = collector.collect(0L, "/data/app/a/base.apk", 0)
+
+            assertEquals("partial_capture", result.outcome)
+            assertEquals(listOf("spicy_setup"), result.commandFailures)
+            assertEquals(SpicySetupEvidence(), result.spicySetup)
+        }
+    }
+
+    @Test
+    fun setupProbeFailureKeepsOtherEvidenceAndMarksSettingsUnknown() {
+        val collector = DiagnosticCaptureCollector { command, _ ->
+            when {
+                command == "id -u" -> DiagnosticRootCommandResult(0, "0\n")
+                command.startsWith("CLASSPATH=") -> DiagnosticRootCommandResult(
+                    -1, "private error", timedOut = true
+                )
+                else -> DiagnosticRootCommandResult(0, "HyperGlow known positive")
+            }
+        }
+
+        val result = collector.collect(0L, "/data/app/a/base.apk", 0)
+
+        assertEquals("partial_capture", result.outcome)
+        assertEquals(listOf("spicy_setup"), result.commandFailures)
+        assertEquals(SpicySetupEvidence(), result.spicySetup)
+        assertFalse(result.logs.contains("private error"))
+        assertTrue(result.logs.contains("known positive"))
+    }
+
+    @Test
+    fun setupProbeOutputIsTypedAndNeverAppendedToLogs() {
+        val collector = DiagnosticCaptureCollector { command, _ ->
+            when {
+                command == "id -u" -> DiagnosticRootCommandResult(0, "0\n")
+                command.startsWith("CLASSPATH=") -> DiagnosticRootCommandResult(
+                    0, "private exception\nspicy_setup_v1 user=0 module=enabled scope=selected publishing=disabled"
+                )
+                else -> DiagnosticRootCommandResult(0, "")
+            }
+        }
+
+        val result = collector.collect(0L, "/data/app/a/base.apk", 0)
+
+        assertEquals("captured", result.outcome)
+        assertEquals(SpicySetupEvidence("enabled", "selected", "disabled"), result.spicySetup)
+        assertFalse(result.logs.contains("private exception"))
+    }
+
+    @Test
     fun rootDenialProducesMetadataOnlyReport() {
         var commands = 0
         val collector = DiagnosticCaptureCollector { _, _ ->

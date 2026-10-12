@@ -157,6 +157,40 @@ class DiagnosticContractTest {
         assertNull(DiagnosticReportCodec.decodeOrNull("{\"envelopeVersion\":99}"))
     }
 
+    @Test
+    fun setupProbeFailureAndExplicitUnknownStatusesRemainValidReports() {
+        val report = sampleReport().let {
+            it.copy(capture = it.capture.copy(outcome = "partial_capture", commandFailures = listOf("spicy_setup")))
+        }
+
+        assertTrue(DiagnosticReportCodec.isValidReport(report))
+        val decoded = DiagnosticReportCodec.decodeOrNull(DiagnosticReportCodec.encode(report))
+        assertEquals("unknown", decoded?.productMetadata?.setupChecks?.spicyExPublishingStatus)
+        assertFalse(DiagnosticReportCodec.isValidReport(report.copy(
+            productMetadata = report.productMetadata.copy(
+                setupChecks = report.productMetadata.setupChecks.copy(spicyExPublishingStatus = "future")
+            )
+        )))
+    }
+
+    @Test
+    fun reportRoundTripPreservesDistinctSetupStatusesAndFailureKeys() {
+        val checks = HyperGlowSetupChecks(
+            setupState = "warning",
+            setupFailures = listOf("spotify_bridge", "spicy_ex_publishing_disabled"),
+            spicyExModuleStatus = "enabled",
+            spicyExSpotifyScopeStatus = "not_selected",
+            spicyExPublishingStatus = "default_disabled"
+        )
+        val report = sampleReport().let {
+            it.copy(productMetadata = it.productMetadata.copy(setupChecks = checks))
+        }
+
+        val decoded = DiagnosticReportCodec.decodeOrNull(DiagnosticReportCodec.encode(report))
+
+        assertEquals(checks, decoded?.productMetadata?.setupChecks)
+    }
+
     private fun sampleReport(
         description: String = "Compatibility problem",
         privateLog: String = "filtered module log"

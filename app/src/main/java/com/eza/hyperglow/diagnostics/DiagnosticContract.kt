@@ -126,7 +126,10 @@ internal data class HyperGlowSetupChecks(
     val profileSupported: Boolean = false,
     val spotifyProducerBridgePresent: Boolean = false,
     val spicyExPackagePresent: Boolean = false,
-    val requiredPackagesPresent: Boolean = false
+    val requiredPackagesPresent: Boolean = false,
+    val spicyExModuleStatus: String = "unknown",
+    val spicyExSpotifyScopeStatus: String = "unknown",
+    val spicyExPublishingStatus: String = "unknown"
 )
 
 @Serializable
@@ -222,6 +225,9 @@ internal object DiagnosticReportCodec {
             report.productMetadata.rootAccessStatus !in ROOT_ACCESS_STATES ||
             report.productMetadata.setupChecks.setupState !in SETUP_STATES ||
             report.productMetadata.setupChecks.rootAccessStatus !in ROOT_ACCESS_STATES ||
+            report.productMetadata.setupChecks.spicyExModuleStatus !in SPICY_MODULE_STATUSES ||
+            report.productMetadata.setupChecks.spicyExSpotifyScopeStatus !in SPICY_SCOPE_STATUSES ||
+            report.productMetadata.setupChecks.spicyExPublishingStatus !in SPICY_PUBLISHING_STATUSES ||
             !SETUP_FAILURE_KEYS.containsAll(report.productMetadata.setupChecks.setupFailures) ||
             report.capture.outcome !in CAPTURE_OUTCOMES ||
             report.capture.rootAccessStatus !in ROOT_ACCESS_STATES ||
@@ -323,7 +329,10 @@ internal object DiagnosticReportCodec {
         "xiaomi_aod_package",
         "spicy_ex_package",
         "spotify_package",
-        "spotify_bridge"
+        "spotify_bridge",
+        "spicy_ex_module_disabled",
+        "spicy_ex_spotify_scope_missing",
+        "spicy_ex_publishing_disabled"
     )
     private val CAPTURE_OUTCOMES = setOf(
         "not_requested",
@@ -353,7 +362,8 @@ internal object DiagnosticReportCodec {
         "systemui_processes",
         "framework",
         "crash",
-        "lsposed"
+        "lsposed",
+        "spicy_setup"
     )
     private val TRUNCATION_KEYS = setOf(
         "diagnosticEventsAndLogs",

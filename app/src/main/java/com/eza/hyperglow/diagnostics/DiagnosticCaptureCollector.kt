@@ -23,13 +23,14 @@ internal data class CapturedDiagnosticData(
     val crashExcerpt: String,
     val lsposedLines: String,
     val commandFailures: List<String>,
-    val truncationFlags: Map<String, Boolean>
+    val truncationFlags: Map<String, Boolean>,
+    val spicySetup: SpicySetupEvidence = SpicySetupEvidence()
 )
 
 internal class DiagnosticCaptureCollector(
     private val runner: DiagnosticRootCommandRunner
 ) {
-    fun collect(startedAtUtcMillis: Long): CapturedDiagnosticData {
+    fun collect(startedAtUtcMillis: Long, apkPath: String? = null, userId: Int = 0): CapturedDiagnosticData {
         val rootAccessStatus = checkDiagnosticRootAccess(runner)
         if (rootAccessStatus != "granted") {
             return CapturedDiagnosticData(
@@ -57,7 +58,13 @@ internal class DiagnosticCaptureCollector(
         val results = commands.associate { (name, command) ->
             name to runner.run(command, DiagnosticLimits.COMMAND_TIMEOUT_MS)
         }
-        val failures = results.filterValues { it.timedOut || it.exitCode != 0 }.keys.toList()
+        val failures = results.filterValues { it.timedOut || it.exitCode != 0 }.keys.toMutableList()
+        val probeCommand = apkPath?.let { spicySetupProbeCommand(it, userId) }
+        val probeResult = probeCommand?.let { runner.run(it, DiagnosticLimits.COMMAND_TIMEOUT_MS) }
+        val spicySetup = probeResult?.takeIf {
+            !it.timedOut && it.exitCode == 0 && !it.outputTruncated
+        }?.let { parseSpicySetupEvidence(it.output, userId) }
+        if (apkPath != null && spicySetup == null) failures += "spicy_setup"
         val rawLogs = buildString {
             val processResult = results.getValue("systemui_processes")
             val systemUiProcesses = filterSystemUiProcessLines(processResult.output)
@@ -106,7 +113,8 @@ internal class DiagnosticCaptureCollector(
             crashExcerpt = crash.text,
             lsposedLines = lsposed.text,
             commandFailures = failures,
-            truncationFlags = flags
+            truncationFlags = flags,
+            spicySetup = spicySetup ?: SpicySetupEvidence()
         )
     }
 

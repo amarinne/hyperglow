@@ -90,6 +90,10 @@ contract. This spec defines surface visibility, privacy, continuity, customizati
   previous user's cached payload.
 - AOD keepalive and lockscreen screen-on policy remain independent. Neither can activate from the
   other surface alone.
+- HyperGlow has no credit filter or corresponding preference. Credit filtering is the producer's
+  responsibility. Both surfaces present the supplied rows and scalar fallback. Omitted rows become
+  ordinary gaps without changing authored timing, duet identity, metadata gap policy, or the explicit
+  response credit outro.
 - `playbackActive` comes only from the active lyric source and is transported explicitly. A source is
   a process whose identity the producer has validated — the Spicy bridge validates Spotify's caller
   UID — and only a validated source can activate lyric keepalive. Validation is a property of the

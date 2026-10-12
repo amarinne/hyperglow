@@ -99,6 +99,50 @@ class DiagnosticSetupPolicyTest {
         assertFalse(result.requiredPackagesPresent)
     }
 
+    @Test
+    fun absentProducerReportsEachConfirmedConfigurationFailure() {
+        val result = resolveHyperGlowSetupChecks(
+            completeInput().copy(
+                spotifyProducerBridgePresent = false,
+                spicySetup = SpicySetupEvidence("disabled", "not_selected", "default_disabled")
+            )
+        )
+
+        assertEquals("warning", result.setupState)
+        assertEquals(
+            listOf("spotify_bridge", "spicy_ex_module_disabled", "spicy_ex_spotify_scope_missing",
+                "spicy_ex_publishing_disabled"),
+            result.setupFailures
+        )
+        assertEquals("disabled", result.spicyExModuleStatus)
+        assertEquals("not_selected", result.spicyExSpotifyScopeStatus)
+        assertEquals("default_disabled", result.spicyExPublishingStatus)
+    }
+
+    @Test
+    fun workingProducerDoesNotTreatConfiguredScopeAsRuntimeFailure() {
+        val result = resolveHyperGlowSetupChecks(
+            completeInput().copy(spicySetup = SpicySetupEvidence("disabled", "not_selected", "disabled"))
+        )
+
+        assertEquals("ready", result.setupState)
+        assertTrue(result.setupFailures.isEmpty())
+        assertEquals("disabled", result.spicyExPublishingStatus)
+    }
+
+    @Test
+    fun missingSpicyPackageDoesNotAddConfigurationFailures() {
+        val result = resolveHyperGlowSetupChecks(
+            completeInput().copy(
+                spicyExPackagePresent = false,
+                spotifyProducerBridgePresent = false,
+                spicySetup = SpicySetupEvidence("disabled", "not_selected", "disabled")
+            )
+        )
+
+        assertEquals(listOf("spicy_ex_package", "spotify_bridge"), result.setupFailures)
+    }
+
     private fun completeInput() = HyperGlowSetupInput(
         rootAccessStatus = "granted",
         capabilityReportPresent = true,

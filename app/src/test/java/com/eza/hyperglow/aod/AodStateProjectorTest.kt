@@ -135,6 +135,96 @@ class AodStateProjectorTest {
     }
 
     @Test
+    fun producerCreditTextIsPresentedWithoutLocalClassification() {
+        val source = document("Line")
+        val credit = source.rows.single().copy(text = "作曲：张三", endMs = 400L, fillEndMs = 400L)
+        val lyric = credit.copy(startMs = 400L, endMs = 900L, fillEndMs = 900L, text = "real lyric")
+        val timed = source.copy(rows = listOf(credit, lyric))
+
+        assertEquals(credit.text, project(state(), timed, positionMs = 100L).original)
+        assertEquals(lyric.text, project(state(), timed, positionMs = 500L).original)
+        assertEquals("Composer: Jane", project(state().copy(line = "Composer: Jane"), null).original)
+    }
+
+    @Test
+    fun documentWithoutCreditRowsKeepsSurvivingBackingVocalsAndAuthoredTiming() {
+        val source = document("Word")
+        val sung = source.rows.single().copy(role = "BACKGROUND", text = "real lyric", words = listOf(
+            SpicyBridgeWord("real lyric", "", 0L, 900L, true)
+        ))
+
+        val projected = project(state(), source.copy(rows = listOf(sung)))
+
+        assertEquals("real lyric", projected.original)
+        assertEquals(0, projected.sourceRowOrdinal)
+        assertEquals(sung.words.map { it.text }, projected.words.map { it.text })
+        assertEquals(sung.startMs, projected.lineStartMs)
+        assertEquals(sung.endMs, projected.lineEndMs)
+        assertNull(projected.secondLine)
+        assertTrue(projected.keepAlive)
+    }
+
+    @Test
+    fun documentWithoutCreditRowsKeepsDuetLyricsAndTheirReceivedOrdinals() {
+        val source = document("Line")
+        val lead = source.rows.single().copy(endMs = 5_000L, fillEndMs = 5_000L)
+        val backing = lead.copy(role = "BACKGROUND", text = "a response")
+
+        val projected = project(state(), source.copy(rows = listOf(lead, backing)), positionMs = 200L)
+
+        assertEquals("line", projected.original)
+        assertEquals(0, projected.sourceRowOrdinal)
+        assertEquals("a response", projected.secondLine?.text)
+        assertEquals(1, projected.secondLine?.sourceRowOrdinal)
+    }
+
+    @Test
+    fun documentWithoutOutroCreditsKeepsLyricsAndLeavesTheirAuthoredTailGap() {
+        val source = document("Word")
+        val lyric = source.rows.single().copy(startMs = 252_241L, endMs = 264_801L,
+            fillEndMs = 264_801L, text = "四季日月的更迭 都只在你 一眼之间")
+        val timed = source.copy(durationMs = 297_000L, rows = listOf(lyric))
+        val playing = state().copy(durationMs = 297_000L)
+
+        val sung = project(playing, timed, positionMs = 260_000L)
+
+        assertEquals(lyric.text, sung.original)
+        assertEquals(lyric.startMs, sung.lineStartMs)
+        assertEquals(lyric.endMs, sung.lineEndMs)
+        listOf(267_500L, 268_500L, 270_000L).forEach { position ->
+            val projected = project(playing, timed, positionMs = position)
+            assertEquals("♪", projected.original)
+            assertNull(projected.secondLine)
+            assertTrue(projected.words.isEmpty())
+        }
+    }
+
+    @Test
+    fun producerCopyrightParagraphIsPresentedWhenUpstreamKeepsIt() {
+        val source = document("Line")
+        val notice = source.rows.single().copy(
+            text = "版权所有，翻版必究。本专辑涉及的任何作品，未经权利人授权不得使用。"
+        )
+
+        val projected = project(state(), source.copy(rows = listOf(notice)))
+
+        assertEquals(notice.text, projected.original)
+        assertEquals(0, projected.sourceRowOrdinal)
+    }
+
+    @Test
+    fun documentWithoutOpeningCreditsLeavesTheFullMetadataGap() {
+        val source = document("Line")
+        val lyric = source.rows.single().copy(text = "real lyric", startMs = 10_000L, endMs = 20_000L)
+
+        val projected = project(state(title = "title", artist = "artist"),
+            source.copy(rows = listOf(lyric)), positionMs = 1_000L)
+
+        assertEquals("title\nartist", projected.original)
+        assertNull(projected.secondLine)
+    }
+
+    @Test
     fun chineseDocumentRejectsJapaneseRubyAndRomaji() {
         val source = document("Line", language = "zh-Hant")
         val row = source.rows.single().copy(

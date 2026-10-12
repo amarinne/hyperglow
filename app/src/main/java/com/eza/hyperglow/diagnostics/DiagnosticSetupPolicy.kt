@@ -9,7 +9,8 @@ internal data class HyperGlowSetupInput(
     val systemUiPackagePresent: Boolean,
     val xiaomiAodPackagePresent: Boolean,
     val spicyExPackagePresent: Boolean,
-    val spotifyPackagePresent: Boolean
+    val spotifyPackagePresent: Boolean,
+    val spicySetup: SpicySetupEvidence = SpicySetupEvidence()
 )
 
 /**
@@ -67,6 +68,19 @@ internal fun resolveHyperGlowSetupChecks(input: HyperGlowSetupInput): HyperGlowS
         hardFailure = true
     }
     if (!input.spotifyProducerBridgePresent) failures += "spotify_bridge"
+    // Configuration can differ from an already running or LSPatch-patched Spotify process.
+    // Only diagnose these prerequisites when no live producer state establishes working playback.
+    if (!input.spotifyProducerBridgePresent && input.spicyExPackagePresent) {
+        if (input.spicySetup.moduleStatus in setOf("disabled", "not_registered")) {
+            failures += "spicy_ex_module_disabled"
+        }
+        if (input.spicySetup.spotifyScopeStatus == "not_selected") {
+            failures += "spicy_ex_spotify_scope_missing"
+        }
+        if (input.spicySetup.publishingStatus in setOf("disabled", "default_disabled")) {
+            failures += "spicy_ex_publishing_disabled"
+        }
+    }
 
     return HyperGlowSetupChecks(
         setupState = when {
@@ -81,6 +95,9 @@ internal fun resolveHyperGlowSetupChecks(input: HyperGlowSetupInput): HyperGlowS
         profileSupported = profileSupported,
         spotifyProducerBridgePresent = input.spotifyProducerBridgePresent,
         spicyExPackagePresent = input.spicyExPackagePresent,
+        spicyExModuleStatus = input.spicySetup.moduleStatus,
+        spicyExSpotifyScopeStatus = input.spicySetup.spotifyScopeStatus,
+        spicyExPublishingStatus = input.spicySetup.publishingStatus,
         requiredPackagesPresent = input.systemUiPackagePresent &&
             input.xiaomiAodPackagePresent && input.spicyExPackagePresent &&
             input.spotifyPackagePresent

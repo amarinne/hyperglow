@@ -3,3 +3,4 @@
 -keep class com.eza.hyperglow.root.HookEntry { *; }
 -keep class com.eza.hyperglow.** extends android.app.Service { *; }
 -keep class com.eza.hyperglow.** extends android.content.ContentProvider { *; }
+-keep class com.eza.hyperglow.diagnostics.SpicySetupProbe { public static void main(java.lang.String[]); }

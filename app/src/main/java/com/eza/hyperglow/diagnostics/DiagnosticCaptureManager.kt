@@ -115,7 +115,11 @@ internal object DiagnosticCaptureManager {
         val data = try {
             withContext(Dispatchers.IO) {
                 DiagnosticCaptureCollector(DiagnosticRootProcessRunner)
-                    .collect(session.startedAtUtcMillis)
+                    .collect(
+                        session.startedAtUtcMillis,
+                        context.applicationInfo.sourceDir,
+                        android.os.Process.myUid() / 100_000
+                    )
             }
         } finally {
             restored = endSession(context, session, DiagnosticCaptureLifecycleEvent.FINISH)

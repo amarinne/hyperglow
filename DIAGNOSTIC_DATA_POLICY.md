@@ -4,6 +4,9 @@ HyperGlow sends a diagnostic report only after you open **Report a problem**, re
 data, accept this policy, and tap **Upload once**. There are no background uploads, analytics,
 remote configuration, automatic GitHub issues, cookies, or embedded API credentials.
 
+The report system does not support replies from the developer or maintainer. For follow-up, contact
+them directly through GitHub or the Telegram group.
+
 ## Included data
 
 - Your description and chosen category.
@@ -18,14 +21,19 @@ remote configuration, automatic GitHub issues, cookies, or embedded API credenti
   presence of the LSPosed log directories, matching module `module.prop` id/name/version/versionCode,
   detected root-solution marker (`ksu`, `ap`, or `magisk`), and only manager package names matching
   `lsposed`, `lspatch`, or `edxposed`.
+- With root, three Spicy EX setup statuses: whether LSPosed has enabled Spicy EX, whether Spotify
+  is selected in its scope for the current Android user, and whether publishing to HyperGlow is
+  enabled. A fixed read-only probe extracts these statuses from LSPosed's live configuration and
+  Spotify's Spicy EX preferences. Unavailable evidence is reported as unknown. No full scope list,
+  database contents, other preferences, or probe error text is included.
 
 ## Never included
 
 - Artwork identifiers.
 - Spotify tokens, cookies, account details, Android ID, serial, IMEI, or Wi-Fi SSID.
 - Full logcat, unfiltered LSPosed logs, screenshots, imported customization files, arbitrary files,
-  or a complete installed-app inventory. Framework evidence is limited to the fixed paths and
-  selected package-name patterns listed above.
+  or a complete installed-app inventory. Framework and setup evidence is limited to the fixed
+  sources and selected package-name patterns listed above.
 - Your source IP in the application or report record. Network infrastructure may process it
   normally while handling the HTTPS request.
 
