@@ -224,18 +224,6 @@ object SymbolResolver {
         return null
     }
 
-    /** [resolveMethodInOrder] for a class that was renamed or moved between ROM generations. */
-    fun resolveClassInOrder(
-        loader: ClassLoader,
-        featureId: String,
-        owners: List<String>
-    ): Class<*>? {
-        for (owner in owners) {
-            resolveClass(loader, featureId, owner)?.let { return it }
-        }
-        return null
-    }
-
     fun resolveMethod(
         loader: ClassLoader,
         featureId: String,
@@ -254,7 +242,8 @@ object SymbolResolver {
         }
         SymbolSourceLog.record(
             featureId,
-            "method:${request.ownerClassName ?: "*"}#${request.memberName}",
+            "method:${request.ownerClassName ?: "*"}#${request.memberName}" +
+                "(${request.parameterTypeNames.joinToString(",")})",
             outcome.symbol != null,
             outcome.symbol?.source
         )

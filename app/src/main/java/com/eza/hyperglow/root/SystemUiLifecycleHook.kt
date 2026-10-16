@@ -30,33 +30,33 @@ internal object SystemUiLifecycleHook {
     }
 
     private fun installApplicationHook(module: XposedModule, classLoader: ClassLoader) {
-        val applicationClass = SymbolResolver.resolveClassInOrder(
-            classLoader,
-            FEATURE_ID,
-            APPLICATION_CLASS_CANDIDATES
-        )
-        if (applicationClass == null) {
-            installApplicationFactoryDiscovery(module, classLoader)
-            return
-        }
-        val onCreate = SymbolResolver.resolveMethod(
-            classLoader,
-            FEATURE_ID,
-            SymbolRequest.method(applicationClass.name, "onCreate")
-        )
-        if (onCreate == null) {
-            missingSeam(classLoader, "${applicationClass.name}#onCreate")
-            return
-        }
-        runCatching { HookRegistry.hook(module, FEATURE_ID, onCreate, ApplicationCreateHooker) }
-            .onSuccess {
-                HookLogger.bootstrap(
-                    TAG,
-                    "systemui_application_hook_installed class=${applicationClass.name} " +
-                        "loader=${loaderTag(classLoader)}"
-                )
+        // A usable pair, not a class name: the hook needs the class that declares onCreate. A build
+        // that keeps a known class but moves the member elsewhere must not stop the install, so a
+        // pair that does not resolve falls through to the next candidate and then to the factory.
+        for (candidate in APPLICATION_CLASS_CANDIDATES) {
+            val applicationClass = SymbolResolver.resolveClass(classLoader, FEATURE_ID, candidate)
+                ?: continue
+            val onCreate = SymbolResolver.resolveMethod(
+                classLoader,
+                FEATURE_ID,
+                SymbolRequest.method(applicationClass.name, "onCreate")
+            )
+            if (onCreate == null) {
+                missingSeam(classLoader, "${applicationClass.name}#onCreate")
+                continue
             }
-            .onFailure { HookLogger.w(TAG, "systemui_application_hook_failed", it) }
+            runCatching { HookRegistry.hook(module, FEATURE_ID, onCreate, ApplicationCreateHooker) }
+                .onSuccess {
+                    HookLogger.bootstrap(
+                        TAG,
+                        "systemui_application_hook_installed class=${applicationClass.name} " +
+                            "loader=${loaderTag(classLoader)}"
+                    )
+                }
+                .onFailure { HookLogger.w(TAG, "systemui_application_hook_failed", it) }
+            return
+        }
+        installApplicationFactoryDiscovery(module, classLoader)
     }
 
     /**

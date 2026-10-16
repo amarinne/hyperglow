@@ -14,6 +14,7 @@ import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.widget.FrameLayout
 import com.eza.hyperglow.root.HookLogger
+import com.eza.hyperglow.root.SurfaceEvidence
 import com.eza.hyperglow.root.readHierarchyField
 import com.eza.hyperglow.customization.CompiledCustomization
 import com.eza.hyperglow.customization.CompiledSurfaceProfile
@@ -772,15 +773,22 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
     fun attach(controller: Any, root: ViewGroup?) {
         mainHandler.post {
             val candidateRoot = root ?: readHierarchyField(controller, "keyguardRootView") as? ViewGroup
-                ?: return@post
+                ?: run {
+                    SurfaceEvidence.once("lockscreen_surface_disabled_root")
+                    return@post
+                }
             XiaomiCapabilityResolver.observeContext(candidateRoot.context)
             val supported = XiaomiCapabilityResolver.hasCapability(XiaomiCapability.LOCKSCREEN_HOST) &&
                 XiaomiCapabilityResolver.hasCapability(XiaomiCapability.LOCKSCREEN_GEOMETRY)
             if (!supported) {
+                SurfaceEvidence.once("lockscreen_surface_disabled_capability")
                 if (controllerRef.get() === controller) detachCurrent()
                 return@post
             }
-            val candidateHost = findHost(controller, candidateRoot) ?: return@post
+            val candidateHost = findHost(controller, candidateRoot) ?: run {
+                SurfaceEvidence.once("lockscreen_surface_disabled_host")
+                return@post
+            }
             if (shouldReuseLockscreenHost(hostRef.get(), candidateHost, surface != null)) {
                 controllerRef = WeakReference(controller)
                 rootRef = WeakReference(candidateRoot)
@@ -814,6 +822,7 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
             SystemUiLyricProjectionRuntime.projection.attach(this, candidateRoot.context)
             SystemUiLyricProjectionRuntime.projection.reportCapabilities()
             HookLogger.i(TAG, "Lockscreen surface attached")
+            SurfaceEvidence.once("lockscreen_surface_attached")
         }
     }
 
@@ -1541,7 +1550,10 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
                         )
                     )
                 }
-                lyricCanvas = AodLyricCanvasView(context).also { canvas ->
+                lyricCanvas = AodLyricCanvasView(
+                    context,
+                    surfaceKind = LyricSurfaceKind.LOCKSCREEN
+                ).also { canvas ->
                     canvas.visibility = View.GONE
                     canvas.isClickable = false
                     canvas.isLongClickable = false

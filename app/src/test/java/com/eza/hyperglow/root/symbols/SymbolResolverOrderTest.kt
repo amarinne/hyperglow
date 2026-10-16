@@ -59,14 +59,22 @@ class SymbolResolverOrderTest {
         assertNull(SymbolResolver.resolveMethodInOrder(loader, "test", listOf(first, second)))
     }
 
+    /**
+     * The application-class candidates are resolved as class-plus-member pairs, so a candidate whose
+     * class is missing must not stop a later candidate from resolving.
+     */
     @Test
-    fun classCandidatesResolveInOrder() {
-        assertEquals(
-            owner,
-            SymbolResolver.resolveClassInOrder(loader, "test", listOf("no.such.Class", owner))?.name
-        )
+    fun candidateWithMissingClassFallsThroughToTheNextOwner() {
+        val firstOwner = SymbolRequest.method("no.such.Class", "onCreate")
+        val secondOwner = SymbolRequest.method(owner, "morph", "boolean", "boolean")
+
+        assertNotNull(SymbolResolver.resolveMethodInOrder(loader, "test", listOf(firstOwner, secondOwner)))
         assertNull(
-            SymbolResolver.resolveClassInOrder(loader, "test", listOf("no.such.Class", "also.Missing"))
+            SymbolResolver.resolveMethodInOrder(
+                loader,
+                "test",
+                listOf(firstOwner, SymbolRequest.method("also.Missing", "onCreate"))
+            )
         )
     }
 

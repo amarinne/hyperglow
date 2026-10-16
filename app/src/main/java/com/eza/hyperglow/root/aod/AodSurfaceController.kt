@@ -14,6 +14,7 @@ import android.view.ViewTreeObserver
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import com.eza.hyperglow.root.HookLogger
+import com.eza.hyperglow.root.SurfaceEvidence
 import com.eza.hyperglow.root.readHierarchyField
 import com.eza.hyperglow.customization.CompiledCustomization
 import com.eza.hyperglow.customization.CompiledSurfaceProfile
@@ -642,11 +643,13 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
                 if (!XiaomiCapabilityResolver.hasCapability(XiaomiCapability.AOD_SURFACE)) {
                     if (rootRef.get() != null || surface != null) detachCurrent()
                     HookLogger.w(TAG, "AOD surface capability unavailable; surface disabled")
+                    SurfaceEvidence.once("aod_surface_disabled_capability")
                     return@runCatching
                 }
 
                 val burnInContainer = findBurnInContainer(root) ?: run {
                     HookLogger.w(TAG, "mTableModeContainer unavailable; surface disabled")
+                    SurfaceEvidence.once("aod_surface_disabled_container")
                     return@runCatching
                 }
                 if (rootRef.get() === root && surface != null) return@runCatching
@@ -691,8 +694,10 @@ internal object AodSurfaceController : SystemUiLyricSubscriber, LinkageSurface {
                 }
                 SystemUiLyricProjectionRuntime.projection.attach(this, root.context)
                 HookLogger.i(TAG, "Surface attached")
+                SurfaceEvidence.once("aod_surface_attached")
             }.onFailure {
                 runCatching { detachCurrent() }
+                SurfaceEvidence.once("aod_surface_attach_failed")
                 HookLogger.e(TAG, "Attach failed", it)
             }
         }

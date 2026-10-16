@@ -16,6 +16,8 @@ import com.eza.hyperglow.customization.DEFAULT_SONG_INFO_ARTIST_SIZE_PERCENT
 import com.eza.hyperglow.customization.MIN_SONG_INFO_ARTIST_SIZE_PERCENT
 import com.eza.hyperglow.customization.MAX_SONG_INFO_ARTIST_SIZE_PERCENT
 import com.eza.hyperglow.root.HookLogger
+import com.eza.hyperglow.root.SurfaceEvidence
+import com.eza.hyperglow.root.projection.LyricSurfaceKind
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -1211,7 +1213,8 @@ internal fun staticSecondaryTextFactor(bright: Boolean): Float = if (bright) 1f 
 /** Bounded Spicy live-card renderer adapted for Xiaomi AOD. */
 internal class AodLyricCanvasView(
     context: Context,
-    private val useDozeHandlerCadence: Boolean = false
+    private val useDozeHandlerCadence: Boolean = false,
+    private val surfaceKind: LyricSurfaceKind = LyricSurfaceKind.AOD
 ) : View(context) {
     enum class Alignment { START, CENTER, END }
 
@@ -1830,6 +1833,12 @@ internal class AodLyricCanvasView(
         val passesFilter = blockFilter
         val lyricGroups = drawLayout.rows.filter { it.row.kind != RowKind.METADATA }
             .groupBy { it.row.blockIndex }.toSortedMap()
+        // Evidence only when this frame actually reaches a lyric draw: a block the playhead defers
+        // and a block the filter rejects both skip every row they own, so counting them here would
+        // report a first frame that drew no lyric at all.
+        if (lyricGroups.keys.any { it !in deferred && passesFilter?.invoke(it) != false }) {
+            SurfaceEvidence.once("lyrics_first_frame_" + surfaceKind.name.lowercase())
+        }
         val needsScales = drawLayout.sectionScales.values.any { it != 1f }
         if (!needsScales && passesFilter == null) {
             drawLyricRowGroup(canvas, drawLayout.rows, blocks, deferred, drawContent, skipOriginal)
