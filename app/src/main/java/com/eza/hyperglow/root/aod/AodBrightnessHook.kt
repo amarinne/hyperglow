@@ -6,6 +6,7 @@ import com.eza.hyperglow.customization.MAX_AOD_BRIGHTNESS
 import com.eza.hyperglow.customization.MIN_AOD_BRIGHTNESS
 import com.eza.hyperglow.root.HookLogger
 import com.eza.hyperglow.root.HookRegistry
+import com.eza.hyperglow.root.loaderTag
 import com.eza.hyperglow.root.symbols.SymbolRequest
 import com.eza.hyperglow.root.symbols.SymbolResolver
 import io.github.libxposed.api.XposedInterface.Chain
@@ -21,21 +22,33 @@ object AodBrightnessHook {
     private val hookedClassLoaders = Collections.synchronizedSet(
         Collections.newSetFromMap(WeakHashMap<ClassLoader, Boolean>())
     )
+    private val loggedMissingSeams = Collections.synchronizedSet(mutableSetOf<String>())
 
     fun install(module: XposedModule, classLoader: ClassLoader) {
+        // The AOD plugin dex is attached after the host process starts, so the first loaders a host
+        // builds cannot see com.miui.aod at all. A missing class on such a loader is expected and
+        // stays on the gated INFO channel; a missing member on a present class is the finding and
+        // stays on WARN, which always reaches the log.
+        if (SymbolResolver.resolveClass(classLoader, FEATURE_ID, ADAPTER_CLASS) == null) {
+            HookLogger.i(TAG, "AOD brightness class absent loader=${loaderTag(classLoader)}")
+            return
+        }
         val adapterMethod = SymbolResolver.resolveMethod(
             classLoader,
             FEATURE_ID,
             SymbolRequest.method(ADAPTER_CLASS, SET_BRIGHTNESS_METHOD, "int")
-        ) ?: return
+        ) ?: return missingSeam(classLoader, "$ADAPTER_CLASS#$SET_BRIGHTNESS_METHOD(int)")
         val adapterClass = SymbolResolver.resolveClass(
             classLoader, FEATURE_ID, ADAPTER_CLASS
-        ) ?: return
+        ) ?: return missingSeam(classLoader, ADAPTER_CLASS)
         val transitionMethod = SymbolResolver.resolveMethod(
             classLoader,
             FEATURE_ID,
             SymbolRequest.method(CONTROLLER_CLASS, TRANSITION_METHOD, STATE_CLASS, STATE_CLASS)
-        ) ?: return
+        ) ?: return missingSeam(
+            classLoader,
+            "$CONTROLLER_CLASS#$TRANSITION_METHOD($STATE_CLASS,$STATE_CLASS)"
+        )
         val readableBrightness = resolveBrightnessOn(classLoader)
         if (!hookedClassLoaders.add(classLoader)) return
 
@@ -50,8 +63,18 @@ object AodBrightnessHook {
         HookLogger.i(
             TAG,
             "AOD brightness hooks installed constructors=${adapterClass.declaredConstructors.size} " +
-                "methods=2 target=$readableBrightness"
+                "methods=2 target=$readableBrightness loader=${loaderTag(classLoader)}"
         )
+    }
+
+    /**
+     * A seam that does not resolve used to return without a trace, so a ROM where the member is
+     * absent was indistinguishable from a working one and the manual brightness override was
+     * silently inert. Name the seam, once per loader, so a field log says which member is missing.
+     */
+    private fun missingSeam(classLoader: ClassLoader, seam: String) {
+        if (!loggedMissingSeams.add("$seam@${System.identityHashCode(classLoader)}")) return
+        HookLogger.w(TAG, "AOD brightness hook seam unresolved $seam loader=${loaderTag(classLoader)}")
     }
 
     private fun resolveBrightnessOn(classLoader: ClassLoader): Int {

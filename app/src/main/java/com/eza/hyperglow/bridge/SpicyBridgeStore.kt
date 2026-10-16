@@ -145,16 +145,10 @@ internal class SpicyBridgeStateReducer {
     var current: SpicyBridgeState? = null
         private set
 
-    private var tombstoneProducerId = ""
-    private var tombstoneGeneration = -1L
-
     fun accept(payload: SpicyBridgeStatePayload, now: Long): Boolean {
         if (payload.protocolVersion != SpicyBridgeStore.PROTOCOL_VERSION) return false
         if (payload.producerId.isBlank() || payload.producerId.length > 64 ||
             payload.generation < 0 || payload.sequence < 0L
-        ) return false
-        if (payload.producerId == tombstoneProducerId &&
-            payload.generation <= tombstoneGeneration
         ) return false
 
         current?.let { accepted ->
@@ -239,12 +233,15 @@ internal class SpicyBridgeStateReducer {
         return true
     }
 
+    /**
+     * Drops the held state. The generation is not retired: the producer always follows a clear with
+     * its next update, and the previous tombstone rejected every later payload at or below the
+     * cleared generation, which blacked out the rest of the song whenever the producer cleared for a
+     * reason of its own and then resumed. Ordering against the held state still applies inside
+     * [accept], so an older generation or a lower sequence cannot replace what is current.
+     */
     fun clear(producerId: String, generation: Long) {
         if (producerId.isBlank()) return
-        if (producerId != tombstoneProducerId || generation > tombstoneGeneration) {
-            tombstoneProducerId = producerId
-            tombstoneGeneration = generation
-        }
         current?.let { accepted ->
             if (producerId == accepted.producerId && generation >= accepted.generation) current = null
         }

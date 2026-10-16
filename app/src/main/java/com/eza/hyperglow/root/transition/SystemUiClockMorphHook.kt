@@ -6,6 +6,7 @@ import android.view.ViewGroup
 import com.eza.hyperglow.root.HookLogger
 import com.eza.hyperglow.root.HookRegistry
 import com.eza.hyperglow.root.hierarchyField
+import com.eza.hyperglow.root.loaderTag
 import com.eza.hyperglow.root.aod.AodRenderedClockBounds
 import com.eza.hyperglow.root.symbols.SymbolRequest
 import com.eza.hyperglow.root.symbols.SymbolResolver
@@ -14,6 +15,7 @@ import io.github.libxposed.api.XposedInterface.Hooker
 import io.github.libxposed.api.XposedModule
 import java.lang.ref.WeakReference
 import java.lang.reflect.Field
+import java.util.Collections
 
 internal object SystemUiClockMorphHook {
     private var clockViewRef = WeakReference<View>(null)
@@ -22,35 +24,64 @@ internal object SystemUiClockMorphHook {
     private val rootLocation = IntArray(2)
 
     fun install(module: XposedModule, classLoader: ClassLoader) {
-        val method = SymbolResolver.resolveMethod(
+        val method = SymbolResolver.resolveMethodInOrder(
             classLoader,
             FEATURE_ID,
-            SymbolRequest.method(
-                ANIMATION_HELPER_CLASS,
-                "doAnimationToAod",
-                "boolean",
-                "boolean",
-                "boolean"
-            )
-        ) ?: return
+            DO_ANIMATION_TO_AOD_CANDIDATES
+        ) ?: return missingSeam(classLoader, "$ANIMATION_HELPER_CLASS#doAnimationToAod")
         val helperClass = SymbolResolver.resolveClass(
             classLoader, FEATURE_ID, ANIMATION_HELPER_CLASS
-        ) ?: return
-        val clockAnimationField = hierarchyField(helperClass, "mClockAnima") ?: return
-        val clockViewField = hierarchyField(helperClass, "mClockView") ?: return
+        ) ?: return missingSeam(classLoader, ANIMATION_HELPER_CLASS)
+        val clockAnimationField = hierarchyField(helperClass, "mClockAnima")
+            ?: return missingSeam(classLoader, "$ANIMATION_HELPER_CLASS#mClockAnima")
+        val clockViewField = hierarchyField(helperClass, "mClockView")
+            ?: return missingSeam(classLoader, "$ANIMATION_HELPER_CLASS#mClockView")
         val baseAnimationClass = SymbolResolver.resolveClass(
             classLoader, FEATURE_ID, CLOCK_BASE_ANIMATION_CLASS
-        ) ?: return
+        ) ?: return missingSeam(classLoader, CLOCK_BASE_ANIMATION_CLASS)
         val allContainerField = hierarchyField(baseAnimationClass, "mAllContainer")
-            ?: return
+            ?: return missingSeam(classLoader, "$CLOCK_BASE_ANIMATION_CLASS#mAllContainer")
         HookRegistry.hook(
             module,
             FEATURE_ID,
             method,
             AnimationHooker(clockAnimationField, clockViewField, allContainerField)
         )
-        HookLogger.i(TAG, "SystemUI clock morph geometry hook installed")
+        HookLogger.i(
+            TAG,
+            "SystemUI clock morph geometry hook installed shape=${method.parameterCount}args " +
+                "loader=${loaderTag(classLoader)}"
+        )
     }
+
+    /**
+     * A seam that does not resolve used to return without a trace, so a build whose clock-morph
+     * signature moved was indistinguishable from one where the capture worked. Name the member,
+     * once per process, so a field log says which shape changed.
+     */
+    private fun missingSeam(classLoader: ClassLoader, seam: String) {
+        val tag = loaderTag(classLoader)
+        if (!loggedMissingSeams.add("$seam@$tag")) return
+        HookLogger.w(TAG, "SystemUI clock morph seam unresolved $seam loader=$tag")
+    }
+
+    /**
+     * Ordered exact candidates, each verified on a known build: HyperOS 4 / Android 17 declares
+     * `doAnimationToAod(boolean, boolean, boolean, boolean, AnimationTracker)`; earlier builds
+     * declare `doAnimationToAod(boolean, boolean, boolean)`. Argument 0 is `toAod` in both, which is
+     * what [AnimationHooker] reads, and the tracker argument is passed through untouched.
+     */
+    private val DO_ANIMATION_TO_AOD_CANDIDATES = listOf(
+        SymbolRequest.method(
+            ANIMATION_HELPER_CLASS, "doAnimationToAod",
+            "boolean", "boolean", "boolean", "boolean", ANIMATION_TRACKER_CLASS
+        ),
+        SymbolRequest.method(
+            ANIMATION_HELPER_CLASS, "doAnimationToAod",
+            "boolean", "boolean", "boolean"
+        )
+    )
+    private val loggedMissingSeams = Collections.synchronizedSet(mutableSetOf<String>())
 
     fun renderedBoundsInRoot(root: ViewGroup): AodRenderedClockBounds? {
         if (!morphingToAod) return null
@@ -114,6 +145,8 @@ internal object SystemUiClockMorphHook {
 
     private const val ANIMATION_HELPER_CLASS =
         "com.android.keyguard.clock.animation.AnimationHelper"
+    private const val ANIMATION_TRACKER_CLASS =
+        "com.android.keyguard.clock.animation.AnimationTracker"
     private const val CLOCK_BASE_ANIMATION_CLASS =
         "com.android.keyguard.clock.animation.ClockBaseAnimation"
     private const val MIN_VISIBLE_ALPHA = 0.02f

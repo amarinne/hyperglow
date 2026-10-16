@@ -287,11 +287,39 @@ class SpicyBridgeDocumentTest {
     }
 
     @Test
-    fun documentTimingMustMatchAcceptedStateDuration() {
+    fun documentTimingToleratesTheProducersWholeSecondDuration() {
         val document = document(listOf(row("LEAD", 1_000, 3_000, "line")), durationMs = 3_000)
 
         assertTrue(isValidSpicyBridgeDocumentTiming(document, acceptedDurationMs = 3_000))
-        assertFalse(isValidSpicyBridgeDocumentTiming(document, acceptedDurationMs = 3_001))
+        // The producer rounds the track length to the second; the state carries the measured value.
+        assertTrue(isValidSpicyBridgeDocumentTiming(document, acceptedDurationMs = 2_757))
+        assertTrue(isValidSpicyBridgeDocumentTiming(document, acceptedDurationMs = 3_243))
+        assertFalse(isValidSpicyBridgeDocumentTiming(document, acceptedDurationMs = 5_000))
+        assertFalse(isValidSpicyBridgeDocumentTiming(document, acceptedDurationMs = 0))
+    }
+
+    @Test
+    fun documentWithNoSettledDurationIsBoundedByTheStateDuration() {
+        val document = document(listOf(row("LEAD", 1_000, 3_000, "line")), durationMs = 0)
+
+        // The producer publishes the document before its own track metadata settles, and nothing
+        // re-sends it. The state's measured duration is authoritative, so the document stays usable.
+        assertNull(spicyBridgeDocumentTimingFault(document, acceptedDurationMs = 3_000))
+        assertTrue(document.matches(state(durationMs = 3_000)))
+
+        // Its rows are still validated, against the state's duration.
+        assertEquals(
+            "row[0] start=1000 end=3500 duration=3000",
+            spicyBridgeDocumentTimingFault(
+                document(listOf(row("LEAD", 1_000, 3_500, "line")), durationMs = 0),
+                acceptedDurationMs = 3_000
+            )
+        )
+        // A state with no usable duration of its own is still rejected.
+        assertEquals(
+            "state-duration=0",
+            spicyBridgeDocumentTimingFault(document, acceptedDurationMs = 0)
+        )
     }
 
     @Test
@@ -299,40 +327,97 @@ class SpicyBridgeDocumentTest {
         val document = document(listOf(row("LEAD", 1_000, 3_000, "line")), durationMs = 3_000)
 
         assertNull(spicyBridgeDocumentTimingFault(document, acceptedDurationMs = 3_000))
+        assertNull(spicyBridgeDocumentTimingFault(document, acceptedDurationMs = 3_001))
         assertEquals(
-            "duration document=3000 state=3001",
-            spicyBridgeDocumentTimingFault(document, acceptedDurationMs = 3_001)
+            "duration document=3000 state=5000",
+            spicyBridgeDocumentTimingFault(document, acceptedDurationMs = 5_000)
         )
         assertEquals(
-            "row[0] start=1000 end=3001 duration=3000",
+            "row[0] start=1000 end=3500 duration=3100",
             spicyBridgeDocumentTimingFault(
-                document(listOf(row("LEAD", 1_000, 3_001, "line")), durationMs = 3_000),
-                acceptedDurationMs = 3_000
+                document(listOf(row("LEAD", 1_000, 3_500, "line")), durationMs = 3_000),
+                acceptedDurationMs = 3_100
             )
         )
     }
 
     @Test
-    fun documentMismatchNamesTheFieldThatDiverged() {
+    fun documentCommitsBeforeItsStateArrivesInsteadOfBeingDroppedForever() {
         val document = document(listOf(row("LEAD", 1_000, 3_000, "line")), durationMs = 3_000)
 
-        assertNull(spicyBridgeDocumentMismatch(document, state(durationMs = 3_000)))
+        // The service accepts state synchronously and parses the document on a worker, and a state
+        // whose track duration is still settling is rejected while this document already carries a
+        // real duration. Nothing re-sends the document, so a missing state must not discard it.
+        assertNull(spicyBridgeDocumentCommitFault(document, state = null))
+        assertNull(spicyBridgeDocumentCommitFault(document, state(3_000)))
+
+        // Without a state the document is still bounded by its own declared duration.
         assertEquals(
-            "generation document=1 state=2",
-            spicyBridgeDocumentMismatch(document, state(durationMs = 3_000, generation = 2))
+            "row[0] start=1000 end=3500 duration=3000",
+            spicyBridgeDocumentCommitFault(
+                document(listOf(row("LEAD", 1_000, 3_500, "line")), durationMs = 3_000),
+                state = null
+            )
         )
         assertEquals(
-            "duration document=3000 state=3001 track=spotify:track:test",
-            spicyBridgeDocumentMismatch(document, state(durationMs = 3_001))
+            "no-state document-duration=0",
+            spicyBridgeDocumentCommitFault(
+                document(listOf(row("LEAD", 1_000, 3_000, "line")), durationMs = 0),
+                state = null
+            )
+        )
+
+        // A state that is present still rejects another session's document.
+        assertEquals(
+            "state-mismatch document=1:spotify:track:test state=1:spotify:track:other",
+            spicyBridgeDocumentCommitFault(
+                document,
+                state(3_000).copy(trackUri = "spotify:track:other")
+            )
+        )
+        assertEquals(
+            "duration document=3000 state=5000",
+            spicyBridgeDocumentCommitFault(document, state(5_000))
         )
     }
 
     @Test
-    fun laterDurationChangeInvalidatesAcceptedDocument() {
+    fun documentMismatchIgnoresTheProducersSessionBookkeeping() {
+        val document = document(listOf(row("LEAD", 1_000, 3_000, "line")), durationMs = 3_000)
+        val advanced = state(durationMs = 3_000).copy(producerId = "producer-2")
+
+        assertNull(spicyBridgeDocumentMismatch(document, state(durationMs = 3_000)))
+        // The producer advances its session id and generation while the previous document is in
+        // flight, and nothing re-requests a document dropped here.
+        assertNull(spicyBridgeDocumentMismatch(document, advanced))
+        assertNull(spicyBridgeDocumentMismatch(document, state(durationMs = 3_000, generation = 2)))
+        assertNull(spicyBridgeDocumentMismatch(document, state(durationMs = 2_757)))
+        assertEquals(
+            "duration document=3000 state=5000 track=spotify:track:test",
+            spicyBridgeDocumentMismatch(document, state(durationMs = 5_000))
+        )
+    }
+
+    @Test
+    fun documentMismatchNamesTheTrackThatDiverged() {
+        val document = document(listOf(row("LEAD", 1_000, 3_000, "line")), durationMs = 3_000)
+        val other = state(durationMs = 3_000).copy(trackUri = "spotify:track:other")
+
+        assertEquals(
+            "track document=spotify:track:test state=spotify:track:other",
+            spicyBridgeDocumentMismatch(document, other)
+        )
+        assertFalse(document.matches(other))
+    }
+
+    @Test
+    fun laterDurationChangeBeyondTheToleranceInvalidatesAcceptedDocument() {
         val document = document(listOf(row("LEAD", 1_000, 3_000, "line")), durationMs = 3_000)
 
         assertTrue(document.matches(state(durationMs = 3_000)))
-        assertFalse(document.matches(state(durationMs = 3_001)))
+        assertTrue(document.matches(state(durationMs = 2_757)))
+        assertFalse(document.matches(state(durationMs = 5_000)))
+        assertFalse(document.matches(state(durationMs = 0)))
     }
 
     @Test

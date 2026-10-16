@@ -56,6 +56,45 @@ class AodCanvasLayoutTest {
     }
 
     @Test
+    fun knownSourceRowOrdinalIsTheSectionIdentityAcrossALaneEndRefinement() {
+        val settled = DuetSectionId(7L, 1000L, 5000L, 3)
+        val refined = settled.copy(lineEndMs = 5_240L)
+
+        // A settled audible end is the same line: anchor, scale, wrap, and
+        // presentation state must all stay addressable under one identity.
+        assertEquals(settled, refined)
+        assertEquals(settled.hashCode(), refined.hashCode())
+        assertNotEquals(settled, settled.copy(lineStartMs = 1_200L))
+        assertNotEquals(settled, settled.copy(sourceRowOrdinal = 4))
+        assertNotEquals(settled, settled.copy(trackGeneration = 8L))
+        assertNotEquals(settled, settled.copy(sourceRowOrdinal = -1))
+        // Unknown ordinals keep the legacy timing identity so co-timed rows stay distinct.
+        val legacyFirst = settled.copy(sourceRowOrdinal = -1)
+        val legacySecond = legacyFirst.copy(lineEndMs = 5_240L)
+        assertNotEquals(legacyFirst, legacySecond)
+    }
+
+    @Test
+    fun laneEndRefinementDoesNotRetireTheSectionFromTheTransitionSplit() {
+        val first = DuetSectionId(7L, 1000L, 5000L, 0)
+        val second = DuetSectionId(7L, 1200L, 6000L, 1)
+        val refined = first.copy(lineEndMs = 5_240L)
+
+        val passes = resolveDuetTransitionPasses(
+            exitIds = listOf(first, second),
+            enterIds = listOf(refined, second),
+            exitLineCounts = listOf(2, 1),
+            enterLineCounts = listOf(2, 1)
+        )
+
+        // Merging the refinement keeps the refined line a survivor, drawn once;
+        // retiring it made the canvas crossfade the same line against itself.
+        assertEquals(setOf(0, 1), passes.continuingEnterBlocks)
+        assertTrue(passes.departingExitBlocks.isEmpty())
+        assertTrue(passes.arrivingEnterBlocks.isEmpty())
+    }
+
+    @Test
     fun metadataSeparatorsProduceTrimmedRowsWithoutEmptyLines() {
         assertEquals(listOf("Song", "Artist"), metadataLineTexts("Song · Artist"))
         assertEquals(listOf("Song", "Mix", "Artist"), metadataLineTexts("Song · Mix · Artist"))

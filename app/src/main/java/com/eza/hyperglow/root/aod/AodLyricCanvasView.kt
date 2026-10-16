@@ -4682,13 +4682,42 @@ internal fun resolveVerticalBiasShift(
  * Identity of one sung line for duet slot memory. Source row ordinals distinguish
  * co-timed lines and survive text corrections and primary/companion role changes.
  * Unknown ordinals retain the legacy timing identity.
+ *
+ * A known ordinal *is* the identity, so the window comparison only applies without
+ * one. A lane revision that settles the row's audible end ([lineEndMs], the
+ * document's fill end) is the same benign refinement [aodLineTransitionKey]
+ * already tolerates to keep the dissolve from restarting; comparing the end for
+ * every id retired the section instead — its slot anchor, committed draw scale,
+ * frozen wrap, presentation decision, and transition-pass ownership were all
+ * dropped and rebuilt with no dissolve, which reads as a jump or resize while the
+ * same line sings. Unknown ordinals keep the full window comparison so co-timed
+ * rows that never reported an ordinal stay distinct.
  */
 internal data class DuetSectionId(
     val trackGeneration: Long,
     val lineStartMs: Long,
     val lineEndMs: Long,
     val sourceRowOrdinal: Int = -1
-)
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is DuetSectionId) return false
+        if (trackGeneration != other.trackGeneration ||
+            lineStartMs != other.lineStartMs ||
+            sourceRowOrdinal != other.sourceRowOrdinal
+        ) return false
+        // The timing window is only an identity while no ordinal identifies the row.
+        return sourceRowOrdinal >= 0 || lineEndMs == other.lineEndMs
+    }
+
+    override fun hashCode(): Int {
+        var result = trackGeneration.hashCode()
+        result = 31 * result + lineStartMs.hashCode()
+        result = 31 * result + sourceRowOrdinal
+        if (sourceRowOrdinal < 0) result = 31 * result + lineEndMs.hashCode()
+        return result
+    }
+}
 
 /**
  * Visual section order by slot: lines present in the previous build keep

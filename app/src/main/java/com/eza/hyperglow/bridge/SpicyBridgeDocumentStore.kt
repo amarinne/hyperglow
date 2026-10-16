@@ -19,6 +19,7 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.util.zip.GZIPInputStream
+import kotlin.math.abs
 
 data class SpicyBridgeWord(
     val text: String,
@@ -88,9 +89,19 @@ data class SpicyBridgeDocument(
     val rows: List<SpicyBridgeRow>,
     val responseCredit: String = ""
 ) {
+    /**
+     * A held document stays usable while it describes the same track within
+     * [DOCUMENT_DURATION_TOLERANCE_MS] of the state's duration.
+     *
+     * `producerId` and `generation` are session bookkeeping the producer advances while a document
+     * for the previous value is still in flight. Requiring them to match threw away a document that
+     * nothing re-requests, which left the rest of the song untimed: no animated fill, and keepalive
+     * reduced to the song-change lease. The arrival path still commits only a document whose bundle
+     * metadata matched the state, so this gate only decides whether an already-committed document
+     * belongs to the track the state is playing.
+     */
     fun matches(state: SpicyBridgeState): Boolean =
-        producerId == state.producerId && generation == state.generation &&
-            trackUri == state.trackUri && durationMs == state.durationMs
+        trackUri == state.trackUri && documentDurationsAgree(durationMs, state.durationMs)
 
     fun primaryRowAt(positionMs: Long): SpicyBridgeRow? {
         var lead: SpicyBridgeRow? = null
@@ -171,15 +182,29 @@ internal fun spicyBridgeDocumentMismatch(
     state: SpicyBridgeState
 ): String? = when {
     document.matches(state) -> null
-    document.producerId != state.producerId ->
-        "producer document=${document.producerId} state=${state.producerId}"
-    document.generation != state.generation ->
-        "generation document=${document.generation} state=${state.generation}"
     document.trackUri != state.trackUri ->
         "track document=${document.trackUri} state=${state.trackUri}"
     else -> "duration document=${document.durationMs} state=${state.durationMs} " +
         "track=${state.trackUri}"
 }
+
+/**
+ * The producer reports the track length rounded to the whole second (`281000`), while the state
+ * carries the measured duration (`280757`). Observed documents diverged by 54-486 ms, so an exact
+ * comparison rejected 50 of 53 of them, and a rejected document is dropped for the rest of the song.
+ */
+internal const val DOCUMENT_DURATION_TOLERANCE_MS = 1_000L
+
+/**
+ * Whether a document's own duration agrees with the accepted state.
+ *
+ * A document that declares no usable duration (`0`, or a producer revision whose track metadata has
+ * not settled) does not disagree: the state's measured duration is what bounds the rows, and the
+ * document's identity is its track URI. A real duration still has to be within
+ * [DOCUMENT_DURATION_TOLERANCE_MS].
+ */
+internal fun documentDurationsAgree(documentMs: Long, stateMs: Long): Boolean =
+    stateMs > 0L && (documentMs <= 0L || abs(documentMs - stateMs) <= DOCUMENT_DURATION_TOLERANCE_MS)
 
 internal fun isValidSpicyBridgeDocumentTiming(
     document: SpicyBridgeDocument,
@@ -193,30 +218,71 @@ internal fun isValidSpicyBridgeDocumentTiming(
  * for the rest of the song: nothing re-requests it, so the difference between "the producer sent a
  * duration the state does not agree with" and "one row runs past the end of the track" is the whole
  * diagnosis when keepalive silently falls back to the song-change lease.
+ *
+ * A sub-second duration disagreement is rounding, not a fault, so the duration is compared within
+ * [DOCUMENT_DURATION_TOLERANCE_MS] and the rows are bounded by the larger of the two durations. A
+ * document that declares no usable duration is bounded by the state's measured duration instead,
+ * because the producer publishes a document before its own track metadata settles. A different
+ * track, a larger duration disagreement, or a row past both durations still discards the document.
  */
 internal fun spicyBridgeDocumentTimingFault(
     document: SpicyBridgeDocument,
     acceptedDurationMs: Long
 ): String? {
     if (acceptedDurationMs <= 0L) return "state-duration=$acceptedDurationMs"
-    if (document.durationMs != acceptedDurationMs) {
+    if (!documentDurationsAgree(document.durationMs, acceptedDurationMs)) {
         return "duration document=${document.durationMs} state=$acceptedDurationMs"
     }
+    val limitMs = maxOf(document.durationMs, acceptedDurationMs)
     document.rows.forEachIndexed { index, row ->
-        if (row.startMs < 0L || row.endMs !in row.startMs..acceptedDurationMs) {
-            return "row[$index] start=${row.startMs} end=${row.endMs} duration=$acceptedDurationMs"
+        if (row.startMs < 0L || row.endMs !in row.startMs..limitMs) {
+            return "row[$index] start=${row.startMs} end=${row.endMs} duration=$limitMs"
         }
-        if (row.fillEndMs !in row.startMs..acceptedDurationMs) {
-            return "row[$index] fillEnd=${row.fillEndMs} duration=$acceptedDurationMs"
+        if (row.fillEndMs !in row.startMs..limitMs) {
+            return "row[$index] fillEnd=${row.fillEndMs} duration=$limitMs"
         }
         row.words.forEachIndexed { wordIndex, word ->
-            if (word.startMs < 0L || word.endMs !in word.startMs..acceptedDurationMs) {
+            if (word.startMs < 0L || word.endMs !in word.startMs..limitMs) {
                 return "row[$index].word[$wordIndex] start=${word.startMs} end=${word.endMs} " +
-                    "duration=$acceptedDurationMs"
+                    "duration=$limitMs"
             }
         }
     }
     return null
+}
+
+/**
+ * Why a parsed document cannot become the held document, or null when it can.
+ *
+ * The document can arrive before any state has been accepted: the service accepts state
+ * synchronously and parses a document on a worker, so the two are only loosely ordered, and a state
+ * whose track metadata is still settling (a zero duration) is rejected as invalid while the lyrics
+ * document already carries a real duration. A document dropped here is never re-sent by the
+ * producer — a re-publish only happens when the document itself changes — so the rest of the song
+ * projects untimed and keepalive falls back to the song-change lease.
+ *
+ * With no state there is nothing to compare the document against, so it is checked only against its
+ * own declared duration. That does not leak content: the projection refuses to use a document that
+ * does not match the playing state — [SpicyBridgeDocument.matches] decides on track URI and
+ * duration, and the projection clears anything mismatched — so an unvalidated commit is only
+ * useful once the matching state arrives, and is discarded otherwise.
+ */
+internal fun spicyBridgeDocumentCommitFault(
+    document: SpicyBridgeDocument,
+    state: SpicyBridgeState?
+): String? {
+    if (state == null) {
+        if (document.durationMs <= 0L) return "no-state document-duration=${document.durationMs}"
+        return spicyBridgeDocumentTimingFault(document, document.durationMs)
+    }
+    if (document.producerId != state.producerId ||
+        document.generation != state.generation ||
+        document.trackUri != state.trackUri
+    ) {
+        return "state-mismatch document=${document.generation}:${document.trackUri} " +
+            "state=${state.generation}:${state.trackUri}"
+    }
+    return spicyBridgeDocumentTimingFault(document, state.durationMs)
 }
 
 internal data class SpicyBridgeDocumentMetadata(
@@ -353,9 +419,12 @@ object SpicyBridgeDocumentStore {
             val trackUri = metadata.trackUri
 
             val bridgeState = SpicyBridgeStore.state.value
-                ?: return "no-state generation=$generation track=$trackUri"
-            if (bridgeState.producerId != producerId || bridgeState.generation != generation ||
-                bridgeState.trackUri != trackUri) {
+            if (bridgeState != null && (
+                    bridgeState.producerId != producerId ||
+                        bridgeState.generation != generation ||
+                        bridgeState.trackUri != trackUri
+                    )
+            ) {
                 return "state-mismatch document=$generation:$trackUri " +
                     "state=${bridgeState.generation}:${bridgeState.trackUri}"
             }
@@ -476,17 +545,8 @@ object SpicyBridgeDocumentStore {
         arrivalRevision: Long,
         document: SpicyBridgeDocument
     ): String? {
-        val current = SpicyBridgeStore.state.value
-            ?: return "commit-no-state generation=${metadata.generation}"
-        if (current.producerId != metadata.producerId ||
-            current.generation != metadata.generation ||
-            current.trackUri != metadata.trackUri
-        ) {
-            return "commit-state-mismatch document=${metadata.generation}:${metadata.trackUri} " +
-                "state=${current.generation}:${current.trackUri}"
-        }
-        spicyBridgeDocumentTimingFault(document, current.durationMs)?.let {
-            return "commit-timing $it"
+        spicyBridgeDocumentCommitFault(document, SpicyBridgeStore.state.value)?.let {
+            return "commit-$it"
         }
         if (!commitOrder.accept(metadata.sessionIdentity, arrivalRevision)) {
             return "commit-order revision=$arrivalRevision"

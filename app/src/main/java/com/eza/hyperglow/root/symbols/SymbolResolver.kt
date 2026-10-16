@@ -205,6 +205,37 @@ object SymbolResolver {
         return resolution.first
     }
 
+    /**
+     * Ordered candidates for a seam whose shape moved between ROM generations. The first request
+     * that resolves wins, and each miss is recorded by [resolveMethod] under the same feature, so a
+     * field log names every shape that was tried rather than only the one that failed.
+     *
+     * Exact-name resolution stays the rule: a candidate is a member verified against a known ROM
+     * build, never a guessed neighbour.
+     */
+    fun resolveMethodInOrder(
+        loader: ClassLoader,
+        featureId: String,
+        requests: List<SymbolRequest>
+    ): Method? {
+        for (request in requests) {
+            resolveMethod(loader, featureId, request)?.let { return it }
+        }
+        return null
+    }
+
+    /** [resolveMethodInOrder] for a class that was renamed or moved between ROM generations. */
+    fun resolveClassInOrder(
+        loader: ClassLoader,
+        featureId: String,
+        owners: List<String>
+    ): Class<*>? {
+        for (owner in owners) {
+            resolveClass(loader, featureId, owner)?.let { return it }
+        }
+        return null
+    }
+
     fun resolveMethod(
         loader: ClassLoader,
         featureId: String,

@@ -111,6 +111,7 @@ object AodProjectionEngine {
     private var lastKeepAliveAt = 0L
     private var lastKeepAliveIntent = false
     private var lastDocumentMismatch = ""
+    private var lastDocumentSkew = ""
     private var lastAodEnabled: Boolean? = null
     private var lastCustomizationPublishAt = 0L
     private var started = false
@@ -155,6 +156,8 @@ object AodProjectionEngine {
         if (shouldClearMismatchedDocument(heldDocument, state)) {
             heldDocument?.let { logDocumentMismatch(it, state) }
             producers.clearDocument()
+        } else {
+            heldDocument?.let { logDocumentIdentitySkew(it, state) }
         }
         cancelRelease()
         if (!producers.isCurrentActive(state)) {
@@ -476,6 +479,22 @@ object AodProjectionEngine {
         lastDocumentMismatch = detail
         // Nothing re-requests a discarded document, so the rest of the song projects untimed.
         AppLog.w(TAG, "Discarded mismatched document $detail")
+    }
+
+    /**
+     * Session bookkeeping can advance while a document for the previous value is still in flight.
+     * The document stays usable (see SpicyBridgeDocument.matches); this records the divergence once
+     * per distinct value so a later session can tell a benign skew from a real mismatch.
+     */
+    private fun logDocumentIdentitySkew(document: SpicyBridgeDocument, state: SpicyBridgeState) {
+        if (document.producerId == state.producerId && document.generation == state.generation) {
+            return
+        }
+        val detail = "producer document=${document.producerId} state=${state.producerId} " +
+            "generation document=${document.generation} state=${state.generation}"
+        if (detail == lastDocumentSkew) return
+        lastDocumentSkew = detail
+        AppLog.i(TAG, "Held document identity skew $detail")
     }
 
     /**

@@ -19,6 +19,9 @@ contract. This spec defines surface visibility, privacy, continuity, customizati
   discarded only when it carries the same displayed text. The same sequence with revised title,
   artist, lyric, transliteration, or translation is a correction — the producer reprocessed the
   playing song — and replaces the held state, so text cannot outlive the setting that produced it.
+  A clear drops the held state immediately and does not retire the generation: the producer follows a
+  clear with its next update, and retiring it rejected every later payload at or below the cleared
+  generation, which blacked out the rest of the song.
 - Transliteration, translation, timed reading fragments, and ruby come only from the current matching
   producer document. Scalar state may keep the original lyric visible before that document arrives,
   but it never supplies or synthesizes an auxiliary line.
@@ -28,6 +31,16 @@ contract. This spec defines surface visibility, privacy, continuity, customizati
 - A row fill end must remain inside the track duration. A producer fill end past that row's active
   window is clamped to the active end for rendering; this bounded mismatch does not discard the
   otherwise valid timed document or release keepalive.
+- A producer document is chosen for the accepted state by track URI and track duration, not by
+  producer id or generation. The producer stamps a session id and generation on each state while a
+  document carrying the previous value is still in flight, and a discarded document is never
+  re-requested, so demanding that they match left the rest of the song untimed and dropped keepalive
+  to the presentation lease. The producer also reports the track length rounded to the whole second
+  while the state carries the measured value, so durations agree within one second and row and word
+  bounds are checked against the larger of the two. A document that declares no usable duration is
+  bounded by the state's measured duration instead, because the producer publishes a document before
+  its own track metadata settles. A different track, a larger duration disagreement, or a row past
+  the bounding duration still discards the document.
 - Overlapping sung lines (duet/layered rows whose timings overlap the playhead) render together on
   AOD: the primary plus the latest-started overlap, at most two lines, each with its own word
   timing and source row ordinal. Co-timed rows keep separate section identities, including when
@@ -350,9 +363,11 @@ This guarantee is enforced by both compilation and SystemUI validation.
   producer/status gaps from turning AOD off mid-song. Projection stale retains an already-active
   validated keepalive request; disconnect, explicit clear, pause, and grace expiry still release it.
 - A null producer-state edge retains the one bounded timed document in app memory for the same
-  30-second transport grace. Only a returning state with the exact producer, generation, track URI,
-  and duration may reuse it. A different session clears it immediately; an abandoned gap clears it
-  when the grace expires. Explicit producer clear still discards state and document immediately.
+  30-second transport grace. A returning state reuses it while it is the same track URI and the
+  durations agree within a second; producer id and generation skew is not a session change, because
+  the producer advances that bookkeeping while the previous document is in flight. A different track
+  clears it immediately; an abandoned gap clears it when the grace expires. Explicit producer clear
+  still discards state and document immediately.
 - SystemUI transport retention uses the same absolute edge and retires the frozen scene atomically
   at expiry. Keepalive heartbeats cannot restart a hidden grace, leave an expired scene positioned,
   or alternate Xiaomi stock and managed placement. A fresh visible projection may start normally.

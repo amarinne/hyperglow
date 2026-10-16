@@ -72,15 +72,19 @@ class SpicyBridgeStateReducerTest {
     }
 
     @Test
-    fun tombstoneRejectsRetiredGenerationButAllowsNewerGeneration() {
+    fun clearDropsHeldStateAndTheNextPayloadOfTheSameGenerationIsAccepted() {
         val reducer = SpicyBridgeStateReducer()
         assertTrue(reducer.accept(payload(generation = 4), NOW_MS))
 
         reducer.clear(PRODUCER_ID, 4)
 
         assertNull(reducer.current)
-        assertFalse(reducer.accept(payload(generation = 4, sequence = 2), NOW_MS))
-        assertFalse(reducer.accept(payload(generation = 3, sequence = 2), NOW_MS))
+        // The producer always follows a clear with its next update. The previous tombstone rejected
+        // every later payload at or below the cleared generation, which blacked out the rest of the
+        // song; a clear now only drops what is held.
+        assertTrue(reducer.accept(payload(generation = 4, sequence = 2), NOW_MS))
+        assertEquals(4, reducer.current?.generation)
+        assertEquals(2L, reducer.current?.sequence)
         assertTrue(reducer.accept(payload(generation = 5), NOW_MS))
     }
 

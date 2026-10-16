@@ -3,6 +3,7 @@ package com.eza.hyperglow.root.transition
 import android.os.SystemClock
 import com.eza.hyperglow.root.HookLogger
 import com.eza.hyperglow.root.HookRegistry
+import com.eza.hyperglow.root.loaderTag
 import com.eza.hyperglow.root.symbols.SymbolRequest
 import com.eza.hyperglow.root.symbols.SymbolResolver
 import io.github.libxposed.api.XposedInterface.Chain
@@ -35,26 +36,34 @@ internal object LinkageTransitionHook {
             runCatching {
                 HookRegistry.hook(module, FEATURE_ID, primary, PrimaryHooker)
             }.onSuccess {
-                HookLogger.i(TAG, "Primary linkage direction hook installed")
+                HookLogger.i(TAG, "Primary linkage direction hook installed loader=${loaderTag(classLoader)}")
             }.onFailure {
                 HookLogger.w(TAG, "Primary linkage direction hook failed", it)
             }
+        } else {
+            HookLogger.w(
+                TAG,
+                "Primary linkage seam unresolved $CONTROLLER_CLASS#linkageViewAnim\$default " +
+                    "loader=${loaderTag(classLoader)}"
+            )
         }
-        val fallback = SymbolResolver.resolveMethod(
+        val fallback = SymbolResolver.resolveMethodInOrder(
             classLoader,
             FEATURE_ID,
-            SymbolRequest.method(
-                ANIMATION_HELPER_CLASS,
-                "doAnimationToAod",
-                "boolean",
-                "boolean",
-                "boolean"
+            DO_ANIMATION_TO_AOD_CANDIDATES
+        )
+        if (fallback == null) {
+            HookLogger.w(
+                TAG,
+                "Fallback linkage seam unresolved $ANIMATION_HELPER_CLASS#doAnimationToAod " +
+                    "loader=${loaderTag(classLoader)}"
             )
-        ) ?: return
+            return
+        }
         runCatching {
             HookRegistry.hook(module, FEATURE_ID, fallback, FallbackHooker)
         }.onSuccess {
-            HookLogger.i(TAG, "Fallback linkage direction hook installed")
+            HookLogger.i(TAG, "Fallback linkage direction hook installed loader=${loaderTag(classLoader)}")
         }.onFailure {
             HookLogger.w(TAG, "Fallback linkage direction hook failed", it)
         }
@@ -94,8 +103,24 @@ internal object LinkageTransitionHook {
         }
     }
 
+    /**
+     * Ordered exact candidates for the fallback arm, each verified on a known build: HyperOS 4 /
+     * Android 17 declares the five-argument form, earlier builds the three-argument form. Argument 0
+     * is `toAod` in both, which is what [FallbackHooker] reads.
+     */
+    private val DO_ANIMATION_TO_AOD_CANDIDATES = listOf(
+        SymbolRequest.method(
+            ANIMATION_HELPER_CLASS, "doAnimationToAod",
+            "boolean", "boolean", "boolean", "boolean", ANIMATION_TRACKER_CLASS
+        ),
+        SymbolRequest.method(
+            ANIMATION_HELPER_CLASS, "doAnimationToAod",
+            "boolean", "boolean", "boolean"
+        )
+    )
     private const val CONTROLLER_CLASS = "com.android.keyguard.panel.KeyguardPanelViewController"
     private const val ANIMATION_HELPER_CLASS = "com.android.keyguard.clock.animation.AnimationHelper"
+    private const val ANIMATION_TRACKER_CLASS = "com.android.keyguard.clock.animation.AnimationTracker"
     private const val TAG = "LinkageTransitionHook"
     private const val FEATURE_ID = "linkage"
 }

@@ -175,15 +175,31 @@ class AodProjectionLifecycleTest {
     }
 
     @Test
-    fun preservedTimedDocumentIsReusedOnlyByTheExactReturningSession() {
+    fun preservedTimedDocumentIsReusedWhileTheTrackStillMatches() {
         val document = document("Syllable", 100L, 200L)
         val sameSession = state()
 
         assertFalse(AodProjectionEngine.shouldClearMismatchedDocument(document, sameSession))
-        assertTrue(
+        // The producer advances its session bookkeeping while the previous document is still in
+        // flight. Clearing there discarded a document nothing re-requests, and the rest of the song
+        // projected untimed: no animated fill, keepalive reduced to the song-change lease.
+        assertFalse(
             AodProjectionEngine.shouldClearMismatchedDocument(
                 document,
                 sameSession.copy(generation = sameSession.generation + 1)
+            )
+        )
+        assertFalse(
+            AodProjectionEngine.shouldClearMismatchedDocument(
+                document,
+                sameSession.copy(producerId = "producer-2")
+            )
+        )
+        // A whole-second producer duration against a measured state duration is rounding, not a fault.
+        assertFalse(
+            AodProjectionEngine.shouldClearMismatchedDocument(
+                document,
+                sameSession.copy(durationMs = sameSession.durationMs + 243L)
             )
         )
         assertTrue(
@@ -195,7 +211,7 @@ class AodProjectionLifecycleTest {
         assertTrue(
             AodProjectionEngine.shouldClearMismatchedDocument(
                 document,
-                sameSession.copy(durationMs = sameSession.durationMs + 1L)
+                sameSession.copy(durationMs = sameSession.durationMs + 5_000L)
             )
         )
         assertFalse(AodProjectionEngine.shouldClearMismatchedDocument(null, sameSession))

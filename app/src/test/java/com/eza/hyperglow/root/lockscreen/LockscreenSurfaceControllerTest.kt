@@ -1,6 +1,8 @@
 package com.eza.hyperglow.root.lockscreen
 
 import com.eza.hyperglow.customization.SceneCompiler
+import com.eza.hyperglow.root.projection.nextLyricRetentionAnchor
+import com.eza.hyperglow.root.projection.pauseLingerRemainingMs
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -542,6 +544,85 @@ class LockscreenSurfaceControllerTest {
                 0L
             )
         )
+    }
+
+    @Test
+    fun confirmedPauseRetentionAnchorsToThePauseEdgeNotThePrecedingGap() {
+        // An ordinary Spotify pause is published as a still-playing transport gap first, and only
+        // becomes pause retention when the producer is still non-playing after the 5-second
+        // confirmation window. The configured window is measured from that confirmation, so the
+        // gap card must not be reused as the pause card.
+        val live = com.eza.hyperglow.root.projection.LyricSnapshot(
+            visible = true,
+            playbackActive = true,
+            durationMs = 300_000L,
+            positionMs = 4_000L,
+            sampledAtElapsedMs = 1_000L,
+            speed = 1f,
+            original = "line"
+        )
+        val gapAt = 2_000L
+        val confirmAt = 7_000L
+        val gap = live.copy(visible = false, playbackActive = true, updatedAtElapsedMs = gapAt)
+        val gapAnchor = nextLyricRetentionAnchor(gap, null, gapAt)!!
+        val gapCard = retainedLockscreenSnapshotAfterUpdate(
+            gap,
+            live,
+            null,
+            gapAnchor,
+            gapAt,
+            30_000L
+        )!!
+
+        assertEquals(gapAt, gapCard.sampledAtElapsedMs)
+        assertFalse(gapCard.pauseRetentionEligible)
+
+        val pause = gap.copy(
+            playbackActive = false,
+            pauseRetentionEligible = true,
+            updatedAtElapsedMs = confirmAt
+        )
+        val pauseAnchor = nextLyricRetentionAnchor(pause, gapAnchor, confirmAt)!!
+        val pauseCard = retainedLockscreenSnapshotAfterUpdate(
+            pause,
+            live,
+            gapCard,
+            pauseAnchor,
+            confirmAt,
+            30_000L
+        )
+
+        assertEquals(confirmAt, pauseCard?.sampledAtElapsedMs)
+        assertTrue(pauseCard!!.pauseRetentionEligible)
+        assertEquals(
+            30_000L,
+            pauseLingerRemainingMs(pauseCard.sampledAtElapsedMs, 30_000L, confirmAt)
+        )
+    }
+
+    @Test
+    fun pauseLingerClockOnlyGovernsThePauseRetentionEpisode() {
+        val gapCard = com.eza.hyperglow.root.projection.LyricSnapshot(
+            visible = true,
+            playbackActive = true,
+            pauseRetentionEligible = false,
+            sampledAtElapsedMs = 2_000L,
+            original = "line"
+        )
+        val pauseCard = gapCard.copy(
+            playbackActive = false,
+            pauseRetentionEligible = true,
+            sampledAtElapsedMs = 7_000L
+        )
+
+        // A transport-gap card is bounded by the gap's own 30-second bound, never by this clock.
+        assertEquals(null, lockscreenPauseLingerRemainingMs(gapCard, 5_000L, 12_000L))
+        assertEquals(null, lockscreenPauseLingerRemainingMs(gapCard, -1L, 12_000L))
+        // The pause episode runs the configured window from its own edge.
+        assertEquals(5_000L, lockscreenPauseLingerRemainingMs(pauseCard, 10_000L, 12_000L))
+        assertEquals(null, lockscreenPauseLingerRemainingMs(pauseCard, 5_000L, 12_000L))
+        assertEquals(Long.MAX_VALUE, lockscreenPauseLingerRemainingMs(pauseCard, -1L, 12_000L))
+        assertEquals(null, lockscreenPauseLingerRemainingMs(null, 5_000L, 12_000L))
     }
 
     @Test

@@ -155,9 +155,13 @@ visible lyric row, mirrored for RTL lyrics. Word/syllable timing remains unchang
   is the producer client's responsibility. HyperGlow cannot recover that binding from its own side and
   must not be specified as if it could. The provider transport is the exception, because every
   `ContentResolver.call` re-acquires the provider and therefore survives app process death.
-  Explicit clear, generation retirement, and disable discard both retained payloads. A null
+  Explicit clear and disable discard both retained payloads. A clear does not retire the generation:
+  the producer follows a clear with its next update, and retiring it previously rejected every later
+  payload at or below the cleared generation. A null
   state edge may retain the current document in app memory for one bounded 30-second transport
-  grace; only the exact returning producer/generation/track/duration identity may reuse it.
+  grace; the returning state reuses it while the track URI matches and the durations agree within a
+  second, because the producer advances its session id and generation while a document for the
+  previous value is still in flight and a discarded document is never re-requested.
 - App-to-SystemUI lyric state keeps the `onState(Bundle)` ABI but carries a versioned scalar envelope; full snapshots use one encoded body bounded to 48 KiB aggregate UTF-8 text and 64 KiB encoded bytes. Hidden and keepalive messages remain scalar-only.
 - Snapshot body v11 carries the validated source row ordinals for both lyric sections. The app derives
   them from document order so co-timed lines keep separate renderer identities without changing the

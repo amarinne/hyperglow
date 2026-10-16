@@ -10,6 +10,7 @@ import com.eza.hyperglow.root.HookRegistry
 import com.eza.hyperglow.root.symbols.SymbolRequest
 import com.eza.hyperglow.root.symbols.SymbolResolver
 import com.eza.hyperglow.root.hierarchyField
+import com.eza.hyperglow.root.loaderTag
 import com.eza.hyperglow.root.readHierarchyField
 import io.github.libxposed.api.XposedInterface.Chain
 import io.github.libxposed.api.XposedInterface.Hooker
@@ -51,6 +52,7 @@ internal object AodPositionHook {
     private val hookedClassLoaders = Collections.synchronizedSet(
         Collections.newSetFromMap(WeakHashMap<ClassLoader, Boolean>())
     )
+    private val loggedMissingSeams = Collections.synchronizedSet(mutableSetOf<String>())
     private val controllerStates = WeakHashMap<Any, ControllerState>()
     private var lastControllerRef = WeakReference<Any>(null)
     private var targetViewRef = WeakReference<View>(null)
@@ -83,20 +85,38 @@ internal object AodPositionHook {
     }
 
     fun install(module: XposedModule, classLoader: ClassLoader) {
+        // A loader that cannot see the AOD plugin dex is expected early in a host process; only a
+        // present class with a missing member is a finding. See AodBrightnessHook for the rule.
+        if (SymbolResolver.resolveClass(classLoader, FEATURE_ID, CONTROLLER_CLASS) == null) {
+            HookLogger.i(TAG, "AOD position class absent loader=${loaderTag(classLoader)}")
+            return
+        }
         val update = SymbolResolver.resolveMethod(
             classLoader,
             FEATURE_ID,
             SymbolRequest.method(CONTROLLER_CLASS, "updateTranslation", "boolean", "int", "float")
-        ) ?: return
+        ) ?: return missingSeam(classLoader, "$CONTROLLER_CLASS#updateTranslation(boolean,int,float)")
         val updatePosition = SymbolResolver.resolveMethod(
             classLoader,
             FEATURE_ID,
             SymbolRequest.method(DOZE_HOST_CLASS, "updatePosition")
-        ) ?: return
+        ) ?: return missingSeam(classLoader, "$DOZE_HOST_CLASS#updatePosition()")
         if (!hookedClassLoaders.add(classLoader)) return
         HookRegistry.hook(module, FEATURE_ID, update, PositionHooker)
         HookRegistry.hook(module, FEATURE_ID, updatePosition, PositionCompletionHooker)
-        HookLogger.i(TAG, "AOD position hook installed")
+        HookLogger.i(TAG, "AOD position hook installed loader=${loaderTag(classLoader)}")
+    }
+
+    /**
+     * A seam that does not resolve used to return without a trace, so a ROM where the member is
+     * absent was indistinguishable from a working one: the hook never installed, and the capability
+     * report still listed the family because its probe asks the same question against the AOD loader
+     * and can resolve there. Name the seam, once per loader, so a field log says which member is
+     * missing instead of leaving a silently inert position path.
+     */
+    private fun missingSeam(classLoader: ClassLoader, seam: String) {
+        if (!loggedMissingSeams.add("$seam@${System.identityHashCode(classLoader)}")) return
+        HookLogger.w(TAG, "AOD position hook seam unresolved $seam loader=${loaderTag(classLoader)}")
     }
 
     fun observeAodRoot(root: Any) {

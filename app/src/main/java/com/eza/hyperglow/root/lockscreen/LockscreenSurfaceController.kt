@@ -271,7 +271,11 @@ internal fun retainedLockscreenSnapshotAfterUpdate(
         pauseRetentionEligible = true,
         fallbackElapsedMs = incoming.updatedAtElapsedMs.coerceIn(0L, nowElapsedMs)
     )
-    val candidate = retained ?: lastVisible?.let {
+    // Only a card this pause episode already owns may be reused. An ordinary Spotify pause is
+    // published as a still-playing transport gap first, so reusing that gap card measured the
+    // `After Spotify pauses` window from the gap edge and spent it before the pause existed: a
+    // confirmed pause whose gap outlived the configured window dropped the card on the spot.
+    val candidate = retained?.takeIf { it.pauseRetentionEligible } ?: lastVisible?.let {
         freezeLockscreenSnapshot(it, pauseAtElapsedMs)
     }
     candidate?.takeIf {
@@ -290,6 +294,22 @@ internal fun retainedLockscreenSnapshotAfterUpdate(
 } else {
     null
 }
+
+/**
+ * The remaining `After Spotify pauses` window for a retained card, or null when that clock does not
+ * govern it at all.
+ *
+ * A still-playing hidden edge is a transport gap, not a pause. Its card is bounded by the gap's own
+ * 30-second bound inside [retainedLockscreenSnapshotAfterUpdate], so arming this clock against it
+ * retired the previous track's line a few seconds into an ordinary song change.
+ */
+internal fun lockscreenPauseLingerRemainingMs(
+    retained: LyricSnapshot?,
+    pauseLingerMs: Long,
+    nowElapsedMs: Long
+): Long? = retained
+    ?.takeIf { it.pauseRetentionEligible }
+    ?.let { pauseLingerRemainingMs(it.sampledAtElapsedMs, pauseLingerMs, nowElapsedMs) }
 
 internal fun shouldKeepLockscreenAwake(
     enabled: Boolean,
@@ -675,19 +695,7 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
     private var retentionAnchor: LyricRetentionAnchor? = null
     private val pauseLingerExpiry = object : Runnable {
         override fun run() {
-            val retained = retainedMediaSnapshot ?: return
-            val remaining = pauseLingerRemainingMs(
-                retained.sampledAtElapsedMs,
-                customization?.pauseLingerMs ?: 5_000L,
-                SystemClock.elapsedRealtime()
-            )
-            if (remaining != null) {
-                if (remaining != Long.MAX_VALUE) mainHandler.postDelayed(this, remaining)
-                return
-            }
-            retainedMediaSnapshot = null
-            lastVisibleSnapshot = null
-            requestRefresh()
+            retainedMediaSnapshot?.let(::refreshPauseLingerExpiry)
         }
     }
     private var stockMediaPlayerObserved = false
@@ -938,18 +946,31 @@ internal object LockscreenSurfaceController : SystemUiLyricSubscriber, LinkageSu
 
     private fun schedulePauseLingerExpiry(retained: LyricSnapshot?) {
         cancelPauseLingerExpiry()
-        retained ?: return
-        val remaining = pauseLingerRemainingMs(
-            retained.sampledAtElapsedMs,
+        retained?.let(::refreshPauseLingerExpiry)
+    }
+
+    /**
+     * Re-derives the `After Spotify pauses` window for the retained card and either arms the next
+     * check or retires the card. Only a pause retention is on this clock: a still-playing
+     * transport-gap card belongs to the gap's own bound, so it is left untouched here.
+     */
+    private fun refreshPauseLingerExpiry(retained: LyricSnapshot) {
+        val remaining = lockscreenPauseLingerRemainingMs(
+            retained,
             customization?.pauseLingerMs ?: 5_000L,
             SystemClock.elapsedRealtime()
-        ) ?: run {
-            retainedMediaSnapshot = null
-            lastVisibleSnapshot = null
-            requestRefresh()
+        )
+        if (remaining == null) {
+            if (retained.pauseRetentionEligible) discardRetainedSnapshot()
             return
         }
         if (remaining != Long.MAX_VALUE) mainHandler.postDelayed(pauseLingerExpiry, remaining)
+    }
+
+    private fun discardRetainedSnapshot() {
+        retainedMediaSnapshot = null
+        lastVisibleSnapshot = null
+        requestRefresh()
     }
 
     private fun cancelPauseLingerExpiry() {
