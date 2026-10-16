@@ -4,7 +4,7 @@
 
 [![Telegram](https://img.shields.io/badge/Telegram-Join%20group-26A5E4?logo=telegram&logoColor=white)](https://t.me/spicyex)
 
-Animated lock screen and always-on display lyrics for HyperOS 3.
+Animated lock screen and always-on display lyrics for HyperOS 3 and 4.
 
 Requires root, LSPosed and [Spicy EX](https://github.com/amarinne/spicy-ex).
 
@@ -27,7 +27,7 @@ Requires root, LSPosed and [Spicy EX](https://github.com/amarinne/spicy-ex).
 
 ## Requirements
 
-- Rooted HyperOS 3.
+- Rooted HyperOS 3 or 4.
 - [LSPosed](https://github.com/LSPosed/LSPosed).
 - Spotify.
 - Spicy EX with **Publish lyrics to HyperGlow** enabled.
